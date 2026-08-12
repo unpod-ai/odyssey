@@ -1,0 +1,68 @@
+odyssey
+Copyright 2026 Unpod
+
+This product includes software developed by Unpod.
+
+================================================================================
+Third-party code incorporated into this project
+================================================================================
+
+--------------------------------------------------------------------------------
+soup-cli (https://pypi.org/project/soup-cli/) — Apache License 2.0
+--------------------------------------------------------------------------------
+
+Copyright 2026 Makazhan Alpamys
+
+Portions of this product were derived from soup-cli version 0.73.0, licensed
+under the Apache License, Version 2.0. A copy of that license is included as
+LICENSE in this distribution.
+
+CHANGES: This project contains a modified fork of soup-cli. Modifications
+include, but are not limited to: renaming the `soup_cli` package and the `soup`
+command-line entry point, removal of the upstream PostHog telemetry client and
+its bundled key, removal of the upstream per-command audit log, replacement of
+the upstream mypy configuration with pyrefly, replacement of the working-
+directory containment policy, and reformatting of the source tree.
+
+--------------------------------------------------------------------------------
+trajectory-sdk (https://pypi.org/project/trajectory-sdk/) — MIT License
+--------------------------------------------------------------------------------
+
+Copyright (c) <UNRESOLVED — see below>
+
+Portions of this product were derived from trajectory-sdk version 0.5.2,
+licensed under the MIT License.
+
+*** THIS ATTRIBUTION IS INCOMPLETE AND BLOCKS PUBLIC DISTRIBUTION. ***
+
+The MIT License requires that the copyright notice be reproduced verbatim in
+all copies. The copyright holder cannot be recovered from the source we hold:
+the vendored tree ships no LICENSE file, its PKG-INFO declares
+`License-Expression: MIT` with no `License-File:` header, and the
+setuptools-generated SOURCES.txt manifest contains no license entry.
+
+Before this project is distributed publicly, the holder's name must be obtained
+from the upstream author or repository and substituted above, or the derived
+code must be rewritten. Internal use is unaffected.
+
+Derived files: src/odyssey/primitives.py, src/odyssey/build/*.
+
+MIT License text, to be completed with the holder above:
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.

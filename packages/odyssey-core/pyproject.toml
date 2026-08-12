@@ -1,0 +1,43 @@
+[project]
+name = "odyssey"
+version = "0.1.0"
+description = "Training-data framework — agent traces in, training corpora out."
+readme = "README.md"
+# Upper bound is load-bearing, not caution. Soup (soup-cli, the trainer adapter
+# this project is built around) pins >=3.10,<3.13 and enforces it with a test
+# that parses its own CI matrix. The super workspace is >=3.12. The intersection
+# is exactly 3.12. See openspec/changes/add-journey-schema/design.md.
+requires-python = ">=3.12,<3.13"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Unpod", email = "parvinder@unpod.ai" }]
+
+# Deliberately empty. The ported schema (src/odyssey/primitives.py) and builders
+# (src/odyssey/build/) import only json + typing + dataclasses — verified against
+# the upstream tree. The spool and the JSONL codec are stdlib. Adding a
+# dependency nothing imports is a phantom dep; the change that needs one adds it.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "black==26.3.1",
+  "isort>=5.13",
+  "flake8>=7.3",
+  "pyrefly>=0.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/odyssey"]
+
+[tool.black]
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
