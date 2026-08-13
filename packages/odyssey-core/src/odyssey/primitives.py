@@ -89,8 +89,9 @@ class Reward:
 class Step:
     messages: List[Message]  # CUMULATIVE
     reward: Optional[Reward] = None
-    info: Optional[Dict[str, Any]] = None
     trainable_status: TrainableStatus = "not_trainable"
+    # `info` dropped on port: upstream declared it and never assigned it, and
+    # nothing read it. See design.md Decision 4 (dead fields).
 
 
 @dataclass(frozen=True)
@@ -106,10 +107,11 @@ class JourneyMetrics:
 
 @dataclass(frozen=True)
 class ExecutionMetrics:
-    env_time: Optional[float] = None
-    llm_time: Optional[float] = None
     total_time: Optional[float] = None
     termination_reason: Optional[TerminationReason] = None
+    # `env_time` / `llm_time` dropped on port: never assigned upstream, and
+    # odyssey has neither an environment nor per-call timing to source them
+    # from. Re-add them when something can actually populate them.
 
 
 @dataclass(frozen=True)
@@ -251,3 +253,115 @@ class RedactionPreview:
 class PiiPolicy:
     name: str
     rules: Sequence[PiiRule]
+
+
+# =============================================================================
+# Event-sourced layer.
+#
+# Everything BELOW this line is odyssey original work, not derived from
+# trajectory-sdk. The boundary is load-bearing: the MIT attribution in NOTICE
+# names this file as derived, and the unresolved copyright holder blocks public
+# distribution of the derived half only.
+# =============================================================================
+
+# Bumped only for a breaking change to the on-the-wire event shape. The reader
+# rejects an unknown MAJOR outright rather than mis-parsing (see jsonl.py).
+SCHEMA_VERSION = "1.0"
+
+EventKind = Literal["message", "signal", "reward", "terminal"]
+SignalKind = Literal["thumbs_up", "thumbs_down", "regenerated", "user_edit"]
+
+
+def _utc_now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _new_event_id() -> str:
+    from uuid import uuid4
+
+    return uuid4().hex
+
+
+@dataclass(frozen=True)
+class Signal:
+    """Explicit human or system feedback about an earlier event.
+
+    This is what makes preference training possible. ``Reward`` is a scalar
+    judgement; DPO/KTO/ORPO need to know which of two outputs won, which is an
+    *ordering* — hence ``regen_order`` and ``edited_output``.
+    """
+
+    signal: SignalKind
+    target_seq: int
+    regen_order: Optional[int] = None
+    edited_output: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class Terminal:
+    """Closes a journey. No event with a higher ``seq`` is accepted after it."""
+
+    termination_reason: TerminationReason = "NONE"
+    error: Optional[str] = None
+
+
+_PAYLOAD_FIELD: Dict[str, str] = {
+    "message": "message",
+    "signal": "signal",
+    "reward": "reward",
+    "terminal": "terminal",
+}
+
+
+@dataclass(frozen=True)
+class JourneyEvent:
+    """The only unit odyssey writes to disk or sends over a network.
+
+    Append-only, ordered by a client-assigned ``seq`` within ``journey_id``, and
+    idempotent by ``event_id``. Cumulative state is never transmitted: folding N
+    events costs O(N), where shipping N cumulative steps would cost O(N**2).
+
+    ``model_id`` is per-event on purpose. One journey spans model switches,
+    retries and routing fallbacks, so journey-level attribution would silently
+    mix models under a single label.
+    """
+
+    journey_id: str
+    seq: int
+    kind: EventKind
+    ts: str = field(default_factory=_utc_now_iso)
+    event_id: str = field(default_factory=_new_event_id)
+    message: Optional[Message] = None
+    signal: Optional[Signal] = None
+    reward: Optional[Reward] = None
+    terminal: Optional[Terminal] = None
+    model_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self) -> None:
+        if self.seq < 0:
+            raise ValueError(f"seq must be non-negative, got {self.seq}")
+        expected = _PAYLOAD_FIELD.get(self.kind)
+        if expected is None:
+            raise ValueError(
+                f"unknown kind {self.kind!r}; "
+                f"expected one of {sorted(_PAYLOAD_FIELD)}"
+            )
+        if getattr(self, expected) is None:
+            raise ValueError(f"kind={self.kind!r} requires a {expected!r} payload")
+        extra = [
+            name
+            for kind, name in _PAYLOAD_FIELD.items()
+            if kind != self.kind and getattr(self, name) is not None
+        ]
+        if extra:
+            raise ValueError(
+                f"kind={self.kind!r} must not carry {sorted(extra)} payload(s)"
+            )
+
+    @property
+    def payload(self) -> Any:
+        """The one payload this event carries, whichever kind it is."""
+        return getattr(self, _PAYLOAD_FIELD[self.kind])

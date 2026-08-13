@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # odyssey test runner. Modules:
-#   schema      — Journey/JourneyEvent primitives, the fold, the projection
+#   schema      — JourneyEvent validation, the fold, the projection
 #   build       — ported message adapters, metrics, reward, cumulative steps
 #   jsonl       — versioned JSONL codec: truncation and per-line rejection
 #   spool       — local append-only capture, watermark, drain
+#   cli         — the command-line drain trigger
 #   contract    — the golden fixture and the no-import-coupling gate
 #   all         — everything
 #
@@ -20,7 +21,7 @@ case "$MODULE" in
     grep -E '^#   [a-z]+' "$0" | sed 's/^#   //'
     ;;
   schema)
-    uv run pytest tests/test_primitives.py tests/test_fold.py "$@"
+    uv run pytest tests/test_fold.py "$@"
     ;;
   build)
     uv run pytest tests/builders "$@"
@@ -30,6 +31,9 @@ case "$MODULE" in
     ;;
   spool)
     uv run pytest tests/test_spool.py "$@"
+    ;;
+  cli)
+    uv run pytest tests/test_cli.py "$@"
     ;;
   contract)
     uv run pytest tests/test_contract.py "$@"
