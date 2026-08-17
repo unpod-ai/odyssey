@@ -1,0 +1,13 @@
+# uv workspace root — virtual, deliberately no [project] table.
+#
+# Nothing is installed from the root; it exists to give every member one resolver
+# run and one lockfile (uv.lock). Members are listed explicitly rather than by
+# glob: a directory that is scaffolded but has no pyproject.toml yet would break
+# `uv sync` if a glob picked it up.
+#
+# Add a member the same commit you add its pyproject.toml:
+#   packages/odyssey-schemas · cli · services/api · data_preparation
+#   training · evaluation · sdk/python
+
+[tool.uv.workspace]
+members = ["packages/odyssey-core"]

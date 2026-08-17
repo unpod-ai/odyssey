@@ -1,0 +1,35 @@
+# Root delegator. Every member owns its own Taskfile; this file only routes.
+# A task appears here once the member it routes to exists — no task that fails
+# because its target is still a .gitkeep.
+
+version: "3"
+
+includes:
+  core:
+    taskfile: ./packages/odyssey-core/Taskfile.yml
+    dir: ./packages/odyssey-core
+
+vars:
+  UV:
+    sh: command -v uv 2>/dev/null || echo "${HOME}/.local/bin/uv"
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list-all
+
+  setup:
+    desc: Sync the whole python workspace (all members, one lockfile)
+    cmds:
+      - "{{.UV}} sync --all-packages --extra dev"
+
+  check:
+    desc: fmt + lint + types + tests across every member
+    cmds:
+      - task: core:check
+
+  test:
+    desc: Run every member's test suite
+    cmds:
+      - task: core:test

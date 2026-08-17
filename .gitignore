@@ -1,0 +1,67 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv*/
+venv*/
+env/
+ENV/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyrefly/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- Node ---
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+playwright-report/
+test-results/
+
+# --- Env / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+.vscode/
+
+# --- Local spool (odyssey-core default root) ---
+.odyssey/
+
+# --- Artifact directories: git tracks the recipe and the hash, the store holds the bytes.
+#     Directory survives via .gitkeep; contents never enter history. See docs/adr/0002.
+data/raw/*
+!data/raw/.gitkeep
+data/interim/*
+!data/interim/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+training/checkpoints/*
+!training/checkpoints/.gitkeep
+training/logs/*
+!training/logs/.gitkeep
+training/outputs/*
+!training/outputs/.gitkeep
+
+models/pretrained/*
+!models/pretrained/.gitkeep
+models/finetuned/*
+!models/finetuned/.gitkeep
+models/exported/*
+!models/exported/.gitkeep
+
+evaluation/reports/*
+!evaluation/reports/.gitkeep
+!evaluation/reports/templates/

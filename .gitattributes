@@ -1,0 +1,23 @@
+# Normalize line endings in the repo, leave the working tree to the platform.
+* text=auto eol=lf
+
+# Generated files: collapsed in diffs, excluded from language stats. Regenerate
+# them (scripts/codegen.sh) rather than editing by hand.
+services/api/openapi.json            linguist-generated=true
+sdk/javascript/src/types.generated.ts linguist-generated=true
+sdk/python/src/odyssey_sdk/resources/** linguist-generated=true
+cli/completions/**                   linguist-generated=true
+uv.lock                              linguist-generated=true -diff
+pnpm-lock.yaml                       linguist-generated=true -diff
+
+# Fixtures are byte-exact contracts — never let a filter touch them.
+packages/odyssey-core/tests/fixtures/** -text
+
+# Binary, in case one ever slips past .gitignore review.
+*.safetensors binary
+*.gguf        binary
+*.onnx        binary
+*.bin         binary
+*.pt          binary
+*.ckpt        binary
+*.parquet     binary
