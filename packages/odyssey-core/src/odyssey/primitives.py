@@ -271,6 +271,15 @@ SCHEMA_VERSION = "1.0"
 EventKind = Literal["message", "signal", "reward", "terminal"]
 SignalKind = Literal["thumbs_up", "thumbs_down", "regenerated", "user_edit"]
 
+# Writer identity lives in ``JourneyEvent.metadata`` under this key rather than
+# in a field of its own. That is what keeps ``SCHEMA_VERSION`` at 1.0 while still
+# making a two-writer collision provable: ``seq`` is allocated per process, so
+# two processes recording one journey would issue the same numbers, and the fold
+# has to be able to tell that apart from a legitimate single-writer stream.
+#
+# The leading underscore marks the key as SDK-owned inside a user-facing dict.
+WRITER_META_KEY = "_odyssey_writer"
+
 
 def _utc_now_iso() -> str:
     from datetime import datetime, timezone

@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 
 from odyssey.builders.journey import build_journey_from_messages
 from odyssey.primitives import (
+    WRITER_META_KEY,
     Journey,
     JourneyEvent,
     JourneyMetrics,
@@ -63,11 +64,35 @@ class FoldResult:
     signals: List[Signal] = field(default_factory=list)
     model_ids: List[str] = field(default_factory=list)
     terminated: bool = False
+    writers: List[str] = field(default_factory=list)
 
     @property
     def trainable(self) -> bool:
         """Whether this journey may be exported for training."""
         return self.complete
+
+    @property
+    def writer_conflict(self) -> bool:
+        """Two or more processes wrote this journey — the numbering is unsound.
+
+        ``seq`` is allocated per process, so two writers hand out the same
+        numbers for different turns. The result reads as a valid journey while
+        being a silent interleaving of two conversations, which is exactly the
+        failure that must never reach a corpus. Reported, and ``complete`` is
+        false.
+        """
+        return len(self.writers) > 1
+
+    @property
+    def incomplete_reason(self) -> Optional[str]:
+        """Why this journey is not exportable, or ``None`` when it is."""
+        if self.writer_conflict:
+            return f"writer conflict: {len(self.writers)} writers {self.writers}"
+        if self.missing_seqs:
+            return f"missing seq {self.missing_seqs}"
+        if not self.terminated:
+            return "no terminal event: journey may still be running"
+        return None
 
 
 def derive_trainable_status(
@@ -180,9 +205,13 @@ def fold(
     termination_reason = None
     error: Optional[str] = None
     model_ids: List[str] = []
+    writers: List[str] = []
     for e in ordered:
         if e.model_id and e.model_id not in model_ids:
             model_ids.append(e.model_id)
+        writer = (e.metadata or {}).get(WRITER_META_KEY)
+        if isinstance(writer, str) and writer not in writers:
+            writers.append(writer)
         if e.kind == "message" and e.message is not None:
             messages_by_seq[e.seq] = e.message
         elif e.kind == "signal" and e.signal is not None:
@@ -221,13 +250,16 @@ def fold(
     return FoldResult(
         journey=journey,
         journey_id=journey_id,
-        complete=not missing and terminal_seq is not None,
+        # A second writer invalidates the sequence numbering itself, so it gates
+        # export exactly like a hole does.
+        complete=not missing and terminal_seq is not None and len(writers) <= 1,
         missing_seqs=missing,
         duplicates_dropped=duplicates,
         rejected_after_terminal=rejected,
         signals=signals,
         model_ids=model_ids,
         terminated=terminal_seq is not None,
+        writers=writers,
     )
 
 

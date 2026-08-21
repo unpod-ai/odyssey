@@ -3,8 +3,11 @@
 #   schema      — JourneyEvent validation, the fold, the projection
 #   build       — ported message adapters, metrics, reward, cumulative steps
 #   jsonl       — versioned JSONL codec: truncation and per-line rejection
-#   spool       — local append-only capture, watermark, drain
-#   cli         — the command-line drain trigger
+#   spool       — local append-only capture, watermark, drain, handle cache
+#   context     — ambient journey context and seq allocation
+#   sdk         — init(), journey(), observe(), health(); capture never raises
+#   integrations— provider capture: drop-in client, opt-in patch, no duplicates
+#   cli         — the command-line drain trigger and health report
 #   contract    — the golden fixture and the no-import-coupling gate
 #   all         — everything
 #
@@ -31,6 +34,15 @@ case "$MODULE" in
     ;;
   spool)
     uv run pytest tests/test_spool.py "$@"
+    ;;
+  context)
+    uv run pytest tests/test_context.py "$@"
+    ;;
+  sdk)
+    uv run pytest tests/test_sdk.py "$@"
+    ;;
+  integrations)
+    uv run pytest tests/test_integrations.py "$@"
     ;;
   cli)
     uv run pytest tests/test_cli.py "$@"

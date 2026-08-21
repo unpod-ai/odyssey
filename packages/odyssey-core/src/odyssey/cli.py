@@ -12,28 +12,15 @@ trainer consumes.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
-from odyssey.jsonl import write_events
-from odyssey.primitives import JourneyEvent
+from odyssey.sinks import FileSink
 from odyssey.spool import Spool, SpoolConfig, drain
 
-
-class FileSink:
-    """Writes drained events to ``<out>/<journey_id>.jsonl``.
-
-    Append-mode on purpose: a resumed drain sends only the tail, so appending is
-    what keeps the output complete across multiple drains.
-    """
-
-    def __init__(self, out_dir: Path) -> None:
-        self.out_dir = Path(out_dir)
-        self.out_dir.mkdir(parents=True, exist_ok=True)
-
-    def send(self, journey_id: str, events: List[JourneyEvent]) -> None:
-        write_events(self.out_dir / f"{journey_id}.jsonl", events, append=True)
+__all__ = ["FileSink", "build_parser", "main"]
 
 
 def _cmd_push(args: argparse.Namespace) -> int:
@@ -68,6 +55,50 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_health(args: argparse.Namespace) -> int:
+    """Answer "is it actually recording?" — for a spool, and for this process.
+
+    Read-only: nothing drains, no watermark moves, so it is safe against a spool
+    a live process is writing to. Exits 3 on a writer conflict, which is the
+    lineage-violation code CI greps for (ADR 0003).
+    """
+    from odyssey.diagnostics import format_report, report, scan
+
+    live = report()
+    journeys = scan(Path(args.spool), journey_id=args.journey)
+    if args.json:
+        print(
+            json.dumps(
+                {"process": live, "journeys": [j.as_dict() for j in journeys]},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        print(format_report(live, journeys))
+    return 3 if any(len(j.writers) > 1 for j in journeys) else 0
+
+
+def _cmd_show(args: argparse.Namespace) -> int:
+    """Print a collected journey as a conversation, plus its training view.
+
+    The question `health` cannot answer: not "is it recording?" but "show me what
+    you recorded, and which of it a model would learn from."
+    """
+    from odyssey.diagnostics import render_journey
+
+    spool = Spool(SpoolConfig(root=Path(args.spool)))
+    targets = [args.journey] if args.journey else spool.journey_ids()
+    if not targets:
+        print("spool is empty")
+        return 0
+    for i, jid in enumerate(targets):
+        if i:
+            print()
+        print(render_journey(Path(args.spool), jid))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="odyssey", description=__doc__.splitlines()[0])
     p.add_argument(
@@ -84,6 +115,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="show per-journey spool state")
     status.set_defaults(func=_cmd_status)
+
+    show = sub.add_parser(
+        "show", help="print a collected journey and what is trainable in it"
+    )
+    show.add_argument(
+        "journey", nargs="?", default=None, help="journey_id (default: all)"
+    )
+    show.set_defaults(func=_cmd_show)
+
+    health = sub.add_parser(
+        "health", help="is it recording? per-journey foldability and failures"
+    )
+    health.add_argument("--journey", default=None, help="inspect only this journey_id")
+    health.add_argument("--json", action="store_true", help="machine-readable output")
+    health.set_defaults(func=_cmd_health)
     return p
 
 

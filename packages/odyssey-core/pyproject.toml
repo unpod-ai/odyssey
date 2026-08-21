@@ -25,6 +25,10 @@ dev = [
   "flake8>=7.3",
   "pyrefly>=0.1",
 ]
+# Provider capture. `odyssey.integrations.anthropic` imports the SDK inside the
+# wrapper's __init__, never at module scope, so `import odyssey` stays
+# dependency-free and only code that touches the integration needs this extra.
+anthropic = ["anthropic>=0.40"]
 
 [project.scripts]
 odyssey = "odyssey.cli:main"

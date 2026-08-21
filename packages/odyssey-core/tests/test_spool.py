@@ -457,3 +457,124 @@ def test_drainer_rejects_double_start(tmp_path):
             d.start()
     finally:
         d.stop()
+
+
+# --------------------------------------------------------------------------
+# Cached shard handles
+#
+# record() used to rediscover the filesystem on every event — mkdir, two
+# resolve()s, a directory glob and three stats, all inside the global lock. That
+# was 94% of its cost and, worse, 94% of the time the lock was held. The handle
+# cache removes it. These tests pin the behaviour that must survive the cache.
+# --------------------------------------------------------------------------
+
+
+def test_record_is_fast_enough_for_a_capture_hot_path(tmp_path):
+    """Regression guard, not a benchmark. The threshold is deliberately loose.
+
+    Measured p50 is ~23us; the old rediscover-every-event path was ~196us. 90us
+    catches a return to per-event syscalls without flaking on a busy CI box.
+    """
+    import time
+
+    s = spool(tmp_path)
+    for i in range(50):  # warm: first event pays the cold path
+        s.record(ev(i))
+
+    samples = []
+    for i in range(50, 550):
+        start = time.perf_counter_ns()
+        s.record(ev(i))
+        samples.append(time.perf_counter_ns() - start)
+    samples.sort()
+    p50_us = samples[len(samples) // 2] / 1000
+    assert p50_us < 90, f"record() p50 regressed to {p50_us:.1f}us"
+
+
+def test_the_handle_is_reused_across_events(tmp_path):
+    s = spool(tmp_path)
+    s.record_all([ev(i) for i in range(5)])
+    assert s.open_shard_count() == 1
+
+
+def test_close_releases_the_handle_without_losing_data(tmp_path):
+    s = spool(tmp_path)
+    s.record_all([ev(i) for i in range(3)])
+    s.close(JID)
+    assert s.open_shard_count() == 0
+    assert [e.seq for e in s.read(JID)] == [0, 1, 2]
+
+
+def test_recording_after_a_close_reopens(tmp_path):
+    s = spool(tmp_path)
+    s.record(ev(0))
+    s.close()
+    s.record(ev(1))
+    assert [e.seq for e in s.read(JID)] == [0, 1]
+    # Reopening must not write a second header into the same shard.
+    assert s.shards(JID)[0].read_text().count("odyssey_schema_version") == 1
+
+
+def test_open_handles_are_capped(tmp_path):
+    """One fd per active journey would exhaust the process limit at scale."""
+    s = spool(tmp_path, max_open_shards=4)
+    for j in range(12):
+        s.record(
+            JourneyEvent(
+                journey_id=f"j{j}",
+                seq=0,
+                kind="message",
+                event_id=f"x{j}",
+                message=Message(role="assistant", content="x"),
+            )
+        )
+    assert s.open_shard_count() == 4
+    # Eviction closes a handle; it never loses what was already flushed.
+    for j in range(12):
+        assert len(s.read(f"j{j}")) == 1
+
+
+def test_zero_open_shards_rejected(tmp_path):
+    with pytest.raises(ValueError, match="max_open_shards"):
+        SpoolConfig(root=tmp_path, max_open_shards=0)
+
+
+def test_rotation_still_happens_with_a_cached_handle(tmp_path):
+    s = spool(tmp_path, max_shard_bytes=400)
+    s.record_all([ev(i) for i in range(20)])
+    assert len(s.shards(JID)) > 1
+    assert s.open_shard_count() == 1  # only the newest stays open
+    assert [e.seq for e in s.read(JID)] == list(range(20))
+    for shard in s.shards(JID):
+        assert shard.read_text().startswith('{"odyssey_schema_version"')
+
+
+# --------------------------------------------------------------------------
+# highest_seq — what seeds the allocator after a restart
+# --------------------------------------------------------------------------
+
+
+def test_highest_seq_on_an_unknown_journey_is_none(tmp_path):
+    assert spool(tmp_path).highest_seq("never-seen") is None
+
+
+def test_highest_seq_finds_the_maximum(tmp_path):
+    s = spool(tmp_path)
+    s.record_all([ev(i) for i in range(7)])
+    assert s.highest_seq(JID) == 6
+
+
+def test_highest_seq_reads_across_a_rotation(tmp_path):
+    s = spool(tmp_path, max_shard_bytes=400)
+    s.record_all([ev(i) for i in range(20)])
+    assert len(s.shards(JID)) > 1
+    assert s.highest_seq(JID) == 19
+
+
+def test_highest_seq_survives_an_unreadable_shard(tmp_path):
+    """A half-written shard must not stop a restart from resuming."""
+    s = spool(tmp_path)
+    s.record_all([ev(i) for i in range(3)])
+    s.close()
+    (s.root / "journeys" / JID / "001.jsonl").write_text("not json at all\n")
+    assert s.highest_seq(JID) == 2

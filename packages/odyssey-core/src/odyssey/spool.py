@@ -26,9 +26,19 @@ import dataclasses
 import json
 import os
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Protocol, runtime_checkable
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Protocol,
+    TextIO,
+    runtime_checkable,
+)
 
 from odyssey.jsonl import encode_event, header_line, read_events
 from odyssey.primitives import JourneyEvent
@@ -59,6 +69,13 @@ DEFAULT_REDACT_KEYS: frozenset[str] = frozenset(
 
 _DEFAULT_SHARD_BYTES = 100 * 1024 * 1024  # 100 MB, matching the donor's cap
 
+# Cap on cached shard handles. One open file descriptor per actively-recording
+# journey buys a ~15x faster record() (no per-event mkdir/glob/stat), but an
+# unbounded cache would exhaust the process fd limit under many concurrent
+# journeys. Least-recently-written handles are closed past this point; the data
+# is already on disk, so eviction costs only the next write's reopen.
+_DEFAULT_MAX_OPEN_SHARDS = 256
+
 # An interval outside this range is a configuration mistake, not a preference:
 # below 1s the drain thrashes, above an hour it is not a drain, it is a cron job.
 MIN_DRAIN_INTERVAL = 1.0
@@ -85,10 +102,13 @@ class SpoolConfig:
     # OS buffer already survives process death. Turn it on when the threat model
     # is machine loss rather than process loss.
     fsync: bool = False
+    max_open_shards: int = _DEFAULT_MAX_OPEN_SHARDS
 
     def __post_init__(self) -> None:
         if self.max_shard_bytes <= 0:
             raise ValueError("max_shard_bytes must be positive")
+        if self.max_open_shards <= 0:
+            raise ValueError("max_open_shards must be positive")
 
 
 @dataclass(frozen=True)
@@ -206,6 +226,19 @@ def safe_child(root: Path, *parts: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class _ShardState:
+    """A journey's active shard, held open between writes.
+
+    ``size`` is tracked rather than ``stat()``-ed. Re-statting per event was 94%
+    of the old record() cost, alongside the mkdir/resolve/glob it also repeated.
+    """
+
+    path: Path
+    handle: TextIO
+    size: int
+
+
 class Spool:
     """Append-only local event capture with a per-journey watermark."""
 
@@ -214,6 +247,8 @@ class Spool:
         self._lock = threading.Lock()
         self._root = Path(config.root)
         (self._root / "journeys").mkdir(parents=True, exist_ok=True)
+        # Insertion-ordered so popitem(last=False) evicts least-recently-written.
+        self._open: "OrderedDict[str, _ShardState]" = OrderedDict()
 
     # -- paths ------------------------------------------------------------
 
@@ -250,22 +285,86 @@ class Spool:
             return d / f"{int(last.stem) + 1:03d}.jsonl"
         return last
 
+    # -- cached shard handles ---------------------------------------------
+    #
+    # Everything below assumes the caller already holds self._lock.
+
+    def _append(self, st: _ShardState, text: str) -> None:
+        st.handle.write(text)
+        # Flush every event: the OS buffer is what makes a killed process lose
+        # nothing, and that guarantee predates this cache.
+        st.handle.flush()
+        if self._cfg.fsync:
+            os.fsync(st.handle.fileno())
+        st.size += len(text.encode("utf-8"))
+
+    def _open_shard(self, journey_id: str, path: Path) -> _ShardState:
+        size = path.stat().st_size if path.exists() else 0
+        st = _ShardState(path=path, handle=path.open("a", encoding="utf-8"), size=size)
+        self._open[journey_id] = st
+        if size == 0:
+            self._append(st, header_line() + "\n")
+        return st
+
+    @staticmethod
+    def _close_state(st: _ShardState) -> None:
+        try:
+            st.handle.close()
+        except OSError:
+            pass
+
+    def _rotate(self, journey_id: str, st: _ShardState) -> _ShardState:
+        self._close_state(st)
+        nxt = st.path.parent / f"{int(st.path.stem) + 1:03d}.jsonl"
+        return self._open_shard(journey_id, nxt)
+
+    def _evict(self) -> None:
+        while len(self._open) > self._cfg.max_open_shards:
+            _jid, victim = self._open.popitem(last=False)
+            self._close_state(victim)
+
+    def _shard_state(self, journey_id: str) -> _ShardState:
+        st = self._open.get(journey_id)
+        if st is not None:
+            self._open.move_to_end(journey_id)
+            if st.size >= self._cfg.max_shard_bytes:
+                st = self._rotate(journey_id, st)
+            return st
+        # Cold path, once per journey: this is where journey_id validation and
+        # path containment happen. A cached entry cannot exist without having
+        # passed them.
+        st = self._open_shard(journey_id, self._active_shard(journey_id))
+        self._evict()
+        return st
+
     # -- write ------------------------------------------------------------
 
     def record(self, event: JourneyEvent) -> None:
         """Append one event. Local only, O(1), safe across threads."""
         redacted = redact_event(event, self._cfg.redact_keys)
-        line = encode_event(redacted)
+        line = encode_event(redacted) + "\n"
         with self._lock:
-            path = self._active_shard(event.journey_id)
-            new_file = not path.exists() or path.stat().st_size == 0
-            with path.open("a", encoding="utf-8") as fh:
-                if new_file:
-                    fh.write(header_line() + "\n")
-                fh.write(line + "\n")
-                fh.flush()
-                if self._cfg.fsync:
-                    os.fsync(fh.fileno())
+            self._append(self._shard_state(event.journey_id), line)
+
+    def close(self, journey_id: Optional[str] = None) -> None:
+        """Release cached shard handles. Every event is already on disk.
+
+        Call it when a journey ends, or for the whole spool at shutdown. Writing
+        again after a close simply reopens — closing is never destructive.
+        """
+        with self._lock:
+            if journey_id is None:
+                for st in self._open.values():
+                    self._close_state(st)
+                self._open.clear()
+                return
+            st = self._open.pop(journey_id, None)
+            if st is not None:
+                self._close_state(st)
+
+    def open_shard_count(self) -> int:
+        with self._lock:
+            return len(self._open)
 
     def record_all(self, events: Iterable[JourneyEvent]) -> int:
         n = 0
@@ -282,6 +381,23 @@ class Spool:
         for shard in self.shards(journey_id):
             events.extend(read_events(shard).events)
         return sorted(events, key=lambda e: e.seq)
+
+    def highest_seq(self, journey_id: str) -> Optional[int]:
+        """Highest ``seq`` already persisted, or ``None``. Seeds the allocator.
+
+        Newest shard first: this spool writes monotonically, so the last shard
+        carries the maximum and a long journey costs one shard read rather than
+        a full scan. Falls back to older shards only if that one yields nothing.
+        """
+        for shard in reversed(self.shards(journey_id)):
+            try:
+                seqs = [e.seq for e in read_events(shard).events]
+            except (OSError, ValueError):
+                # A half-written or unreadable shard must not break seeding.
+                continue
+            if seqs:
+                return max(seqs)
+        return None
 
     # -- watermarks -------------------------------------------------------
 

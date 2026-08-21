@@ -339,3 +339,72 @@ def test_steps_are_cumulative_and_grow_by_turn():
     counts = [len(s.messages) for s in r.journey.steps]
     assert counts == sorted(counts)
     assert counts[-1] == 3  # system + user + assistant
+
+
+# --------------------------------------------------------------------------
+# Writer conflict
+#
+# `seq` is allocated per process, so two processes recording one journey issue
+# the same numbers for different turns. The result reads as a valid journey while
+# actually interleaving two conversations — the one corruption that must never
+# reach a corpus quietly. The fold has to catch it, which is the whole reason
+# writer identity is stamped into event metadata.
+# --------------------------------------------------------------------------
+
+
+def written_by(event: JourneyEvent, writer: str) -> JourneyEvent:
+    from odyssey.primitives import WRITER_META_KEY
+
+    return dataclasses.replace(event, metadata={WRITER_META_KEY: writer})
+
+
+def test_a_single_writer_is_reported_and_stays_trainable():
+    events = [written_by(e, "w1") for e in basic_stream()]
+    result = fold(events, data_source="t")
+    assert result.writers == ["w1"]
+    assert not result.writer_conflict
+    assert result.trainable
+    assert result.incomplete_reason is None
+
+
+def test_two_writers_are_detected():
+    events = basic_stream()
+    tagged = [written_by(e, "w1" if i % 2 == 0 else "w2") for i, e in enumerate(events)]
+    result = fold(tagged, data_source="t")
+    assert sorted(result.writers) == ["w1", "w2"]
+    assert result.writer_conflict
+
+
+def test_a_writer_conflict_blocks_export_even_with_no_gaps():
+    """Complete-looking and still unexportable: that is the point."""
+    events = basic_stream()
+    tagged = [written_by(e, "w1" if i % 2 == 0 else "w2") for i, e in enumerate(events)]
+    result = fold(tagged, data_source="t")
+    assert result.missing_seqs == []
+    assert result.terminated
+    assert not result.complete
+    assert not result.trainable
+
+
+def test_the_conflict_names_itself_in_the_reason():
+    events = basic_stream()
+    tagged = [written_by(e, "w1" if i % 2 == 0 else "w2") for i, e in enumerate(events)]
+    reason = fold(tagged, data_source="t").incomplete_reason
+    assert reason is not None
+    assert "writer conflict" in reason
+    assert "w1" in reason and "w2" in reason
+
+
+def test_untagged_events_report_no_writers_and_stay_trainable():
+    """Events written before this layer existed must not become unexportable."""
+    result = fold(basic_stream(), data_source="t")
+    assert result.writers == []
+    assert not result.writer_conflict
+    assert result.trainable
+
+
+def test_a_gap_is_reported_ahead_of_a_missing_terminal():
+    events = [msg_event(0, "user", "a"), msg_event(2, "assistant", "b")]
+    reason = fold(events, data_source="t").incomplete_reason
+    assert reason is not None
+    assert "missing seq [1]" in reason
