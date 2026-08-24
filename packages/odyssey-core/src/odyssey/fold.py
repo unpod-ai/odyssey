@@ -45,6 +45,16 @@ _SUPERSEDING: frozenset[str] = frozenset({"regenerated", "user_edit"})
 # not on the original turns".
 SUMMARIZATION_FLAG = "summarization_boundary"
 
+# A turn the speaker never finished: the caller barged in and the agent stopped
+# mid-utterance. Voice producers set it (see integrations/livekit.py); text ones
+# never will.
+#
+# It is structural, like the summarization flag, and it beats an explicit
+# thumbs-up on purpose. Consider which error is worse: dropping a truncated turn
+# a human happened to approve loses one example, while training on it teaches the
+# model to stop mid-sentence — a defect that shows up in every future generation.
+INTERRUPTED_FLAG = "interrupted"
+
 
 @dataclass(frozen=True)
 class FoldResult:
@@ -107,13 +117,18 @@ def derive_trainable_status(
     Precedence, highest first:
 
     1. ``summarization_boundary`` — structural; the turn is a compaction artifact
-    2. ``superseded``            — a ``regenerated``/``user_edit`` signal replaced it
-    3. ``not_trainable``         — an explicit ``thumbs_down``
-    4. ``trainable``             — an explicit ``thumbs_up``
-    5. role default              — assistant is trainable, everything else is not
+    2. ``interrupted``           — structural; the speaker never finished the turn
+    3. ``superseded``            — a ``regenerated``/``user_edit`` signal replaced it
+    4. ``not_trainable``         — an explicit ``thumbs_down``
+    5. ``trainable``             — an explicit ``thumbs_up``
+    6. role default              — assistant is trainable, everything else is not
 
-    Rule 5 is the whole point: only the model's own outputs carry gradient. A
+    Rule 6 is the whole point: only the model's own outputs carry gradient. A
     system prompt or a tool result is context, not a target.
+
+    Rules 1 and 2 sit above the human signals because they describe what the turn
+    *is*, not how good it was. A cut-off utterance is not a valid target even if
+    someone approved its content.
     """
     superseded: set[int] = set()
     thumbs_down: set[int] = set()
@@ -131,6 +146,11 @@ def derive_trainable_status(
         meta = msg.metadata or {}
         if meta.get(SUMMARIZATION_FLAG):
             out[seq] = "summarization_boundary"
+        elif meta.get(INTERRUPTED_FLAG) and msg.role == "assistant":
+            # Only the agent's own turns matter here: a user being cut off is
+            # normal conversation, while a half-generated agent reply is a target
+            # that would teach truncation.
+            out[seq] = "not_trainable"
         elif seq in superseded:
             out[seq] = "superseded"
         elif seq in thumbs_down:

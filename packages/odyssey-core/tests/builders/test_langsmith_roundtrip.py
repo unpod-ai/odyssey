@@ -22,7 +22,7 @@ from odyssey.builders.messages import messages_from_openai_chat
 def _langsmith_style_agent_loop() -> list[dict]:
     """Canned OpenAI-format messages resembling a LangSmith export.
 
-    Three steps: system/user bootstrap, assistant tool-call, tool response,
+    One turn: system/user bootstrap, assistant tool-call, tool response,
     assistant final. Shape matches what ``LangSmithProvider`` emits after
     parsing (canonical OpenAI roles, JSON-string ``arguments``).
     """
@@ -76,9 +76,9 @@ def test_langsmith_roundtrip_produces_well_formed_journey():
 
     assert journey.task.conversation_id == "conv_langsmith_demo"
     assert journey.task.data_source == "langsmith_export_roundtrip_test"
-    # system + user → step 0 (initial), tool → step 1, final assistant → step 2
-    assert len(journey.steps) == 3
-    # Last step carries every message in the conversation.
+    # One user->agent exchange, tool call included, is one turn: one step
+    # carrying every message in the conversation.
+    assert len(journey.steps) == 1
     assert len(journey.steps[-1].messages) == 5
 
     # Tool-call metrics flow through.
@@ -192,8 +192,9 @@ def test_langsmith_roundtrip_multi_turn_tool_loop_step_count():
         conversation_id="multi_turn",
         data_source="langsmith_export_roundtrip_test",
     )
-    # user bootstrap + 2 tool-close-step + 1 final-assistant-close-step = 4 steps
-    # (tool messages split into their own step boundaries; bare assistant with
-    # tool_calls does NOT close a step; final assistant does.)
-    assert len(journey.steps) == 4
+    # Two tool cycles, but the user only asked once, so it is one turn and one
+    # step. The cycles are still fully present inside its message list -- an
+    # exporter that wants per-LLM-call granularity can recover it from there.
+    assert len(journey.steps) == 1
+    assert len(journey.steps[0].messages) == 6
     assert journey.metrics.num_tool_calls == 2

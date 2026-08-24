@@ -107,7 +107,13 @@ def test_cumulative_steps_simple():
     assert all(m.content is not None for m in steps[-1].messages)
 
 
-def test_cumulative_steps_tool_ends_step():
+def test_cumulative_steps_tool_roundtrip_stays_in_one_turn():
+    """A tool call and its result do not end a step.
+
+    The user asked once; the agent looking something up before answering is
+    still that one exchange. Splitting on the tool response produced three
+    near-identical cumulative snapshots of a single turn.
+    """
     msgs = [
         Message(role="user", content="calc"),
         Message(role="assistant", tool_calls=[ToolCall(name="c", arguments={})]),
@@ -118,9 +124,62 @@ def test_cumulative_steps_tool_ends_step():
         Message(role="assistant", content="final"),
     ]
     steps = build_cumulative_steps(msgs)
-    assert len(steps) >= 2
-    # Last step includes everything
-    assert len(steps[-1].messages) == 4
+    assert len(steps) == 1
+    assert len(steps[0].messages) == 4
+    assert steps[0].messages[-1].content == "final"
+
+
+def test_cumulative_steps_one_per_turn():
+    """Two exchanges, two steps, cumulative."""
+    msgs = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="q1"),
+        Message(role="assistant", content="a1"),
+        Message(role="user", content="q2"),
+        Message(role="assistant", content="a2"),
+    ]
+    steps = build_cumulative_steps(msgs)
+    assert [len(s.messages) for s in steps] == [3, 5]
+
+
+def test_cumulative_steps_consecutive_assistant_utterances_are_one_turn():
+    """A voice agent emits one item per spoken utterance.
+
+    Snapshotting each one gave a step per utterance -- 33 steps for a 15-turn
+    phone call, every one a near-copy of the last.
+    """
+    msgs = [
+        Message(role="user", content="hello"),
+        Message(role="assistant", content="Three players, got it."),
+        Message(role="assistant", content="Let me check availability."),
+        Message(role="user", content="ok"),
+        Message(role="assistant", content="Found a slot."),
+    ]
+    steps = build_cumulative_steps(msgs)
+    assert [len(s.messages) for s in steps] == [3, 5]
+
+
+def test_cumulative_steps_consecutive_user_utterances_are_one_turn():
+    """Split STT finals and barge-in both produce back-to-back user messages."""
+    msgs = [
+        Message(role="user", content="two players"),
+        Message(role="user", content="for the twenty fourth"),
+        Message(role="assistant", content="noted"),
+    ]
+    steps = build_cumulative_steps(msgs)
+    assert len(steps) == 1
+
+
+def test_cumulative_steps_trailing_user_turn_is_kept_but_untrainable():
+    """The caller's last words survive even with no reply to pair them with."""
+    msgs = [
+        Message(role="user", content="book it"),
+        Message(role="assistant", content="done"),
+        Message(role="user", content="thanks"),
+    ]
+    steps = build_cumulative_steps(msgs)
+    assert [s.messages[-1].role for s in steps] == ["assistant", "user"]
+    assert steps[-1].messages[-1].content == "thanks"
 
 
 def test_cumulative_steps_mid_system_swap_is_copy_on_write():

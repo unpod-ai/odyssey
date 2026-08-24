@@ -68,10 +68,12 @@ def test_anthropic_tool_results_create_step_boundaries():
         },
     ]
     msgs = messages_from_anthropic_messages(raw)
+    # The role fix is what this guards: Anthropic ships a tool_result inside a
+    # `user` message, and it must land as role `tool`. Read it off the message,
+    # not off a step count -- the whole roundtrip is one turn, so one step.
+    assert [m.role for m in msgs] == ["user", "assistant", "tool", "assistant"]
     steps = build_cumulative_steps(msgs)
-    # We expect at least: (user+assistant+tool) cut, then final assistant cut.
-    # Without the role fix the tool cut was missed, collapsing steps.
-    assert len(steps) >= 2
+    assert len(steps) == 1
     assert steps[-1].messages[-1].content == "the answer is 42"
 
 

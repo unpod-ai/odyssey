@@ -545,6 +545,7 @@ nothing imports is a phantom dep, and the change that needs one adds it.
 | `diagnostics.py` | 295 | `scan()` a spool, `render_journey()` for `show`, formatters |
 | `integrations/_base.py` | 283 | Request+response → events: prefix dedup, unknown-block handling |
 | `integrations/anthropic.py` | 249 | Drop-in sync/async client, opt-in patch. Provider imported **inside** `__init__` |
+| `integrations/livekit.py` | 677 | One `attach()` per `AgentSession`. Coalesces streamed utterances into one message per turn, reads the system prompt off the live agent |
 
 **`context.py`** — the piece that made everything else possible.
 `SeqAllocator.next()` holds its lock across the seed call deliberately: releasing
@@ -591,10 +592,10 @@ skipped one is merely a hole. The discrepancy is counted and shows in `health()`
 | `primitives.py` | 376 | `JourneyEvent` and the vocabulary it validates against |
 | `spool.py` | 539 | Append-only capture, cached shard handles, watermark, `drain()` |
 | `jsonl.py` | 326 | Versioned codec: truncation handling, per-line rejection |
-| `fold.py` | 299 | Event fold + projection + writer-conflict detection |
+| `fold.py` | 319 | Event fold + projection + writer-conflict detection |
 | `builders/messages.py` | 665 | Provider *parsers* (OpenAI, Anthropic, Vercel, flat) |
 | `builders/journey.py` | 213 | Journey assembly, metrics, content hash |
-| `builders/steps.py` | 88 | Cumulative steps, copy-on-write system prefix |
+| `builders/steps.py` | 161 | One cumulative step per turn, copy-on-write system prefix |
 | `builders/metrics.py` | 57 | Tool counts, error rate, elapsed time |
 | `builders/reward.py` | 42 | Scalar → `Reward` |
 | `hashing.py` | 43 | Canonical JSON → SHA-256 |
@@ -635,9 +636,11 @@ labelling → projection. `complete` requires no gaps, a terminal, **and at most
 one writer**.
 
 `derive_trainable_status` precedence, highest first: `summarization_boundary` →
-`superseded` → `thumbs_down` → `thumbs_up` → role default (assistant trainable,
-everything else not). Rule 5 is the point: only the model's own outputs carry
-gradient.
+`interrupted` → `superseded` → `thumbs_down` → `thumbs_up` → role default
+(assistant trainable, everything else not). The last rule is the point: only the
+model's own outputs carry gradient. The two structural flags outrank the human
+signals because they describe what the turn *is*, not how good it was — a
+barged-in half-utterance is not a valid target even if someone approved it.
 
 ---
 
@@ -681,8 +684,8 @@ complete       True
 trainable      True
 writers        ['dc3540c9e570']
 reason         None
-steps          3
-statuses       ['not_trainable', 'not_trainable', 'trainable']
+steps          1
+statuses       ['trainable']
 agg reward     0.9
 ```
 
@@ -710,7 +713,9 @@ Five things worth noticing:
 
 - **No `seq` anywhere in the calling code.** That is the whole layer.
 - **`api_key` was redacted before it hit disk.** `day` survived untouched.
-- **8 events → 3 steps.** Steps were never recorded; the fold produced them.
+- **8 events → 1 step.** Steps were never recorded; the fold produced them. One
+  is right: the caller asked once, so the whole call-a-tool-then-answer sequence
+  is a single turn.
 - **The system prompt and tool schema were each recorded once** despite being
   resent on every call.
 - **`flush()` was never called.** `atexit` drained it.
@@ -798,7 +803,7 @@ what you recorded, and which of it a model would learn from."
 
 ```
 journey call_7781
-  14 events · 6 steps · model claude-opus-5 · TRAINABLE
+  14 events · 4 steps · model claude-opus-5 · TRAINABLE
 
     0 · system    You are a booking assistant.
     1 > user      Hi, I need an appointment.
@@ -821,6 +826,10 @@ training view
   reward         : 0.9 · tool calls 1 · failures 0
   NOTE: no exporter writes these to an SFT/DPO file yet (items 5.4 / 5.5).
 ```
+
+The four steps fall on the three user turns plus the regenerated answer: seq 8
+ends a step of its own because an answer that was regenerated away is an
+alternative at one decision point, not the next thing the agent said.
 
 Three things that view makes concrete: `★` marks the turns that carry gradient
 (assistant outputs only — a user turn or a tool result is context, not a target);

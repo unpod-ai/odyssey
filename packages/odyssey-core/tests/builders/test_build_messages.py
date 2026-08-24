@@ -126,9 +126,10 @@ def test_openai_legacy_function_roundtrip_builds_journey():
     )
     assert journey.metrics.num_tool_calls == 1
     assert journey.metrics.num_tool_failures == 0
-    # Step 0 (initial user+assistant), step 1 (tool response closes), step 2
-    # (final assistant closes)
-    assert len(journey.steps) == 3
+    # One exchange -- ask, look up, answer -- so one cumulative step holding all
+    # four messages.
+    assert len(journey.steps) == 1
+    assert len(journey.steps[0].messages) == 4
 
 
 def test_openai_tool_response_role():

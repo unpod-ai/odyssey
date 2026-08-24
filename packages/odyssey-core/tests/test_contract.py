@@ -261,11 +261,10 @@ def test_docs_quickstart_still_works(tmp_path):
 
     result = fold(spool.read("call_8891"), data_source="voice")
     assert result.trainable
-    assert len(result.journey.steps) == 2
-    assert [s.trainable_status for s in result.journey.steps] == [
-        "not_trainable",
-        "trainable",
-    ]
+    # One user->agent exchange is one turn, so one step, and it ends on the
+    # assistant message that is the thing worth training on.
+    assert len(result.journey.steps) == 1
+    assert [s.trainable_status for s in result.journey.steps] == ["trainable"]
 
 
 def test_docs_reference_only_symbols_that_exist():
