@@ -171,6 +171,7 @@ def fold(
     conversation_id: Optional[str] = None,
     trace_id: Optional[str] = None,
     task_metadata: Optional[Dict[str, Any]] = None,
+    extra_telemetry: Optional[Dict[str, Any]] = None,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
 ) -> FoldResult:
@@ -256,10 +257,22 @@ def fold(
         data_source=data_source,
         reward=reward,
         task_metadata=task_metadata,
+        # Journey-level caller tags — `agent_id`, `handler`, `session_id`. The
+        # builder reads only `num_turns`/`total_tokens`/`total_cost` out of
+        # `task_metadata` and drops the rest, so without this the shard header's
+        # `journey_metadata` would survive the wire and then vanish at the export
+        # hop. `telemetry.data` is the schema's own home for provider context.
+        extra_telemetry=extra_telemetry,
         error=error,
         start_time=start_time,
         end_time=end_time,
-        termination_reason=termination_reason,
+        # A journey with no terminal event has not ended. Passing None lets the
+        # builder default it to ENV_DONE, stamping "clean ending" on a call that
+        # may still be running or was cut off mid-drain — a lie sitting inside
+        # the same object whose `terminated` flag says False. `NONE` is the
+        # schema's own word for "no reason known"; the missing terminal is
+        # reported separately by `incomplete_reason`.
+        termination_reason=termination_reason or "NONE",
         trace_id=trace_id,
         # Journey-level model_id only when the journey never switched models;
         # otherwise a single label would misattribute. Per-event stays authoritative.
@@ -292,7 +305,8 @@ def _populate_derived(
     """Fill the metrics upstream declared but never assigned.
 
     ``aggregated_reward`` and ``num_tool_response_none`` had no producer in the
-    source SDK; neither did ``Step.trainable_status``. Each gets one here.
+    source SDK; neither did ``Step.trainable_status`` or ``Task.num_turns``. Each
+    gets one here.
     """
     none_responses = sum(
         1
@@ -316,4 +330,12 @@ def _populate_derived(
         )
         for step in journey.steps
     ]
-    return dataclasses.replace(journey, metrics=metrics, steps=steps)
+    # A Step is a Turn's representation in the journey — one per turn — so the
+    # turn count is known the moment the projection exists. Left null, every
+    # folded journey reported no turns at all, which is the field a consumer
+    # filters short calls on. Only filled when the caller did not pass its own
+    # count in `task_metadata`: a provider that knows better wins.
+    task = journey.task
+    if task.num_turns is None:
+        task = dataclasses.replace(task, num_turns=len(steps))
+    return dataclasses.replace(journey, task=task, metrics=metrics, steps=steps)

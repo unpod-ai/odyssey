@@ -1,0 +1,133 @@
+{
+  "_odyssey": {
+    "complete": true,
+    "journey_id": "call_7781",
+    "model_ids": [
+      "claude-opus-5"
+    ],
+    "schema_version": "1.1",
+    "steps_written": "last",
+    "terminated": true
+  },
+  "execution_metrics": {
+    "termination_reason": "ENV_DONE"
+  },
+  "metrics": {
+    "aggregated_reward": 0.9,
+    "num_tool_calls": 1,
+    "num_tool_failures": 0,
+    "num_tool_response_none": 0,
+    "steps": 4,
+    "tool_error_rate": 0.0
+  },
+  "model_id": "claude-opus-5",
+  "reward": {
+    "aggregated_value": 0.9,
+    "aggregation_method": "identity",
+    "components": [
+      {
+        "name": "score",
+        "range": [
+          0.0,
+          1.0
+        ],
+        "scaled_value": 0.9,
+        "value": 0.9,
+        "weight": 1.0
+      }
+    ]
+  },
+  "steps": [
+    {
+      "messages": [
+        {
+          "content": "You are a booking assistant.",
+          "role": "system",
+          "trainable_status": "not_trainable"
+        },
+        {
+          "content": "Hi, I need an appointment.",
+          "role": "user",
+          "trainable_status": "not_trainable"
+        },
+        {
+          "content": "Sure \u2014 what day works for you?",
+          "role": "assistant",
+          "trainable_status": "trainable"
+        },
+        {
+          "content": "Tuesday afternoon please.",
+          "role": "user",
+          "trainable_status": "not_trainable"
+        },
+        {
+          "content": "Tuesday works. What time?",
+          "role": "assistant",
+          "trainable_status": "trainable"
+        },
+        {
+          "content": "Yes, 3pm.",
+          "role": "user",
+          "trainable_status": "not_trainable"
+        },
+        {
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "arguments": {
+                "day": "tue",
+                "time": "15:00"
+              },
+              "id": "tc_1",
+              "name": "book"
+            }
+          ],
+          "trainable_status": "trainable"
+        },
+        {
+          "role": "tool",
+          "tool_response": {
+            "arguments": {
+              "day": "tue",
+              "time": "15:00"
+            },
+            "id": "tc_1",
+            "name": "book",
+            "response": {
+              "confirmed": true,
+              "ref": "BK-4417"
+            }
+          },
+          "trainable_status": "not_trainable"
+        },
+        {
+          "content": "Booked for Tuesday 3pm.",
+          "role": "assistant",
+          "trainable_status": "superseded"
+        },
+        {
+          "content": "Done \u2014 Tuesday 3pm, ref BK-4417.",
+          "role": "assistant",
+          "trainable_status": "trainable"
+        }
+      ],
+      "trainable_status": "trainable"
+    }
+  ],
+  "task": {
+    "conversation_id": "call_7781",
+    "data_source": "unknown",
+    "id": "unknown:call_7781",
+    "num_steps": 4,
+    "num_turns": 4
+  },
+  "telemetry": {
+    "data": {
+      "channel": "voice",
+      "content_hash": "5ccaae4f89fe40cf36b28342e8b013ada03ba2dc5afbb1827f9a43c32559587d",
+      "conversation_id": "call_7781",
+      "idempotency_key": "unknown:call_7781:5ccaae4f89fe40cf36b28342e8b013ada03ba2dc5afbb1827f9a43c32559587d"
+    },
+    "source": "unknown"
+  }
+}

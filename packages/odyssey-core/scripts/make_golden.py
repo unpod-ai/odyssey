@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from odyssey.jsonl import encode_event, header_line  # noqa: E402
 from odyssey.primitives import (  # noqa: E402
     JourneyEvent,
+    JourneyHeader,
     Message,
     Reward,
     RewardComponent,
@@ -36,6 +37,8 @@ from odyssey.primitives import (  # noqa: E402
 FIXTURE = Path(__file__).resolve().parent.parent / "tests/fixtures/golden_journey.jsonl"
 JID = "j_golden_0001"
 MODEL = "openai/gpt-4.1-mini"
+SOURCE = "golden"
+TRACE = "trace_golden_0001"
 
 
 def _ts(seq: int) -> str:
@@ -162,9 +165,31 @@ def golden_events() -> list[JourneyEvent]:
     ]
 
 
+def golden_header() -> JourneyHeader:
+    """The v1.1 header the fixture must carry.
+
+    Part of the contract, not decoration: a producer that writes only the version
+    key leaves the consumer to be told out-of-band what the file records, which
+    is the failure v1.1 exists to end. `data_source` in particular is what lets
+    `fold()` label the journey from the file rather than from its caller.
+
+    `journey_metadata` holds the journey-level caller tags — the ones that used
+    to be copied onto every event.
+    """
+    return JourneyHeader(
+        journey_id=JID,
+        data_source=SOURCE,
+        trace_id=TRACE,
+        started_at=_ts(0),
+        journey_metadata={"tenant": "acme", "channel": "voice"},
+    )
+
+
 def render() -> str:
     return (
-        header_line() + "\n" + "".join(encode_event(e) + "\n" for e in golden_events())
+        header_line(header=golden_header())
+        + "\n"
+        + "".join(encode_event(e) + "\n" for e in golden_events())
     )
 
 

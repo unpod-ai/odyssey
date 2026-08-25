@@ -11,10 +11,10 @@ drain re-sends the same events. A returned boolean would be ignored.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from odyssey.jsonl import write_events
-from odyssey.primitives import JourneyEvent
+from odyssey.primitives import JourneyEvent, JourneyHeader
 
 
 class FileSink:
@@ -32,5 +32,19 @@ class FileSink:
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
 
-    def send(self, journey_id: str, events: List[JourneyEvent]) -> None:
-        write_events(self.out_dir / f"{journey_id}.jsonl", events, append=True)
+    def send(
+        self,
+        journey_id: str,
+        events: List[JourneyEvent],
+        header: Optional[JourneyHeader] = None,
+    ) -> None:
+        """Append this batch, writing the header only when creating the file.
+
+        A resumed drain sends the tail into a file that already carries the
+        header from the first drain, so ``write_events`` skipping it on append is
+        what keeps a multi-drain output a single valid document rather than a
+        header interleaved with events.
+        """
+        write_events(
+            self.out_dir / f"{journey_id}.jsonl", events, append=True, header=header
+        )

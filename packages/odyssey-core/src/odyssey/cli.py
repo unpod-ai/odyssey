@@ -38,6 +38,49 @@ def _cmd_push(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    """Turn drained events into the artifact a trainer or the platform consumes.
+
+    `push` produces the wire format — append-only events, no cumulative state,
+    because shipping N steps costs O(N**2) where shipping N events costs O(N).
+    That is transport, not a deliverable. This folds those events back into one
+    `{conversation_id}.json` per conversation: task, steps, reward, metrics.
+
+    Incomplete journeys are still written, flagged under `_odyssey`, and listed
+    on stderr — the caller decides, but never by accident.
+
+    `--last-step` writes the final step alone. Each step carries the whole
+    conversation up to its turn, so the last one already holds every message and
+    every tool call; the rest are prefixes of it and cost O(N**2) bytes.
+    """
+    from odyssey.export import export_dir, export_spool
+
+    # Straight from the spool by default. That is where a developer's events
+    # already are, and requiring a `push` first to see the artifact for a call
+    # just recorded is a step with no purpose — reading the spool moves no
+    # watermark, so a later drain still ships everything.
+    if args.events:
+        result = export_dir(
+            Path(args.events),
+            Path(args.out),
+            journey_id=args.journey,
+            last_step_only=args.last_step,
+        )
+    else:
+        result = export_spool(
+            Path(args.spool),
+            Path(args.out),
+            journey_id=args.journey,
+            last_step_only=args.last_step,
+        )
+    print(f"exported {result.count}")
+    for cid, reason in sorted(result.incomplete.items()):
+        print(f"flagged  {cid}: {reason}", file=sys.stderr)
+    for err in result.errors:
+        print(f"error    {err}", file=sys.stderr)
+    return 0 if result.ok else 1
+
+
 def _cmd_status(args: argparse.Namespace) -> int:
     spool = Spool(SpoolConfig(root=Path(args.spool)))
     ids = spool.journey_ids()
@@ -112,6 +155,23 @@ def build_parser() -> argparse.ArgumentParser:
     push.add_argument("--out", required=True, help="output directory for JSONL")
     push.add_argument("--journey", default=None, help="drain only this journey_id")
     push.set_defaults(func=_cmd_push)
+
+    export = sub.add_parser(
+        "export", help="fold drained events into Trajectory JSON artifacts"
+    )
+    export.add_argument(
+        "--events",
+        default=None,
+        help="directory of drained *.jsonl (push --out); default: read --spool",
+    )
+    export.add_argument("--out", required=True, help="output directory for *.json")
+    export.add_argument("--journey", default=None, help="export only this journey_id")
+    export.add_argument(
+        "--last-step",
+        action="store_true",
+        help="write only the final step (it already holds the whole conversation)",
+    )
+    export.set_defaults(func=_cmd_export)
 
     status = sub.add_parser("status", help="show per-journey spool state")
     status.set_defaults(func=_cmd_status)

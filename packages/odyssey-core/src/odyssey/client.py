@@ -19,19 +19,43 @@ import signal
 import threading
 import traceback
 import warnings
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Protocol, Sequence, runtime_checkable
 from uuid import uuid4
 
 from odyssey.config import Config, resolve
 from odyssey.context import SeqAllocator
+from odyssey.primitives import TerminationReason
 from odyssey.sinks import FileSink
 from odyssey.spool import DrainResult, IntervalDrainer, Sink, Spool, SpoolConfig
 
 # How many recent failures to keep with their tracebacks. Enough to diagnose a
 # repeating fault, small enough to never be a memory concern.
 _ERROR_RING = 5
+
+# What a journey that was never closed is stamped with at process exit. `STALE`
+# is the schema's word for "recording stopped without an ending", and it is what
+# `capture.journey()` already uses for an abandoned scope.
+_ABANDONED = (
+    "recording ended at process exit without the session closing its journey"
+)
+
+
+@runtime_checkable
+class JourneyCloser(Protocol):
+    """Something holding an open journey that shutdown must be able to end.
+
+    Integrations register themselves so a journey whose provider never fired its
+    own close event still gets a terminal event. Without one, ``fold()`` cannot
+    tell "still running" from "lost the tail" and refuses to export the journey —
+    permanently, since nothing will ever arrive to complete it.
+    """
+
+    def close(
+        self, *, reason: TerminationReason = ..., error: Optional[str] = ...
+    ) -> None: ...
 
 
 @dataclass
@@ -82,9 +106,43 @@ class Client:
             self.drainer = IntervalDrainer(self.spool, self.sink, config.drain_interval)
             self.drainer.start()
 
+        # Recorders holding an open journey. Weak on purpose: the session keeps
+        # its recorder alive through the bound handlers it registered, so
+        # liveness here means "still recording". A recorder the app dropped is
+        # collected, and its journey was already unreachable.
+        self._open_journeys: "weakref.WeakSet[JourneyCloser]" = weakref.WeakSet()
+
         self._prev_sigterm: Any = None
         if config.handle_sigterm:
             self._install_sigterm()
+
+    # -- open journeys ----------------------------------------------------
+
+    def register_journey(self, closer: JourneyCloser) -> None:
+        """Track a recorder so shutdown can end its journey if nothing else did."""
+        self._open_journeys.add(closer)
+
+    def unregister_journey(self, closer: JourneyCloser) -> None:
+        """Stop tracking a recorder that closed or detached on its own."""
+        self._open_journeys.discard(closer)
+
+    def close_open_journeys(self) -> int:
+        """Terminate every journey still open. Returns how many were closed.
+
+        Runs before the final flush so the terminal events are in the spool when
+        it drains. Each closer is idempotent, so a session that already fired its
+        own close event is a no-op and keeps its real termination reason — this
+        only reaches journeys nothing else ended.
+        """
+        closed = 0
+        for closer in list(self._open_journeys):
+            try:
+                closer.close(reason="STALE", error=_ABANDONED)
+                closed += 1
+            except Exception as exc:  # noqa: BLE001 - shutdown must never raise
+                self.note_error("close_open_journeys", exc)
+        self._open_journeys.clear()
+        return closed
 
     # -- counters ---------------------------------------------------------
 
@@ -118,6 +176,12 @@ class Client:
         lose everything still in the spool. Hijacking a signal from inside a
         library is rude, which is why this is opt-in and chains rather than
         replaces.
+
+        Flush only — deliberately **not** ``close_open_journeys()``. The handler
+        this chains to is usually the host's own graceful shutdown (LiveKit's
+        installs one), which ends its sessions properly and emits a real
+        termination reason. Stamping ``STALE`` here would win the idempotent race
+        against it and mislabel a clean shutdown as an abandoned one.
         """
         try:
             previous = signal.getsignal(signal.SIGTERM)
@@ -151,7 +215,16 @@ class Client:
             return DrainResult(errors=[f"flush: {type(exc).__name__}: {exc}"])
 
     def shutdown(self) -> DrainResult:
-        """Flush, then release every cached shard handle."""
+        """End open journeys, flush, then release every cached shard handle.
+
+        Closing comes first so the terminal events are on disk before the drain
+        reads them. A journey that leaves this process without one is not merely
+        untidy: ``fold()`` reports it incomplete and refuses to export it, and
+        nothing will ever arrive to complete it.
+
+        SIGTERM deliberately does not do this — see :meth:`_install_sigterm`.
+        """
+        self.close_open_journeys()
         result = self.flush()
         self.spool.close()
         self._closed = True
@@ -177,6 +250,10 @@ class Client:
             "debug": self.config.debug,
             "closed": self._closed,
             "open_shards": self.spool.open_shard_count(),
+            # Journeys with no terminal event yet. A number that only grows is a
+            # leak of unexportable journeys, otherwise invisible until someone
+            # folds them and finds every one refused.
+            "open_journeys": len(self._open_journeys),
             "journeys_in_process": journeys,
             "next_seq": {j: self.allocator.peek(j) for j in journeys},
             "undrained": {j: len(self.spool.undrained(j)) for j in journeys},
@@ -321,13 +398,23 @@ def flush() -> Optional[DrainResult]:
 
 
 def shutdown() -> Optional[DrainResult]:
-    """Flush, close handles, and clear the singleton."""
+    """End open journeys, flush, close handles, and clear the singleton."""
     global _client, _warned_uninitialised
+    client = _client
+    if client is None:
+        with _client_lock:
+            _warned_uninitialised = False
+        return None
+    # Before the singleton is cleared, not after. A terminal event travels the
+    # same ambient path as every other event, so a recorder closed once
+    # `require_client()` returns None emits nothing at all — the journey would be
+    # left exactly as unexportable as if shutdown had never tried.
+    client.close_open_journeys()
     with _client_lock:
-        client = _client
-        _client = None
+        if _client is client:
+            _client = None
         _warned_uninitialised = False
-    return None if client is None else client.shutdown()
+    return client.shutdown()
 
 
 def health() -> Dict[str, Any]:

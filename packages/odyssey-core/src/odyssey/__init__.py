@@ -41,13 +41,21 @@ from odyssey.client import (
 )
 from odyssey.config import Config
 from odyssey.context import JourneyContext, SeqAllocator, bind, current
+from odyssey.export import (
+    ExportResult,
+    export_dir,
+    export_spool,
+    fold_shard,
+    save,
+)
 from odyssey.fold import FoldResult, fold
-from odyssey.jsonl import ReadResult, read_events, write_events
+from odyssey.jsonl import ReadResult, read_events, read_header, write_events
 from odyssey.primitives import (
     SCHEMA_VERSION,
     WRITER_META_KEY,
     Journey,
     JourneyEvent,
+    JourneyHeader,
     Message,
     Reward,
     RewardComponent,
@@ -87,6 +95,7 @@ __all__ = [
     "SeqAllocator",
     # Schema
     "JourneyEvent",
+    "JourneyHeader",
     "Message",
     "Signal",
     "Terminal",
@@ -102,7 +111,13 @@ __all__ = [
     # Read side
     "fold",
     "FoldResult",
+    "save",
+    "export_dir",
+    "export_spool",
+    "fold_shard",
+    "ExportResult",
     "read_events",
+    "read_header",
     "write_events",
     "ReadResult",
     # Storage and delivery

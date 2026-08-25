@@ -13,6 +13,7 @@ import warnings
 import pytest
 
 import odyssey
+import odyssey.client as client_mod
 from odyssey.context import current
 from odyssey.primitives import Message, ToolCall, ToolResponse
 
@@ -147,6 +148,13 @@ def test_journey_id_defaults_to_a_generated_one(tmp_path):
 
 
 def test_every_event_carries_the_writer_id(tmp_path):
+    """The one tag that must NOT be hoisted into the header.
+
+    A header is written once per shard by whoever opened it, so a second process
+    appending to that shard would inherit the first one's identity and the fold
+    would see one writer where there are two. Per-event is the only place the
+    collision is provable.
+    """
     client = start(tmp_path)
     with odyssey.journey(id="j") as j:
         j.message(Message(role="user", content="hi"))
@@ -156,11 +164,60 @@ def test_every_event_carries_the_writer_id(tmp_path):
     )
 
 
-def test_caller_metadata_reaches_every_event(tmp_path):
-    start(tmp_path)
-    with odyssey.journey(id="j", user_id="u_42") as j:
+def test_caller_metadata_is_stated_once_in_the_header(tmp_path):
+    """Journey-level tags belong on line 1, not on all N lines.
+
+    They are constant for the whole journey by definition, so repeating them per
+    event bought a reader nothing and was the majority of every line.
+    """
+    client = start(tmp_path)
+    with odyssey.journey(id="j", user_id="u_42", data_source="unit") as j:
         j.message(Message(role="user", content="hi"))
-    assert all((e.metadata or {}).get("user_id") == "u_42" for e in events("j"))
+
+    header = odyssey.read_events(client.spool.shards("j")[0]).header
+    assert header.journey_id == "j"
+    assert header.data_source == "unit"
+    assert header.journey_metadata == {"user_id": "u_42"}
+    assert all("user_id" not in (e.metadata or {}) for e in events("j"))
+
+
+def test_an_unserializable_tag_is_sanitized_before_it_reaches_the_header(tmp_path):
+    """`header_line` json-dumps the snapshot, so a raw enum there is fatal.
+
+    Not a hypothetical: it raised inside `_open_shard`, left a zero-byte shard,
+    and every event of the journey was dropped with only a counter to show it.
+    """
+    import enum
+
+    class Tier(enum.Enum):
+        GOLD = "gold"
+
+    client = start(tmp_path)
+    with odyssey.journey(id="j", tier=Tier.GOLD) as j:
+        j.message(Message(role="user", content="hi"))
+
+    header = odyssey.read_events(client.spool.shards("j")[0]).header
+    assert header.journey_metadata == {"tier": "gold"}
+    assert client.stats.events_dropped == 0
+
+
+def test_a_tag_added_mid_journey_rides_on_the_event(tmp_path):
+    """The header was already written when the tag appeared, so it goes on the
+    event — where a reader applying header-then-event gets the value that was
+    true at that seq."""
+    start(tmp_path)
+    with odyssey.journey(id="j", tenant="acme") as outer:
+        outer.message(Message(role="user", content="before"))
+        with odyssey.journey(id="j", escalated=True):
+            outer.message(Message(role="user", content="after"))
+
+    by_content = {
+        e.message.content: (e.metadata or {}) for e in events("j") if e.message
+    }
+    assert "escalated" not in by_content["before"]
+    assert by_content["after"]["escalated"] is True
+    # The original tag is in the header, so it never repeats on either event.
+    assert all("tenant" not in m for m in by_content.values())
 
 
 def test_terminal_is_emitted_on_exit(tmp_path):
@@ -492,7 +549,7 @@ def test_observe_outside_a_journey_opens_one_when_given_an_id(tmp_path):
 def test_a_broken_spool_does_not_break_the_caller(tmp_path):
     client = start(tmp_path)
 
-    def boom(_event):
+    def boom(_event, **_kw):
         raise OSError("disk full")
 
     client.spool.record = boom  # type: ignore[method-assign]
@@ -506,7 +563,7 @@ def test_debug_mode_reraises_instead_of_swallowing(tmp_path):
     """Local development wants the traceback, production wants the counter."""
     client = start(tmp_path, debug=True)
 
-    def boom(_event):
+    def boom(_event, **_kw):
         raise OSError("disk full")
 
     client.spool.record = boom  # type: ignore[method-assign]
@@ -519,7 +576,7 @@ def test_a_failing_flush_is_reported_not_raised(tmp_path):
     client = start(tmp_path)
 
     class Broken:
-        def send(self, journey_id, events):
+        def send(self, journey_id, events, header=None):
             raise RuntimeError("sink down")
 
     client.sink = Broken()
@@ -580,7 +637,7 @@ def test_health_surfaces_counters_and_swallowed_errors(tmp_path):
         j.message(Message(role="user", content="hi"))
         j.signal("thumbs_up")
 
-    def boom(_event):
+    def boom(_event, **_kw):
         raise OSError("nope")
 
     client.spool.record = boom  # type: ignore[method-assign]
@@ -702,3 +759,75 @@ def test_a_real_exception_still_closes_as_error(tmp_path):
     assert tail.terminal.termination_reason == "ERROR"
     assert tail.terminal.error is not None
     assert "real bug" in tail.terminal.error
+
+
+# --------------------------------------------------------------------------
+# The closer registry: integrations hand shutdown a way to end open journeys
+# --------------------------------------------------------------------------
+
+
+class _FakeRecorder:
+    """The shape `Client.register_journey` expects, and nothing more."""
+
+    def __init__(self):
+        self.calls = []
+
+    def close(self, *, reason="ENV_DONE", error=None):
+        self.calls.append((reason, error))
+
+
+def test_shutdown_closes_registered_journeys(tmp_path):
+    client = start(tmp_path)
+    rec = _FakeRecorder()
+    client.register_journey(rec)
+    assert client.health()["open_journeys"] == 1
+
+    odyssey.shutdown()
+    assert rec.calls == [("STALE", client_mod._ABANDONED)]
+
+
+def test_an_unregistered_journey_is_left_alone(tmp_path):
+    client = start(tmp_path)
+    rec = _FakeRecorder()
+    client.register_journey(rec)
+    client.unregister_journey(rec)
+
+    odyssey.shutdown()
+    assert rec.calls == []
+
+
+def test_one_closer_raising_does_not_strand_the_others(tmp_path):
+    """Shutdown is the last chance every other journey will get."""
+
+    class Exploding(_FakeRecorder):
+        def close(self, *, reason="ENV_DONE", error=None):
+            raise RuntimeError("boom")
+
+    client = start(tmp_path)
+    bad, good = Exploding(), _FakeRecorder()
+    client.register_journey(bad)
+    client.register_journey(good)
+
+    client.close_open_journeys()
+    assert good.calls  # not stranded behind the failure
+    assert client.stats.capture_errors >= 1
+
+
+def test_the_registry_holds_recorders_weakly(tmp_path):
+    """A long-lived worker runs thousands of calls; a strong ref would keep every
+    finished recorder — and its journey context — alive for the process."""
+    import gc
+
+    client = start(tmp_path)
+    client.register_journey(_FakeRecorder())  # no local ref survives
+    gc.collect()
+    assert client.health()["open_journeys"] == 0
+
+
+def test_closing_open_journeys_is_idempotent(tmp_path):
+    client = start(tmp_path)
+    rec = _FakeRecorder()
+    client.register_journey(rec)
+    assert client.close_open_journeys() == 1
+    assert client.close_open_journeys() == 0
+    assert len(rec.calls) == 1

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import subprocess
 import sys
@@ -9,7 +10,15 @@ import threading
 
 import pytest
 
-from odyssey.primitives import JourneyEvent, Message, Terminal, ToolCall, ToolResponse
+from odyssey.jsonl import read_events, read_header
+from odyssey.primitives import (
+    JourneyEvent,
+    JourneyHeader,
+    Message,
+    Terminal,
+    ToolCall,
+    ToolResponse,
+)
 from odyssey.spool import (
     REDACTED,
     DrainResult,
@@ -19,6 +28,7 @@ from odyssey.spool import (
     SpoolPathError,
     drain,
     redact_event,
+    redact_header,
     safe_child,
     validate_interval,
 )
@@ -45,9 +55,11 @@ def spool(tmp_path, **kw) -> Spool:
 class MemorySink:
     def __init__(self):
         self.batches: list[tuple[str, list[JourneyEvent]]] = []
+        self.headers: list = []
 
-    def send(self, journey_id, events):
+    def send(self, journey_id, events, header=None):
         self.batches.append((journey_id, list(events)))
+        self.headers.append(header)
 
     @property
     def all_events(self):
@@ -59,7 +71,7 @@ class FailingSink:
         self.exc = exc
         self.calls = 0
 
-    def send(self, journey_id, events):
+    def send(self, journey_id, events, header=None):
         self.calls += 1
         raise self.exc
 
@@ -578,3 +590,131 @@ def test_highest_seq_survives_an_unreadable_shard(tmp_path):
     s.close()
     (s.root / "journeys" / JID / "001.jsonl").write_text("not json at all\n")
     assert s.highest_seq(JID) == 2
+
+
+# --------------------------------------------------------------------------
+# The shard header: a file that can say what it is a recording of
+# --------------------------------------------------------------------------
+
+
+HEADER = JourneyHeader(
+    journey_id=JID,
+    data_source="livekit",
+    trace_id="t_9",
+    started_at="2026-01-01T00:00:00+00:00",
+    journey_metadata={"tenant": "acme"},
+)
+
+
+def test_record_stamps_the_header_on_the_shard(tmp_path):
+    s = spool(tmp_path)
+    s.record(ev(0), header=HEADER)
+    s.close()
+    assert read_header(s.shards(JID)[0]) == HEADER
+
+
+def test_every_rotated_shard_repeats_the_header(tmp_path):
+    """Each shard is a standalone file a reader may be handed on its own.
+
+    A rotated shard that inherited its identity from a sibling it never names is
+    not readable without the sibling.
+    """
+    s = spool(tmp_path, max_shard_bytes=200)
+    for i in range(20):
+        s.record(ev(i, content="x" * 40), header=HEADER)
+    s.close()
+    shards = s.shards(JID)
+    assert len(shards) > 1
+    assert all(read_header(sh) == HEADER for sh in shards)
+
+
+def test_the_first_header_wins(tmp_path):
+    """A second, different header would mean two writers — which `writer_id`
+    already detects and a silent overwrite here would help hide."""
+    s = spool(tmp_path)
+    s.record(ev(0), header=HEADER)
+    s.record(ev(1), header=dataclasses.replace(HEADER, data_source="impostor"))
+    s.close()
+    assert read_header(s.shards(JID)[0]).data_source == "livekit"
+
+
+def test_a_journey_recorded_without_a_header_still_writes_a_valid_file(tmp_path):
+    s = spool(tmp_path)
+    s.record(ev(0))
+    s.close()
+    h = read_header(s.shards(JID)[0])
+    assert h.journey_id is None
+    assert s.read(JID) == [ev(0)]
+
+
+def test_header_metadata_is_redacted(tmp_path):
+    """Load-bearing, not symmetry.
+
+    Journey tags used to ride on every event and so passed through
+    `redact_event`. Now that the header carries them, skipping redaction would
+    turn a dedup into a credential leak.
+    """
+    s = spool(tmp_path)
+    leaky = dataclasses.replace(
+        HEADER, journey_metadata={"tenant": "acme", "api_key": "sk-live-9"}
+    )
+    s.record(ev(0), header=leaky)
+    s.close()
+    meta = read_header(s.shards(JID)[0]).journey_metadata
+    assert meta["api_key"] == REDACTED
+    assert meta["tenant"] == "acme"
+
+
+def test_redact_header_passes_through_when_there_is_nothing_to_mask():
+    assert redact_header(HEADER, frozenset()) is HEADER
+    assert redact_header(None, frozenset({"api_key"})) is None
+    bare = JourneyHeader(journey_id="j")
+    assert redact_header(bare, frozenset({"api_key"})) is bare
+
+
+def test_spool_header_falls_back_to_disk_for_another_process(tmp_path):
+    """A drain in a different process never saw the recorder that knew the
+    identity — but the recorder wrote it down."""
+    s = spool(tmp_path)
+    s.record(ev(0), header=HEADER)
+    s.close()  # drops the in-memory cache, like a finished journey
+    assert s.header(JID) == HEADER
+
+
+def test_spool_header_is_none_for_an_unknown_journey(tmp_path):
+    assert spool(tmp_path).header("never_recorded") is None
+
+
+def test_drain_hands_the_header_to_the_sink(tmp_path):
+    """Otherwise identity is lost at exactly the hop that produces the artifact
+    a trainer consumes."""
+    s = spool(tmp_path)
+    s.record(ev(0), header=HEADER)
+    sink = MemorySink()
+    s.push(sink)
+    assert sink.headers == [HEADER]
+
+
+def test_file_sink_reproduces_the_header_it_was_given(tmp_path):
+    from odyssey.sinks import FileSink
+
+    s = spool(tmp_path)
+    s.record(ev(0), header=HEADER)
+    s.record(ev(1), header=HEADER)
+    out = tmp_path / "out"
+    s.push(FileSink(out))
+    assert read_header(out / f"{JID}.jsonl") == HEADER
+
+
+def test_a_resumed_drain_does_not_write_a_second_header(tmp_path):
+    from odyssey.sinks import FileSink
+
+    s = spool(tmp_path)
+    sink = FileSink(tmp_path / "out")
+    s.record(ev(0), header=HEADER)
+    s.push(sink)
+    s.record(ev(1), header=HEADER)
+    s.push(sink)
+    text = (tmp_path / "out" / f"{JID}.jsonl").read_text()
+    assert text.count("odyssey_schema_version") == 1
+    assert len(read_events(tmp_path / "out" / f"{JID}.jsonl").events) == 2

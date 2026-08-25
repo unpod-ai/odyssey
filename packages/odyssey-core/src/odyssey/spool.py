@@ -40,8 +40,8 @@ from typing import (
     runtime_checkable,
 )
 
-from odyssey.jsonl import encode_event, header_line, read_events
-from odyssey.primitives import JourneyEvent
+from odyssey.jsonl import encode_event, header_line, read_events, read_header
+from odyssey.primitives import JourneyEvent, JourneyHeader
 
 REDACTED = "[REDACTED]"
 
@@ -90,7 +90,20 @@ class SpoolPathError(ValueError):
 class Sink(Protocol):
     """Where a drain sends events. Raise to signal failure — never return false."""
 
-    def send(self, journey_id: str, events: List[JourneyEvent]) -> None: ...
+    def send(
+        self,
+        journey_id: str,
+        events: List[JourneyEvent],
+        header: Optional[JourneyHeader] = None,
+    ) -> None:
+        """Deliver one journey's events.
+
+        ``header`` is the identity of the shard they were read from, so a sink
+        writing its own file can reproduce it rather than emitting an anonymous
+        one. Optional because a drain over a v1.0 spool has none to pass, and a
+        sink that does not care may ignore it.
+        """
+        ...
 
 
 @dataclass(frozen=True)
@@ -154,6 +167,24 @@ def _is_secret(key: str, keys: frozenset[str]) -> bool:
     if low in keys:
         return True
     return bool(keys & set(low.replace("-", "_").split("_")))
+
+
+def redact_header(
+    header: Optional[JourneyHeader], keys: frozenset[str]
+) -> Optional[JourneyHeader]:
+    """Mask secrets in a header's ``journey_metadata``.
+
+    Load-bearing, not symmetry: journey-level caller tags used to ride on every
+    event and so passed through :func:`redact_event`. Now that the header carries
+    them, skipping this would turn a dedup into a credential leak — the same
+    ``api_key=...`` that was masked 29 times before would sit in clear text on
+    line 1.
+    """
+    if not keys or header is None or not header.journey_metadata:
+        return header
+    return dataclasses.replace(
+        header, journey_metadata=_redact_mapping(header.journey_metadata, keys)
+    )
 
 
 def redact_event(event: JourneyEvent, keys: frozenset[str]) -> JourneyEvent:
@@ -249,6 +280,11 @@ class Spool:
         (self._root / "journeys").mkdir(parents=True, exist_ok=True)
         # Insertion-ordered so popitem(last=False) evicts least-recently-written.
         self._open: "OrderedDict[str, _ShardState]" = OrderedDict()
+        # The header to stamp on any shard this spool opens for a journey.
+        # Cached rather than passed down per write because rotation opens shard
+        # 001 from inside the write path, with no caller in reach — and a shard
+        # that cannot say what it is a recording of is the whole bug this fixes.
+        self._headers: Dict[str, JourneyHeader] = {}
 
     # -- paths ------------------------------------------------------------
 
@@ -303,7 +339,11 @@ class Spool:
         st = _ShardState(path=path, handle=path.open("a", encoding="utf-8"), size=size)
         self._open[journey_id] = st
         if size == 0:
-            self._append(st, header_line() + "\n")
+            # Every shard repeats the header, not just shard 000. Each one is a
+            # standalone file that a reader may be handed on its own, and a
+            # rotated shard that inherited its identity from a sibling it never
+            # names is not readable without the sibling.
+            self._append(st, header_line(header=self._headers.get(journey_id)) + "\n")
         return st
 
     @staticmethod
@@ -339,11 +379,27 @@ class Spool:
 
     # -- write ------------------------------------------------------------
 
-    def record(self, event: JourneyEvent) -> None:
-        """Append one event. Local only, O(1), safe across threads."""
+    def record(
+        self, event: JourneyEvent, *, header: Optional[JourneyHeader] = None
+    ) -> None:
+        """Append one event. Local only, O(1), safe across threads.
+
+        ``header`` declares what this journey is a recording of. The first one
+        seen wins and is reused for every later shard: identity is fixed at the
+        start of a journey by definition, so a second, different header would
+        mean two writers — which ``writer_id`` already detects, and which a
+        silent overwrite here would help hide.
+        """
         redacted = redact_event(event, self._cfg.redact_keys)
         line = encode_event(redacted) + "\n"
         with self._lock:
+            if header is not None and event.journey_id not in self._headers:
+                # Redacted on the way into the cache, not on the way out: it is
+                # written once per shard but read on every rotation, and masking
+                # once is both cheaper and impossible to forget at a later use.
+                masked = redact_header(header, self._cfg.redact_keys)
+                if masked is not None:
+                    self._headers[event.journey_id] = masked
             self._append(self._shard_state(event.journey_id), line)
 
     def close(self, journey_id: Optional[str] = None) -> None:
@@ -357,21 +413,48 @@ class Spool:
                 for st in self._open.values():
                     self._close_state(st)
                 self._open.clear()
+                self._headers.clear()
                 return
             st = self._open.pop(journey_id, None)
             if st is not None:
                 self._close_state(st)
+            # Dropped alongside the handle, like the allocator's seq entry: a
+            # long-lived worker runs thousands of calls, and the header is only
+            # needed while shards for this journey are still being opened.
+            # `Spool.header()` re-reads it from disk if a drain asks later.
+            self._headers.pop(journey_id, None)
 
     def open_shard_count(self) -> int:
         with self._lock:
             return len(self._open)
 
-    def record_all(self, events: Iterable[JourneyEvent]) -> int:
+    def record_all(
+        self, events: Iterable[JourneyEvent], *, header: Optional[JourneyHeader] = None
+    ) -> int:
         n = 0
         for e in events:
-            self.record(e)
+            self.record(e, header=header)
             n += 1
         return n
+
+    def header(self, journey_id: str) -> Optional[JourneyHeader]:
+        """This journey's header — from the live cache, else off its first shard.
+
+        The disk fallback is what makes a drain in a *different* process work:
+        the recorder that knew the identity is long gone, but it wrote it down.
+        """
+        cached = self._headers.get(journey_id)
+        if cached is not None:
+            return cached
+        shards = self.shards(journey_id)
+        if not shards:
+            return None
+        try:
+            return read_header(shards[0])
+        except (OSError, ValueError):
+            # An unreadable header must not fail a drain: the events are the
+            # payload, and a sink with no header still writes a valid v1.0 file.
+            return None
 
     # -- read -------------------------------------------------------------
 
@@ -472,7 +555,11 @@ def drain(
             gaps[jid] = missing
 
         try:
-            sink.send(jid, events)
+            # The header travels with the events. Without it a FileSink writes an
+            # anonymous file even though the shard it drained named itself, and
+            # the identity would be lost at exactly the hop that produces the
+            # artifact a trainer actually consumes.
+            sink.send(jid, events, spool.header(jid))
         except Exception as exc:  # noqa: BLE001 - any sink failure is retryable
             failed += len(events)
             errors.append(f"{jid}: {type(exc).__name__}: {exc}")

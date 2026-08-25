@@ -33,6 +33,15 @@ Events consumed
   without this hook every tool turn would be missing.
 - ``close`` — ends the journey with a reason, which is what makes it foldable.
 
+``AgentSession`` emits ``close`` only at the end of ``_aclose()``, after it has
+drained in-flight speech and closed its recorder IO and every toolset. A worker
+killed or a job shut down partway through those awaits never reaches the emit, so
+the journey ends with no terminal event — and ``fold()`` then cannot tell "still
+running" from "lost the tail" and refuses it forever. Every recorder therefore
+registers itself with the client, and process shutdown terminates whatever is
+still open as ``STALE``. A session that closed itself keeps its own reason;
+:meth:`LiveKitRecorder.close` is idempotent, so shutdown never overwrites one.
+
 One message per turn, never a stream
 ------------------------------------
 
@@ -108,6 +117,7 @@ callers' conversations into one journey — the exact corruption
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 from odyssey.builders.messages import parse_tool_arguments
 from odyssey.capture import JourneyHandle, _jsonable
@@ -213,16 +223,29 @@ class _Turn:
         # not lines of a document.
         return " ".join(self.texts) if self.texts else None
 
-    def metadata(self) -> Dict[str, Any]:
-        turn: Dict[str, Any] = {"source": "livekit"}
+    def metadata(self) -> Optional[Dict[str, Any]]:
+        """What this turn carries beyond its text, or None when that is nothing.
+
+        No ``source`` key: the shard header's ``data_source`` says ``livekit``
+        once, and repeating it on every message was a constant occupying a third
+        of the shorter lines.
+
+        ``None`` rather than ``{}`` for a bare turn — an empty dict survives
+        ``_strip_none`` and would encode as ``"metadata":{}``, which is a key
+        that costs bytes to say nothing.
+        """
+        turn: Dict[str, Any] = {}
         ids = [p["id"] for p in self.parts if "id" in p]
         if ids:
-            # Singular when there was one utterance, so the common case reads the
-            # same as it did before coalescing.
-            turn["provider_item_id"] = ids[0] if len(ids) == 1 else ids
+            # Always a list, even for a single utterance. A field that is a
+            # string on some lines and a list on others forces every consumer to
+            # branch on type, and a typed reader rejects whichever shape it did
+            # not declare — so the rare coalesced line breaks a parser the common
+            # line trained.
+            turn["provider_item_ids"] = ids
         if len(self.parts) > 1:
             turn["utterances"] = len(self.parts)
-            # Only when a part says something `provider_item_id` does not already
+            # Only when a part says something `provider_item_ids` does not already
             # carry. A list of bare ids twice over is noise in every export.
             detailed = [p for p in self.parts if p.keys() - {"id"}]
             if detailed:
@@ -236,7 +259,7 @@ class _Turn:
             turn["extra"] = _jsonable(self.extra)
         if self.non_text:
             turn["non_text_content"] = sorted(self.non_text)
-        return turn
+        return turn or None
 
     def _confidence(self) -> Optional[float]:
         """One confidence for the whole utterance, weighted by how much was said.
@@ -259,6 +282,34 @@ class _Turn:
         return not self.texts and not self.non_text
 
 
+class _ToolTurn:
+    """One tool call and its outcome, provider-shape already stripped off.
+
+    The seam between "how LiveKit reported it" and "what gets written", so the
+    event path and the public :meth:`LiveKitRecorder.tool` API converge before
+    anything is emitted rather than each building its own messages.
+    """
+
+    __slots__ = ("id", "name", "arguments", "response", "responded", "error")
+
+    def __init__(
+        self,
+        *,
+        id: str,
+        name: str,
+        arguments: Dict[str, Any],
+        response: Any = None,
+        responded: bool = True,
+        error: Optional[str] = None,
+    ) -> None:
+        self.id = id
+        self.name = name
+        self.arguments = arguments
+        self.response = response
+        self.responded = responded
+        self.error = error
+
+
 class LiveKitRecorder:
     """Records one ``AgentSession`` into one journey.
 
@@ -271,7 +322,8 @@ class LiveKitRecorder:
         session: Any,
         *,
         journey_id: str,
-        instructions: Optional[str] = None,
+        instructions: Optional[str | Callable[[], Optional[str]]] = None,
+        record_instructions: bool = True,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._session = session
@@ -282,6 +334,7 @@ class LiveKitRecorder:
         # the first recorded item emits one; after that only a *change* does.
         self._instructions: Optional[str] = None
         self._seed_instructions = instructions
+        self._record_instructions = record_instructions
         # The turn being assembled from same-role utterances. At most one turn is
         # ever held, and every exit path flushes it, so a crash can lose the turn
         # in flight and nothing before it.
@@ -294,7 +347,16 @@ class LiveKitRecorder:
             allocator=(
                 client.allocator if client is not None else _throwaway_allocator()
             ),
-            metadata=dict(metadata or {}),
+            # Sanitized at the door: these tags are snapshotted into the shard
+            # header, which is json-dumped directly. LiveKit deployments pass
+            # domain enums here (`modality=Modality.TEXT_AUDIO`), and an
+            # unserializable one would raise while opening the shard and drop
+            # every event of the call.
+            metadata=_jsonable(dict(metadata or {})),
+            # Journey identity, header-bound. This is the value `fold()` used to
+            # make every caller supply by hand, and the reason `source:
+            # "livekit"` no longer needs stamping onto all N events.
+            data_source="livekit",
         )
         if client is not None:
             client.count_journey()
@@ -327,6 +389,16 @@ class LiveKitRecorder:
             handler = getattr(self, f"_on_{name}")
             self._session.on(name, handler)
             self._handlers.append((name, handler))
+        client = require_client()
+        if client is not None:
+            # So process shutdown can end this journey if the session never
+            # fires `close`. `AgentSession._aclose()` emits it only after a
+            # series of awaits — draining speech, closing the recorder IO and
+            # every toolset — and a worker killed or a job shut down partway
+            # through never reaches the emit. The journey then has no terminal
+            # event, `fold()` cannot tell "still running" from "lost the tail",
+            # and it is refused forever.
+            client.register_journey(self)
 
     # -- turn coalescing --------------------------------------------------
 
@@ -349,12 +421,18 @@ class LiveKitRecorder:
         with bind(self._ctx):
             self._handle().message(
                 Message(role=turn.role, content=turn.content, metadata=turn.metadata()),
-                metadata={"source": "livekit"},
             )
 
     def detach(self) -> None:
         """Stop recording this session. Does not close the journey."""
         self._guard("detach", self.flush)
+        client = require_client()
+        if client is not None:
+            # Nothing here will record again, so shutdown has no terminal to
+            # contribute. A journey detached without closing stays open on
+            # purpose — that is what `detach` means, and `health()` still counts
+            # it until the recorder is collected.
+            client.unregister_journey(self)
         for name, handler in self._handlers:
             try:
                 self._session.off(name, handler)
@@ -386,10 +464,42 @@ class LiveKitRecorder:
                 continue
             if isinstance(text, str) and text.strip():
                 return text
-        return None
+        return self._read_seed()
+
+    def _read_seed(self) -> Optional[str]:
+        """The caller-supplied prompt: a fixed string, or a live reader.
+
+        A callable is what makes flow/playbook deployments recordable at all.
+        There, ``llm_node`` returns ``None`` — LiveKit's LLM never runs — and the
+        agent is constructed as ``Agent(instructions="")`` because the prompt
+        lives in the dialog machine and is rebuilt per node. Polling the session
+        finds nothing, forever, and the journey has no system message: not a
+        training example, since the same user turn under two different prompts
+        looks identical.
+
+        Called on every recorded item, like the session read it replaces, so a
+        per-node prompt change is captured as a new ``system`` message and
+        ``build_cumulative_steps`` applies it copy-on-write.
+        """
+        seed = self._seed_instructions
+        if seed is None or isinstance(seed, str):
+            return seed or None
+        try:
+            text = seed()
+        except Exception as exc:  # noqa: BLE001 - a reader must not kill capture
+            client = require_client()
+            if client is not None:
+                client.note_error("livekit.instructions_reader", exc)
+            return None
+        return text if isinstance(text, str) and text.strip() else None
 
     def _sync_instructions(self) -> None:
         """Emit a ``system`` message when the prompt appears or changes.
+
+        Does nothing when ``record_instructions=False``: a deployment whose
+        prompt is a novel of business rules can be worth many times the
+        conversation it produced, and repeating it on every export is not what
+        every consumer wants. The conversation is still complete without it.
 
         Called before every recorded item rather than once at attach: the agent
         arrives with ``session.start()``, and handoffs replace it mid-call. The
@@ -398,8 +508,16 @@ class LiveKitRecorder:
         prompt supersedes the old one via ``build_cumulative_steps``'
         copy-on-write, leaving pre-handoff steps untouched.
         """
-        text = self._read_instructions() or self._seed_instructions
-        if text is None or text == self._instructions:
+        if not self._record_instructions:
+            return
+        text = self._read_instructions()
+        # Falsy, not just None. A deployment that passes `instructions=""` would
+        # otherwise emit an empty `system` message, and `build_cumulative_steps`
+        # keeps it as the prefix — so every step would carry a system message
+        # saying nothing, which reads as "this agent was given no instructions".
+        # That is worse than having no system message at all, because it looks
+        # like a real prompt.
+        if not text or text == self._instructions:
             return
         # A handoff can land mid-turn. The prompt must not jump ahead of the turn
         # that ran under the *previous* one.
@@ -407,7 +525,6 @@ class LiveKitRecorder:
         first = self._instructions is None
         self._instructions = text
         turn: Dict[str, Any] = {
-            "source": "livekit",
             # A handoff is the interesting case downstream: it means the steps
             # before this point ran under a different prompt. Naming it beats
             # making a reader diff strings.
@@ -419,7 +536,6 @@ class LiveKitRecorder:
         with bind(self._ctx):
             self._handle().message(
                 Message(role="system", content=text, metadata=turn),
-                metadata={"source": "livekit"},
             )
 
     # -- events -----------------------------------------------------------
@@ -463,7 +579,8 @@ class LiveKitRecorder:
 
         # Facts about *this turn* go on the Message, not on the event: that is
         # what `fold.derive_trainable_status` reads, and it is where a corpus
-        # stage looks. Event metadata carries journey-level tags and writer id.
+        # stage looks. Journey-level tags live in the shard header; the event
+        # carries only the writer id and anything retagged mid-call.
         self._pending.absorb(
             text=text,
             item_id=getattr(item, "id", None),
@@ -502,7 +619,16 @@ class LiveKitRecorder:
         Results stay separate, one per call, which is what those formats require
         and what keeps parallel tool calls legible.
         """
-        pairs = list(event.zipped()) if hasattr(event, "zipped") else []
+        pairs = _tool_pairs(event)
+        if pairs is None:
+            # An event shape this build does not understand. Distinct from an
+            # empty batch, and reported rather than dropped: a tool turn that
+            # never reaches the spool makes a failed booking read as a clean
+            # conversation, with `num_tool_calls == 0` to confirm it.
+            raise TypeError(
+                "function_tools_executed carried neither zipped() nor "
+                f"function_calls/function_call_outputs: {type(event).__name__}"
+            )
         if not pairs:
             return
         self._sync_instructions()
@@ -516,62 +642,122 @@ class LiveKitRecorder:
         else:
             self.flush()
 
-        calls: List[ToolCall] = []
-        parsed_args: Dict[str, Dict[str, Any]] = {}
-        for call, _output in pairs:
-            args = _arguments(getattr(call, "arguments", None))
-            parsed_args[call.call_id] = args
-            calls.append(ToolCall(id=call.call_id, name=call.name, arguments=args))
+        turns: List[_ToolTurn] = []
+        for call, output in pairs:
+            turns.append(
+                _ToolTurn(
+                    id=call.call_id,
+                    name=call.name,
+                    arguments=_arguments(getattr(call, "arguments", None)),
+                    response=getattr(output, "output", None),
+                    # `None` output is a real failure mode — the tool never
+                    # returned — recorded rather than skipped so
+                    # `num_tool_response_none` can count it.
+                    responded=output is not None,
+                    error=(
+                        "tool_error"
+                        if output is not None and getattr(output, "is_error", False)
+                        else None
+                    ),
+                )
+            )
+        self._emit_tool_turn(turns, speech)
 
+    def _emit_tool_turn(
+        self, turns: List["_ToolTurn"], speech: Optional[_Turn]
+    ) -> Optional[int]:
+        """Write one tool turn: the calls on one message, each result on its own.
+
+        Shared by the LiveKit event path and the public :meth:`tool` API so a
+        flow-mode deployment recording its own tools produces bytes identical to
+        a prompt-mode one. Two producers writing two shapes for the same thing is
+        how a corpus stops being one corpus.
+        """
         with bind(self._ctx):
             handle = self._handle()
-            handle.message(
+            seq = handle.message(
                 Message(
                     role="assistant",
                     content=speech.content if speech is not None else None,
-                    tool_calls=calls,
-                    metadata=(
-                        speech.metadata()
-                        if speech is not None
-                        else {"source": "livekit"}
-                    ),
+                    tool_calls=[
+                        ToolCall(id=t.id, name=t.name, arguments=t.arguments)
+                        for t in turns
+                    ],
+                    metadata=speech.metadata() if speech is not None else None,
                 ),
-                metadata={"source": "livekit"},
             )
-            for call, output in pairs:
-                if output is None:
-                    # The tool never returned — a real failure mode, recorded as
-                    # one rather than skipped. `num_tool_response_none` counts it.
-                    handle.message(
-                        Message(
-                            role="tool",
-                            tool_response=ToolResponse(
-                                id=call.call_id,
-                                name=call.name,
-                                arguments=parsed_args[call.call_id],
-                                response=None,
-                            ),
-                        ),
-                        metadata={"source": "livekit"},
-                    )
-                    continue
+            for t in turns:
                 handle.message(
                     Message(
                         role="tool",
                         tool_response=ToolResponse(
-                            id=call.call_id,
-                            name=call.name,
-                            arguments=parsed_args[call.call_id],
-                            response=getattr(output, "output", None),
-                            error=(
-                                "tool_error"
-                                if getattr(output, "is_error", False)
-                                else None
-                            ),
+                            id=t.id,
+                            name=t.name,
+                            arguments=t.arguments,
+                            response=t.response if t.responded else None,
+                            error=t.error,
                         ),
                     ),
-                    metadata={"source": "livekit"},
                 )
+        return seq
+
+    def tool(
+        self,
+        name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+        *,
+        result: Any = None,
+        error: Optional[str] = None,
+        call_id: Optional[str] = None,
+        responded: bool = True,
+    ) -> Optional[int]:
+        """Record a tool call the session never saw. Returns the call's ``seq``.
+
+        ``function_tools_executed`` only fires for tools LiveKit itself ran. A
+        deployment whose ``llm_node`` returns ``None`` — flow and playbook modes,
+        where the dialog machine drives the turn and executes its own tools —
+        bypasses that machinery entirely, so LiveKit has nothing to emit and the
+        journey shows ``num_tool_calls == 0`` no matter how many tools ran. A
+        failed booking then reads as a clean conversation.
+
+        Call it right after the tool returns::
+
+            result = await machine.execute_tool(tool_id, args)
+            recorder.tool(tool_id, args, result=result.data)
+
+        Pending agent speech is folded onto the call message, exactly as the
+        event path does: "let me check availability" and the lookup were one
+        turn, and ``content`` + ``tool_calls`` on one message is how OpenAI and
+        Anthropic represent that.
+
+        ``responded=False`` records a tool that never returned — the case
+        ``num_tool_response_none`` counts, and distinct from one that returned
+        ``None``.
+        """
+
+        def run() -> None:
+            self._sync_instructions()
+            speech: Optional[_Turn] = None
+            if self._pending is not None and self._pending.role == "assistant":
+                speech, self._pending = self._pending, None
+            else:
+                self.flush()
+            self._emit_tool_turn(
+                [
+                    _ToolTurn(
+                        id=call_id or f"call_{uuid4().hex[:12]}",
+                        name=name,
+                        arguments=_jsonable(dict(arguments or {})),
+                        response=_jsonable(result),
+                        responded=responded,
+                        error=error,
+                    )
+                ],
+                speech,
+            )
+
+        self._guard("tool", run)
+        return self._ctx.last_message_seq
 
     def _on_close(self, event: Any) -> None:
         self._guard("close", lambda: self.close(event=event))
@@ -634,7 +820,8 @@ def attach(
     session: Any,
     *,
     journey_id: str,
-    instructions: Optional[str] = None,
+    instructions: Optional[str | Callable[[], Optional[str]]] = None,
+    record_instructions: bool = True,
     **metadata: Any,
 ) -> LiveKitRecorder:
     """Record an ``AgentSession`` into ``journey_id``. The one line to add.
@@ -645,12 +832,35 @@ def attach(
     platform's own id also makes recording idempotent across a worker restart.
 
     Returns the recorder so the app can add what session events cannot supply —
-    :meth:`LiveKitRecorder.signal` and :meth:`LiveKitRecorder.reward`.
+    :meth:`LiveKitRecorder.signal`, :meth:`LiveKitRecorder.reward`, and
+    :meth:`LiveKitRecorder.tool` for tools LiveKit did not run itself.
 
     ``instructions`` is a fallback for the system prompt, used only when it
     cannot be read off the session's own agent. Leave it unset for the normal
     case — the recorder reads ``session.current_agent.instructions`` and follows
     handoffs, which a value frozen at attach time cannot do.
+
+    Pass a **callable** when the prompt does not live on the agent at all. Flow
+    and playbook deployments construct ``Agent(instructions="")`` because
+    ``llm_node`` returns ``None`` and the dialog machine owns the prompt,
+    rebuilding it per node. A callable is polled on every recorded item, so each
+    node's prompt is captured as it changes::
+
+        attach(
+            session,
+            journey_id=...,
+            instructions=lambda: machine.context.system_prompt,
+        )
+
+    Without it such a journey has no ``system`` message at all, which is not a
+    training example: the same user turn under two different prompts is
+    indistinguishable.
+
+    ``record_instructions=False`` keeps the system prompt out of the journey
+    entirely. Some prompts are thousands of tokens of business rules that dwarf
+    the call itself, and a deployment may not want that text copied into every
+    exported artifact. The conversation, the tool calls and the greeting are
+    recorded exactly as before; only the ``system`` message is skipped.
 
     Requires :func:`odyssey.init` to have run. Without it, recording is a no-op
     and one warning is emitted; the session is unaffected either way.
@@ -659,10 +869,36 @@ def attach(
         session,
         journey_id=journey_id,
         instructions=instructions,
+        record_instructions=record_instructions,
         metadata=metadata,
     )
     recorder._register()
     return recorder
+
+
+def _tool_pairs(event: Any) -> Optional[List[Tuple[Any, Any]]]:
+    """Calls paired with their outputs, or ``None`` if the event is unreadable.
+
+    ``zipped()`` is the documented accessor and is preferred. The parallel
+    ``function_calls`` / ``function_call_outputs`` lists are the fallback — they
+    are what ``zipped()`` zips, and older livekit-agents exposed only them.
+
+    The distinction that matters is the return type. Collapsing "no tools ran"
+    and "this event is a shape I do not recognise" into one empty list is how a
+    whole tool turn disappears from a corpus without anything registering that it
+    did; ``None`` forces the caller to report the second case.
+    """
+    zipped = getattr(event, "zipped", None)
+    if callable(zipped):
+        return list(zipped())
+    calls = getattr(event, "function_calls", None)
+    if calls is None:
+        return None
+    outputs = list(getattr(event, "function_call_outputs", None) or [])
+    # `strict=False` semantics, matching livekit's own `zipped()`: a batch whose
+    # lists disagree in length is still worth recording as far as it goes.
+    outputs += [None] * (len(calls) - len(outputs))
+    return list(zip(calls, outputs))
 
 
 def _arguments(raw: Any) -> Dict[str, Any]:

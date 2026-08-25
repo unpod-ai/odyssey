@@ -10,7 +10,7 @@ checklist.
 Every claim here was checked by running the code. The commands that prove each
 claim are in [§9 Verification](#9-verification--prove-every-claim-yourself).
 
-**Last verified:** 2026-08-22 · 315 tests passing · flake8 clean · pyrefly 0 errors
+**Last verified:** 2026-08-25 · 468 passed, 1 skipped · flake8 clean at 100 cols
 
 ---
 
@@ -45,14 +45,14 @@ A Langfuse-style SDK is these layers. Ticks are verified, not aspirational.
 | L2 | **Local buffer + delivery** | survive process death, retry, dedupe | in-memory queue + background flush | ✅ **done** (disk-backed — stronger than Langfuse) |
 | L3 | **Projection / read side** | events → usable conversation | server-side trace assembly | ✅ **done** (`fold`) |
 | L4 | **Ambient context** | auto `journey_id` + auto `seq`, no threading params | `contextvar` trace/span stack | ✅ **done** (`context.py`) |
-| L5 | **Auto-instrumentation** | drop-in clients, decorator, framework callbacks | `@observe`, `openai` shim, LangChain handler, OTel | 🟡 **Anthropic done**; OpenAI / LangChain / OTel open |
+| L5 | **Auto-instrumentation** | drop-in clients, decorator, framework callbacks | `@observe`, `openai` shim, LangChain handler, OTel | 🟡 **Anthropic + LiveKit done**; OpenAI / LangChain / OTel open |
 | L6 | **One-line init** | `odyssey.init()` + env vars + `atexit` flush | `langfuse.init()` | ✅ **done** (`client.py`) |
 | L7 | **HTTP transport** | ship to a server, not a folder | `/api/public/ingestion` | ❌ **0%** (only `FileSink`) |
 | L8 | **Collector / server** | the "one place" everything lands | Langfuse server | ❌ **0%** |
 | L9 | **Dashboard** | look at what landed | Langfuse UI | ❌ **0%** |
-| L10 | **Training export** | corpus → SFT/DPO files | (Langfuse: dataset export) | ❌ **0%** |
+| L10 | **Training export** | corpus → SFT/DPO files | (Langfuse: dataset export) | 🟡 **Trajectory JSON ships** (`odyssey export`); SFT/DPO writers open |
 
-**5½ of 10 layers built.** L4 and L6 — the "install it in one place" half — landed
+**6 of 10 layers built.** L4 and L6 — the "install it in one place" half — landed
 in the capture-layer change. What remains between "an agent runs" and "a model
 trains" is now exactly two things: **L7/L8, a destination that is not a local
 folder**, and **L10, something that writes an SFT or DPO file**.
@@ -117,37 +117,99 @@ deliberately not taken yet.
 ### Verified, just now
 
 ```
-pytest tests -q                → 315 passed, 1 skipped   (1.9 s)
-flake8 (project config)        → exit 0, clean
-pyrefly check                  → 0 errors (9 suppressed)
-scripts/make_golden.py --check → golden fixture is current   ← wire format intact
-python -m odyssey.cli --help   → push · status · show · health
+pytest tests -q                     → 468 passed, 1 skipped   (2.3 s)
+pytest --collect-only -q            → 469 collected across 17 files
+flake8 --max-line-length=100        → exit 0, clean
+scripts/make_golden.py --check      → golden fixture is current   ← wire format intact
+python -m odyssey.cli --help        → push · export · status · show · health
+python -m odyssey.cli export --help → --events · --out · --journey · --last-step
 ```
 
 The one skip is `test_superdialog_does_not_depend_on_odyssey` — the sibling
 checkout is not on this machine, not a failure.
 
+Two notes on the lint number, because "clean" needs a column width to mean
+anything. At 100 columns the tree is clean. At flake8's own default of 79 it is
+not, and the offenders are almost all one file: `builders/messages.py` carries 27
+long lines of provider-shape literals, where wrapping a payload example makes it
+harder to compare against the SDK's own docs. There is no `.flake8` /`setup.cfg`
+in the repo yet, so the width lives in the command rather than in config — item
+9.2, the CI file that would pin it, is still unwritten.
+
 ### Size
 
 | | Before the capture layer | Now |
 |---|---|---|
-| Source | 11 files, 2 587 LOC | **22 files, 4 917 LOC** |
-| Tests | 12 files, 3 025 LOC | **16 files, 4 906 LOC** |
-| Tests passing | 197 | **315** |
+| Source | 11 files, 2 587 LOC | **24 files, 6 806 LOC** |
+| Tests | 12 files, 3 025 LOC | **18 files, 7 640 LOC** |
+| Tests passing | 197 | **468** (+1 skipped) |
 | Third-party deps in core | 0 | **0** — still, verified by import scan |
-| `src/odyssey/__init__.py` | 0 bytes | **2 838 bytes** (public API) |
+| `src/odyssey/__init__.py` | 0 bytes | **131 LOC** (public API, 50 exports) |
 
-Tests per module: builders 99 · sdk 49 · spool 40 · fold 31 · integrations 23 ·
-jsonl 20 · cli 18 · context 18 · contract 18.
+Tests now outweigh source, 7 640 lines to 6 806. That ratio is the honest cost of
+a layer whose failure mode is silence: a capture bug does not crash the host, it
+produces a corpus that is quietly wrong, so almost every rule in the fold and the
+export has a test that would notice.
 
 > **`uv.lock` grew from 19 to 35 packages, and that is not a regression.**
 > Declaring the `anthropic` optional extra makes uv lock its whole transitive
 > tree — `pydantic`, `httpx`, `anyio` and friends now appear in the lockfile.
 > None of it is installed: `uv sync --extra dev` still produces an environment
-> with no `anthropic` and no `pydantic`, and all 315 tests pass in it, because
+> with no `anthropic` and no `pydantic`, and all 468 tests pass in it, because
 > `test_integrations.py` injects a fake SDK through `sys.modules`. Only
 > `uv sync --extra anthropic` pulls the real one. `dependencies = []` is
 > unchanged.
+
+### Test report — 469 cases, and what each file is holding down
+
+One line per file, newest first in intent rather than alphabet. The count is what
+`pytest --collect-only` reports, so parametrised cases are counted the way they
+actually run.
+
+| File | Cases | What it exists to catch |
+|---|---|---|
+| `test_livekit.py` | 83 | Streamed utterances coalescing into one turn; tool calls paired with their outputs; the system prompt read off the live agent and followed through a handoff; a `close` that arrives after the worker already tore the session down |
+| `test_sdk.py` | 56 | `init()`/`journey()`/`observe()` end to end, the never-raise boundary, `health()` counters, the `atexit` drain |
+| `test_spool.py` | 51 | Append-only durability (a real SIGKILLed child), shard rotation, LRU handle eviction, watermarks, resumed drains, redaction |
+| `test_export.py` | 38 | The artifact: Trajectory shape, cumulative steps, `--last-step` trimming, filename sanitisation, atomic write, one unreadable shard not aborting a run |
+| `builders/test_build_messages.py` | 33 | Provider payload parsing — OpenAI, Anthropic, Vercel, flat — including unparseable tool arguments |
+| `test_fold.py` | 31 | Dedupe, terminal cut, gap detection, writer conflict, `trainable_status` precedence |
+| `test_jsonl.py` | 27 | The codec: version header, truncated last line, per-line rejection, append without a second header |
+| `builders/test_build_helpers.py` | 25 | The small pure functions the builders lean on |
+| `test_integrations.py` | 23 | The Anthropic drop-in and opt-in patching, against a fake SDK injected through `sys.modules` |
+| `test_contract.py` | 21 | The cross-project golden fixture — every event kind, tool correlation, preference chain, and the rule that `Step` never reaches the wire |
+| `test_context.py` | 18 | `ContextVar` propagation into tasks but *not* threads, and 8×200 concurrent `seq` allocation with no holes |
+| `test_cli.py` | 18 | `push` · `export` · `status` · `show` · `health`, including the exit-3 writer-conflict contract |
+| `builders/test_build_metrics_and_steps.py` | 18 | Tool counts, error rate, one cumulative step per turn |
+| `builders/test_build_journey.py` | 17 | Journey assembly, content hash, idempotency key |
+| `builders/test_langsmith_roundtrip.py` | 4 | A LangSmith-shaped trace surviving the round trip |
+| `builders/test_build_reward.py` | 3 | Scalar → `Reward` |
+| `builders/test_anthropic_e2e.py` | 3 | A real-shaped Anthropic exchange end to end |
+
+Ten cases worth naming, because each one is a bug that shipped or nearly did:
+
+- `test_no_step_record_is_ever_encoded` — the wire/artifact split. A step holds
+  the whole conversation up to its point, so N steps on the wire cost O(N²) bytes
+  where N events cost O(N).
+- `test_the_last_step_alone_still_carries_every_message` — the other half of that
+  split. `--last-step` writes one step and it is the complete conversation.
+- `test_trimming_the_steps_keeps_the_tool_call_and_its_result` — trimming must
+  not drop the tool turn, which is the only evidence a booking failed.
+- `test_a_trimmed_export_says_so` — a consumer counting `steps` has to be able to
+  tell a one-turn call from a trimmed twelve-turn one.
+- `test_the_system_prompt_can_be_kept_out_of_the_journey` — a prompt of business
+  rules can dwarf the call; `record_instructions=False` keeps it out without
+  touching anything else.
+- `test_show_marks_the_trainable_turn` — `trainable_status` is derived at read
+  time. Reading the stored value reported every turn as `not_trainable`.
+- `test_a_regeneration_supersedes_the_earlier_answer` — the preference pair a DPO
+  extractor will eventually read.
+- `test_record_is_fast_enough_for_a_capture_hot_path` — p50 under 90 µs, the
+  guard on the 196 µs → 23 µs work below.
+- `test_a_writer_conflict_is_named_in_the_artifact` — two writers on one journey
+  is the corruption that reads as valid data.
+- `test_golden_fixture_is_not_stale` — the wire format cannot drift without a
+  deliberate regeneration.
 
 ### Performance
 
@@ -214,7 +276,7 @@ Legend: ✅ done & tested · 🟡 partly there · ❌ not started
 | # | Item | Status | Where / what remains |
 |---|---|---|---|
 | 0.1 | Event schema to record into | ✅ | `primitives.py` — validated in `__post_init__` |
-| 0.2 | Durable local sink | ✅ | `spool.py` — O(1), thread-safe, no network |
+| 0.2 | Durable local sink | ✅ | `spool.py` — O(1), thread-safe, no network. The drain destination is separate and injectable: `init(sink=...)` takes anything with `send(journey_id, events, header)` |
 | 0.3 | Secret redaction at record time | ✅ | `spool.redact_event()` — `api_key` masked before disk |
 | 0.4 | **Ambient journey context** | ✅ | `context.py` — `ContextVar`; asyncio-native, `bind()` for thread handoff |
 | 0.5 | **Automatic `seq` allocation** | ✅ | `context.SeqAllocator` — seeded from disk, so a restart resumes instead of colliding. 8-thread test proves no number is issued twice |
@@ -226,7 +288,7 @@ Legend: ✅ done & tested · 🟡 partly there · ❌ not started
 | 0.11 | **OTel bridge** | ❌ | Not started |
 | 0.12 | **Flush on exit** | ✅ | `atexit` by default. SIGTERM is **opt-in** (`init(handle_sigterm=True)`) — `atexit` does not run on SIGTERM, and hijacking a signal from a library is rude |
 | 0.13 | Background drain thread | ✅ | `IntervalDrainer`, now started by `init()` |
-| 0.14 | Voice-agent turn capture | 🟡 | Text turns work today. Voice-specific events (STT, TTS, barge-in, per-turn latency) have no schema home — see Step 0′ |
+| 0.14 | Voice-agent turn capture | 🟡 | `integrations/livekit.py` — one `attach()` per `AgentSession`: streamed utterances coalesced into one turn, tool calls paired with outputs, the system prompt read off the live agent and followed through handoffs (or skipped with `record_instructions=False`), and `.tool()` for engines LiveKit does not drive. Voice-*specific* events (STT, TTS, barge-in, per-turn latency) still have no schema home — see Step 0′ |
 | 0.15 | **Never crash the host** | ✅ | Capture failures counted, not raised. `ODYSSEY_DEBUG=1` re-raises for local dev |
 | 0.16 | **Diagnostics** | ✅ | `diagnostics.py`, `odyssey.health()`, `odyssey.cli health` |
 
@@ -368,7 +430,8 @@ decision before 4.5 — ideally in the missing
 | 5.1 | `trainable` gate on export | ✅ | `FoldResult.trainable`, and now `.incomplete_reason` says why not |
 | 5.2 | Per-turn `trainable_status` | ✅ | Only assistant turns carry gradient by default |
 | 5.3 | Preference chain (chosen / rejected) | ✅ | `Signal` with `regen_order` + `edited_output`, **now emitted by the SDK** — `test_a_regeneration_supersedes_the_earlier_answer` |
-| 5.4 | **SFT export writer** | ❌ | Nothing converts a `Journey` into an SFT file |
+| 5.4a | **Trajectory JSON export writer** | ✅ | `export.py` + `odyssey export` — one `{conversation_id}.json` per conversation, the shape `tj.save()` produces and the platform consumes. `--last-step` / `last_step_only=True` writes the final step alone: every step is a prefix of the next, so all N cost O(N**2) bytes and the last one already holds the whole conversation |
+| 5.4b | **SFT export writer** | ❌ | Nothing converts a `Journey` into a messages-only SFT file yet |
 | 5.5 | **DPO/KTO/ORPO pair extractor** | ❌ | The signals are there and populated; the extractor is not |
 | 5.6 | **soup-cli adapter** | ❌ | The reason for the `<3.13` Python pin |
 | 5.7 | `configs/{sft,dpo,grpo}` | ❌ | `.gitkeep` only |
@@ -441,8 +504,8 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 
 | # | Item | Status | Cost |
 |---|---|---|---|
-| 9.1 | `src/odyssey/__init__.py` public API | ✅ **done** — 2 838 bytes, 30 exports | — |
-| 9.2 | CI (`.github/workflows/ci-core.yml`) | ❌ still `.gitkeep` | small — 315 tests pass, nothing locks it in |
+| 9.1 | `src/odyssey/__init__.py` public API | ✅ **done** — 131 LOC, 50 exports | — |
+| 9.2 | CI (`.github/workflows/ci-core.yml`) | ❌ still `.gitkeep` | small — 468 tests pass, nothing locks it in |
 | 9.3 | `cli/` single entrypoint (Phase 2, ADR 0003) | ❌ | medium. Now also needs to expose `health` |
 | 9.4 | `NOTICE` copyright holder | ❌ | **blocks public release** — see [§10](#10-known-gaps) |
 | 9.5 | Stale `src/odyssey/build/` path in `NOTICE` + `pyproject` | ❌ | trivial |
@@ -450,7 +513,7 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 | 9.7 | `.pre-commit-config.yaml`, `CHANGELOG.md`, `SECURITY.md`, `CODEOWNERS` | ❌ | trivial |
 | 9.8 | Two no-op contract tests | 🟡 | trivial — see [§10](#10-known-gaps) |
 | 9.9 | **ADR for the capture layer** | ❌ | The design in §1 has no ADR. It also documents a deliberate exception to the `packages/ = no side effects` rule, which is exactly what an ADR is for |
-| 9.10 | 77 pyrefly errors in `tests/` | ❌ | Latent: `task types` uses pyrefly's auto-config, which checks `src` + `scripts` only. Adding any `[tool.pyrefly]` key switches to explicit config and surfaces them |
+| 9.10 | 77 pyrefly errors in `tests/` | ❌ | **Not re-verified in the 2026-08-25 pass** — `pyrefly check` now stops at *“No `pyrefly.toml` found”* and asks for `pyrefly init`, so the count below is the last one actually measured. Latent: `task types` uses pyrefly's auto-config, which checks `src` + `scripts` only. Adding any `[tool.pyrefly]` key switches to explicit config and surfaces them |
 
 ---
 
@@ -459,7 +522,7 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 The dependency graph, not the wish list. Step 0 is done, so:
 
 ```
-9.2 CI  (half a day — 315 tests pass, lock them in before anything else lands)
+9.2 CI  (half a day — 468 tests pass, lock them in before anything else lands)
    ↓
 1.5 HttpSink  +  1.6 auth        ← "one place" starts being real
    ↓
@@ -473,8 +536,8 @@ The dependency graph, not the wish list. Step 0 is done, so:
 ```
 
 Everything in Steps 4, 6, 7, 8 can still wait. The shortest path from "an agent
-runs" to "a model trains" is now: **a real sink, a real destination, an export
-writer.**
+runs" to "a model trains" is now: **a real sink, a real destination.** The export
+writer landed — `export.py`, item 5.4a.
 
 ---
 
@@ -513,7 +576,7 @@ WRITE (hot, local, ~23us)
     ↑ writer_id stamped into metadata, so a two-writer conflict is provable
 
 DRAIN (out of band, at-least-once)
-  spool.undrained(jid) → sink.send(...) → on success: watermark = max(seq)
+  spool.undrained(jid) → sink.send(..., header) → on success: watermark = max(seq)
     ↑ three triggers, one code path: Spool.push() · IntervalDrainer · CLI push
     ↑ TODAY: only FileSink exists                    ← the L7 gap, item 1.5
 
@@ -523,13 +586,20 @@ READ (cold, wherever the events landed)
                                     ↑ writer-conflict detection
                                     ↑ trainable_status labelling
                                     ↑ build_cumulative_steps() ← Step[] born here
+
+EXPORT (the artifact, not the transport)
+  export.save() → <out>/<conversation_id>.json    ← CLI: odyssey export
+    ↑ Trajectory shape: task · steps · reward · metrics · execution_metrics
+    ↑ this is where cumulative state is ALLOWED to exist — it never hits the wire
+    ↑ incomplete journeys are written and flagged under `_odyssey`, not dropped
+    ↑ --last-step drops the N-1 prefix steps; `_odyssey.steps_written = "last"`
 ```
 
 ---
 
 ## 5. Module reference
 
-22 files, 4 917 LOC, **zero third-party dependencies**. `stdlib` only — verified
+24 files, 6 806 LOC, **zero third-party dependencies**. `stdlib` only — verified
 by scanning every import. That is a constraint, not an accident: a dependency
 nothing imports is a phantom dep, and the change that needs one adds it.
 
@@ -537,15 +607,15 @@ nothing imports is a phantom dep, and the change that needs one adds it.
 
 | Module | LOC | Responsibility |
 |---|---|---|
-| `__init__.py` | 116 | Public API. 43 exports; the one place a user imports from |
-| `context.py` | 170 | `ContextVar` journey stack, `SeqAllocator`, `bind()`. **No I/O at all** |
+| `__init__.py` | 131 | Public API. 50 exports; the one place a user imports from |
+| `context.py` | 228 | `ContextVar` journey stack, `SeqAllocator`, `bind()`. **No I/O at all** |
 | `config.py` | 123 | `ODYSSEY_*` env → `Config`. Explicit args win; a bad env value falls back rather than failing startup |
-| `client.py` | 340 | The singleton: spool, allocator, drainer, `atexit`, opt-in SIGTERM, counters, `health()` |
-| `capture.py` | 499 | `journey()`, `JourneyHandle`, `observe()`, `_emit()`. The never-raise boundary |
+| `client.py` | 427 | The singleton: spool, allocator, drainer, `atexit`, opt-in SIGTERM, counters, `health()`. `init(sink=...)` accepts any destination |
+| `capture.py` | 534 | `journey()`, `JourneyHandle`, `observe()`, `_emit()`. The never-raise boundary |
 | `diagnostics.py` | 295 | `scan()` a spool, `render_journey()` for `show`, formatters |
 | `integrations/_base.py` | 283 | Request+response → events: prefix dedup, unknown-block handling |
 | `integrations/anthropic.py` | 249 | Drop-in sync/async client, opt-in patch. Provider imported **inside** `__init__` |
-| `integrations/livekit.py` | 677 | One `attach()` per `AgentSession`. Coalesces streamed utterances into one message per turn, reads the system prompt off the live agent |
+| `integrations/livekit.py` | 939 | One `attach()` per `AgentSession`. Coalesces streamed utterances into one message per turn, pairs tool calls with their outputs, reads the system prompt off the live agent — or skips it entirely under `record_instructions=False`. `.tool()` records a call LiveKit never ran, which is how flow- and playbook-driven deployments get tool turns at all |
 
 **`context.py`** — the piece that made everything else possible.
 `SeqAllocator.next()` holds its lock across the seed call deliberately: releasing
@@ -589,18 +659,19 @@ skipped one is merely a hole. The discrepancy is counted and shows in `health()`
 
 | Module | LOC | Responsibility |
 |---|---|---|
-| `primitives.py` | 376 | `JourneyEvent` and the vocabulary it validates against |
-| `spool.py` | 539 | Append-only capture, cached shard handles, watermark, `drain()` |
-| `jsonl.py` | 326 | Versioned codec: truncation handling, per-line rejection |
-| `fold.py` | 319 | Event fold + projection + writer-conflict detection |
+| `primitives.py` | 412 | `JourneyEvent` and the vocabulary it validates against |
+| `spool.py` | 626 | Append-only capture, cached shard handles, watermark, `drain()` |
+| `jsonl.py` | 416 | Versioned codec: truncation handling, per-line rejection, header written once per file |
+| `fold.py` | 341 | Event fold + projection + writer-conflict detection |
 | `builders/messages.py` | 665 | Provider *parsers* (OpenAI, Anthropic, Vercel, flat) |
 | `builders/journey.py` | 213 | Journey assembly, metrics, content hash |
 | `builders/steps.py` | 161 | One cumulative step per turn, copy-on-write system prefix |
 | `builders/metrics.py` | 57 | Tool counts, error rate, elapsed time |
 | `builders/reward.py` | 42 | Scalar → `Reward` |
 | `hashing.py` | 43 | Canonical JSON → SHA-256 |
-| `cli.py` | 142 | `push` · `status` · `show` · `health` |
-| `sinks.py` | 36 | `FileSink` — moved out of `cli.py` so the library never imports the CLI |
+| `cli.py` | 202 | `push` · `export` · `status` · `show` · `health` |
+| `sinks.py` | 50 | `FileSink` — moved out of `cli.py` so the library never imports the CLI. Any object with `send(journey_id, events, header)` is a sink, so a deployment that wants no wire copy at all passes one that keeps nothing |
+| `export.py` | 353 | The artifact: `Journey` → `{conversation_id}.json`, `--last-step` trimming, `_odyssey` diagnostics, atomic write, filename sanitisation |
 
 > ⚠️ `builders/messages.py` **parses payloads you already captured**. It does not
 > intercept calls. Auto-capture is `integrations/`. Two different jobs — the
@@ -723,6 +794,130 @@ Five things worth noticing:
 Remove the terminal and `complete` flips to `False` with
 `incomplete_reason == "no terminal event: journey may still be running"`.
 
+### The three shapes, with real bytes
+
+odyssey writes two formats and they are not competing. Everything below is real
+output from `tests/fixtures/golden_journey.jsonl`, the fixture both projects
+check against.
+
+**1 — the wire.** Append-only JSONL, one header line then one line per event.
+Cumulative state is deliberately absent: a step holds the whole conversation up
+to its point, so shipping N steps costs O(N²) bytes where shipping N events costs
+O(N). `test_no_step_record_is_ever_encoded` enforces it.
+
+```json
+{"data_source":"golden","journey_id":"j_golden_0001","journey_metadata":{"channel":"voice","tenant":"acme"},"odyssey_schema_version":"1.1","started_at":"2026-01-01T09:00:00+00:00","trace_id":"trace_golden_0001"}
+{"event_id":"golden-e00","journey_id":"j_golden_0001","kind":"message","message":{"content":"You book appointments.","role":"system"},"seq":0,"ts":"2026-01-01T09:00:00+00:00"}
+{"event_id":"golden-e01","journey_id":"j_golden_0001","kind":"message","message":{"content":"Book me for Tuesday at 3.","role":"user"},"seq":1,"ts":"2026-01-01T09:00:01+00:00"}
+```
+
+The header carries identity the events do not repeat — `data_source`, `trace_id`,
+`journey_metadata`, the schema version — and it is written once per file, so a
+resumed drain appending the tail does not produce a second one.
+
+**2 — the artifact.** One `{conversation_id}.json` per conversation. This is the
+shape `tj.save()` produces and the platform consumes, and it is where cumulative
+state is *allowed* to exist because it never hits the wire.
+
+```json
+{
+  "task": {
+    "conversation_id": "j_golden_0001",
+    "data_source": "golden",
+    "id": "golden:j_golden_0001",
+    "num_steps": 3,
+    "num_turns": 3
+  },
+  "steps": [ { "messages": [ ... ], "trainable_status": "trainable" } ],
+  "metrics": {
+    "aggregated_reward": 0.92,
+    "num_tool_calls": 1,
+    "num_tool_failures": 0,
+    "num_tool_response_none": 0,
+    "steps": 3,
+    "tool_error_rate": 0.0
+  },
+  "execution_metrics": { "termination_reason": "ENV_DONE" },
+  "_odyssey": {
+    "complete": true,
+    "terminated": true,
+    "journey_id": "j_golden_0001",
+    "model_ids": ["openai/gpt-4.1-mini"],
+    "schema_version": "1.1"
+  }
+}
+```
+
+A tool turn keeps its correlation across both shapes — the call and its result
+share an `id`, which is what makes the pair readable without guessing:
+
+```json
+{ "role": "assistant",
+  "finish_reason": "tool_calls",
+  "trainable_status": "trainable",
+  "usage": {"prompt_tokens": 42, "completion_tokens": 18},
+  "tool_calls": [{"id": "call_slot_1", "name": "check_slot",
+                  "arguments": {"day": "tuesday", "hour": 15}}] }
+
+{ "role": "tool",
+  "trainable_status": "not_trainable",
+  "tool_response": {"id": "call_slot_1", "name": "check_slot",
+                    "arguments": {"day": "tuesday", "hour": 15},
+                    "response": {"available": true}} }
+```
+
+Everything odyssey knows that the platform's schema has no field for lives under
+one reserved key, `_odyssey`. `complete` is written even when it is `True`: a flag
+that appears only on failure is a flag consumers forget to check.
+
+**3 — the artifact, trimmed.** `--last-step` / `last_step_only=True` writes the
+final step alone.
+
+```
+save([fold_shard(golden)], out)                      → 6 041 bytes, 3 steps
+save([fold_shard(golden)], out, last_step_only=True) → 3 230 bytes, 1 step, 7 messages
+```
+
+The saving is small on a three-turn fixture and large on a real call, because the
+waste is quadratic. A recorded twelve-turn phone call went **54 522 → 9 426
+bytes**, and the surviving step still holds all 24 messages, greeting to goodbye.
+The trimmed file says so:
+
+```json
+"_odyssey": { "complete": true, "terminated": true, "steps_written": "last", ... },
+"task":     { "num_steps": 12, "num_turns": 12 }
+```
+
+`task.num_turns` still reports the conversation, not the file. Nothing about the
+call is lost — only the eleven prefixes of the step that was kept.
+
+### What a real voice call looks like
+
+From a LiveKit deployment recording a phone booking, with the entry checkpoint's
+own HTTP tools captured through `LiveKitRecorder.tool()`:
+
+```
+seq  kind      role       detail
+0    message   assistant  tool_calls [action-auth-token]
+1    message   tool       tool_response action-auth-token → {access_token: [REDACTED]}
+2    message   assistant  tool_calls [action-players-search]
+3    message   tool       tool_response action-players-search → {player_id: player_32ff87, ...}
+...
+10   message   assistant  "Good afternoon, Sanyam! Welcome back to GolfAI TeeTime..."
+11   message   user       "Book there again."
+...
+33   terminal             ENV_DONE
+```
+
+Two things that read as odd until you know the shape. The tool block sits *before*
+the greeting because those tools are the checkpoint's `on_enter` work — auth,
+profile lookup, booking history — which runs before the agent speaks at all; each
+HTTP request is one `assistant` message carrying `tool_calls` plus one `tool`
+message carrying the response, the same pairing OpenAI and Anthropic use. And a
+tool call with no preceding speech stands alone, whereas "let me check
+availability" followed by a lookup is folded into *one* message with both
+`content` and `tool_calls`, because that was one generation.
+
 ---
 
 ## 7. Commands
@@ -793,10 +988,21 @@ to understand what the layer actually does.
 
 ```bash
 python -m odyssey.cli --spool .odyssey status
-python -m odyssey.cli --spool .odyssey push --out ./out [--journey <id>]
+python -m odyssey.cli --spool .odyssey push   --out ./out [--journey <id>]
+python -m odyssey.cli --spool .odyssey export --out ./artifacts [--journey <id>] [--events ./out] [--last-step]
 python -m odyssey.cli --spool .odyssey show [<journey_id>]
 python -m odyssey.cli --spool .odyssey health [--journey <id>] [--json]
 ```
+
+`push` and `export` are the two halves of the same pipeline and they fail
+differently, which is why they are separate commands: a drain that cannot reach
+its sink is retried, an export that cannot fold is a data problem. `export` reads
+the **spool** by default rather than requiring a `push` first — reading moves no
+watermark, so a later drain still ships every event. `--events` points it at a
+directory of already-drained `*.jsonl` instead.
+
+`--last-step` writes the final step alone; see [§6](#6-end-to-end-example-verified)
+for what that costs and what it keeps.
 
 `show` answers the question `health` cannot: not "is it recording?" but "show me
 what you recorded, and which of it a model would learn from."
@@ -824,7 +1030,7 @@ training view
   SFT candidates : 3
   superseded     : 1 turn(s) at seq [8] — rejected side of a preference pair
   reward         : 0.9 · tool calls 1 · failures 0
-  NOTE: no exporter writes these to an SFT/DPO file yet (items 5.4 / 5.5).
+  NOTE: no exporter writes these to an SFT/DPO file yet (items 5.4b / 5.5).
 ```
 
 The four steps fall on the three user turns plus the regenerated answer: seq 8
@@ -834,7 +1040,9 @@ alternative at one decision point, not the next thing the agent said.
 Three things that view makes concrete: `★` marks the turns that carry gradient
 (assistant outputs only — a user turn or a tool result is context, not a target);
 seq 8 against seq 10 is a `(rejected, chosen)` pair a DPO exporter can read; and
-the closing NOTE is honest about the exporter not existing yet.
+the closing NOTE is honest about *which* exporter is still missing — `odyssey
+export` writes the Trajectory artifact (item 5.4a), but nothing yet writes the
+messages-only SFT file or extracts the preference pairs (5.4b, 5.5).
 
 `trainable_status` is **derived at read time**, not read off disk — the recorded
 field holds whatever the producer set, and the real label depends on signals that
@@ -869,6 +1077,16 @@ conversations is the one corruption that reads as valid data.
 | `ODYSSEY_DEBUG` | `1` re-raises capture failures instead of counting them |
 | `ODYSSEY_MAX_OPEN_SHARDS` | cached file-handle cap (default 256) |
 
+`ODYSSEY_OUT` names where the artifact lands. The **drain** destination is a
+separate decision and is passed to `init(sink=...)`: pointing a `FileSink` at
+`out_dir` puts a second copy of every event beside the artifact, which is right
+when a collector is going to read it and wrong when the spool is already the log.
+The LiveKit deployment in `super` reads three of its own variables on top of
+these — `ODYSSEY_WIRE_DIR` (drain the JSONL somewhere, or nowhere),
+`ODYSSEY_ALL_STEPS` (skip the `--last-step` trim) and `ODYSSEY_SYSTEM_PROMPT`
+(record the prompt as a `system` message). Those live in the integration, not in
+core, because they are policy about one deployment's artifacts.
+
 ### Maintenance scripts
 
 ```bash
@@ -894,7 +1112,7 @@ layer did not change the fixture.
 ## 8. The cross-project contract
 
 `superdialog` produces the JSONL, odyssey consumes it, **and neither imports the
-other.** `tests/test_contract.py` enforces that with 18 tests, in four groups.
+other.** `tests/test_contract.py` enforces that with 21 tests, in four groups.
 
 **The golden fixture** (12 events) — committed and readable, not stale
 (regenerating is a no-op), covers every event kind, preserves
@@ -913,9 +1131,40 @@ format, not an import.
 **Docs don't rot** — the quickstart example is executed as a test. (Two of these
 tests are currently no-ops — item 9.8.)
 
-The capture layer was built to leave all of this untouched: `SCHEMA_VERSION`
-stays `1.0`, `writer_id` rides in existing `metadata`, and
-`make_golden.py --check` still reports the fixture current.
+The capture layer was built to leave all of this untouched: `writer_id` rides in
+existing `metadata` rather than adding a field, and `make_golden.py --check`
+still reports the fixture current. `SCHEMA_VERSION` is `1.1` — the minor bump
+that added the header line carrying `data_source`, `trace_id` and
+`journey_metadata`, which is what lets a shard be folded without the caller
+supplying identity it should not have to know.
+
+### The deployment-side half — what lives in `super`, and why
+
+A second contract runs the other way: odyssey provides the recorder, and the
+LiveKit deployment provides the things only it can know. Three of them, all in
+`super/core/voice/observability/odyssey.py`, none of which belong in core:
+
+- **Tool capture for the engines LiveKit does not drive.** `function_tools_executed`
+  fires only for tools LiveKit itself ran. Flow mode's `llm_node` returns `None`,
+  so its tools are HTTP actions executed by superdialog's `ActionExecutor`
+  (`adapter.execute_action`); playbook mode runs its own
+  `PlaybookRuntime._executor.execute`. Both are wrapped there and replayed into
+  `LiveKitRecorder.tool()`, which writes bytes identical to the event path. Before
+  that, every flow- or playbook-driven call exported `num_tool_calls: 0` no matter
+  how many tools ran, so a booking that died on a 503 read as a clean conversation.
+- **What counts as a tool call at all.** A skipped `condition`, a `run_once` cache
+  hit and a GET-cache replay all return without a request leaving the process.
+  Recording those would inflate the metric past the number of requests that
+  actually happened, so they are deliberately not recorded.
+- **Artifact policy.** Which of `ODYSSEY_WIRE_DIR` / `ODYSSEY_ALL_STEPS` /
+  `ODYSSEY_SYSTEM_PROMPT` a deployment sets is a statement about its own corpus,
+  not about the format. Core supplies the switches — `init(sink=...)`,
+  `last_step_only=`, `record_instructions=` — and stays out of the decision.
+
+There is also a probe, `install_livekit_tool_probe`, which logs the tools an agent
+holds and every tool turn LiveKit executes. It records nothing; it exists because
+`num_tool_calls: 0` reads identically whether no tool was needed or capture missed
+one, and that ambiguity is not answerable from the artifact alone.
 
 ---
 
@@ -962,7 +1211,7 @@ Expected tail:
 
 ```bash
 cd packages/odyssey-core
-uv run pytest tests -q                 # → 315 passed, 1 skipped
+uv run pytest tests -q                 # → 468 passed, 1 skipped
 task lint                              # → exit 0
 task types                             # → 0 errors
 python scripts/make_golden.py --check  # → golden fixture is current
@@ -1040,6 +1289,46 @@ grep -c "REDACTED"  out/call_8891.jsonl   # → 1   masked before disk
 python -m odyssey.cli --spool ./.odyssey health
 ```
 
+### Prove the artifact, and the trim
+
+```bash
+cd packages/odyssey-core
+
+python - <<'EOF'
+from odyssey.export import fold_shard, save
+r = fold_shard("tests/fixtures/golden_journey.jsonl")
+print(save([r], "/tmp/odyssey-full").written[0].stat().st_size, "bytes, all steps")
+print(save([r], "/tmp/odyssey-last", last_step_only=True).written[0].stat().st_size,
+      "bytes, last step only")
+EOF
+# → 6041 bytes, all steps
+# → 3230 bytes, last step only
+
+# the trimmed file still holds the whole conversation, and admits the trim
+python -c "
+import json; d = json.load(open('/tmp/odyssey-last/j_golden_0001.json'))
+print(len(d['steps']), 'step', len(d['steps'][0]['messages']), 'messages',
+      d['_odyssey']['steps_written'], 'num_turns', d['task']['num_turns'])"
+# → 1 step 7 messages last num_turns 3
+
+# the same thing through the CLI
+python -m odyssey.cli --spool ./.odyssey export --out ./artifacts --last-step
+```
+
+### Prove the system prompt can be left out
+
+```bash
+cd packages/odyssey-core
+pytest tests/test_livekit.py -q -k "kept_out_of_the_journey or skipped_when_recording_is_off"
+# → 2 passed
+```
+
+`attach(session, journey_id=..., record_instructions=False)` records the
+conversation, the greeting and every tool turn, and writes no `system` message at
+all. The switch exists because a deployment's prompt can run to several thousand
+tokens of business rules, identical on every call, and copying that into every
+exported artifact is a decision the deployment should make rather than inherit.
+
 ---
 
 ## 10. Known gaps
@@ -1077,7 +1366,7 @@ or schedule a rewrite of `primitives.py`.
 ### Still missing from Phase 1
 
 - **No CI.** `.github/workflows/` holds only a `.gitkeep`, while
-  `CONTRIBUTING.md` requires a path-filtered workflow per member. 315 tests
+  `CONTRIBUTING.md` requires a path-filtered workflow per member. 468 tests
   pass and nothing locks it in. This is the cheapest high-value item in the repo.
 - **No ADR for the capture layer** (9.9). It also encodes a deliberate exception
   to the `packages/ = no side effects, no framework imports` rule from
@@ -1121,8 +1410,18 @@ Both in `test_contract.py`, passing trivially:
   recording one journey still corrupt it; the fold refuses the result rather than
   exporting it. Per-writer sequences would prevent it and cost a
   `SCHEMA_VERSION` major bump.
-- **77 pyrefly errors in `tests/`** (9.10). Invisible today because `task types`
-  uses auto-config, which covers `src` + `scripts` only.
+- **77 pyrefly errors in `tests/`** (9.10), last measured before the type
+  checker lost its config — `pyrefly check` exits asking for `pyrefly init`
+  today, so treat the number as stale until 9.2 pins the toolchain in CI.
+  Invisible either way because auto-config covers `src` + `scripts` only.
+- **The artifact is one training example per call, not per turn, by default in
+  the LiveKit deployment.** `last_step_only=True` keeps the final step, which is
+  the whole conversation; the per-turn steps that a curriculum wanting one example
+  per decision point would use are still available (`ODYSSEY_ALL_STEPS=1`, or just
+  omit the flag), but they are not what lands by default.
+- **A tool response is stored whole.** A course catalogue or a booking history
+  comes back in full, and on a call that lists fifteen courses that single
+  response is most of the artifact's bytes. Nothing caps or summarises it yet.
 
 ### Files referenced by docs but not written
 

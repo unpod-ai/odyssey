@@ -26,6 +26,7 @@ import functools
 import inspect
 import time
 from contextlib import contextmanager
+from enum import Enum
 from typing import Any, Callable, Dict, Iterator, List, Optional, TypeVar
 from uuid import uuid4
 
@@ -74,6 +75,13 @@ def _jsonable(value: Any, depth: int = 0) -> Any:
     non-serializable object would otherwise fail the encode and lose the event,
     so unknown types degrade to ``repr()`` rather than to nothing.
     """
+    if isinstance(value, Enum):
+        # Before the scalar check, because a str-mixin enum *is* a str and would
+        # be returned as-is. Callers pass domain enums as journey tags
+        # (`modality=Modality.TEXT_AUDIO`), and neither `str(member)`
+        # ("Modality.TEXT_AUDIO") nor `repr(member)` is the value a consumer
+        # wants. Unwrap to `.value` first.
+        return _jsonable(value.value, depth + 1)
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if depth >= _MAX_JSON_DEPTH:
@@ -124,9 +132,19 @@ def _emit(
         client.count_dropped()
         return None
     try:
+        # `writer_id` stays per-event and is never hoisted into the header. The
+        # header is written once per shard, by whichever process opened it, so a
+        # second process appending to that same shard would inherit the first
+        # one's identity — and `writer_conflict` would see one writer where there
+        # are two. Per-event is the only place the collision is provable.
         meta: Dict[str, Any] = {WRITER_META_KEY: client.writer_id}
-        if ctx.metadata:
-            meta.update(_jsonable(ctx.metadata))
+        # Only tags the header does not already carry. Everything passed to
+        # `journey()`/`attach()` is journey-level and constant, so repeating it
+        # on all N events was the majority of every line and told a reader
+        # nothing the first line could not.
+        delta = ctx.event_metadata()
+        if delta:
+            meta.update(_jsonable(delta))
         if metadata:
             meta.update(_jsonable(metadata))
 
@@ -142,7 +160,8 @@ def _emit(
                 terminal=terminal,
                 model_id=model_id,
                 metadata=meta,
-            )
+            ),
+            header=ctx.header(),
         )
         if kind == "message":
             ctx.last_message_seq = seq
@@ -262,6 +281,8 @@ def journey(
     id: Optional[str] = None,
     *,
     terminal: bool = True,
+    data_source: Optional[str] = None,
+    trace_id: Optional[str] = None,
     **metadata: Any,
 ) -> Iterator[JourneyHandle]:
     """Scope a journey. Everything recorded inside belongs to it.
@@ -280,6 +301,12 @@ def journey(
     knowledge — one phone call, one session, one task. Passing the platform's own
     call id also makes recording idempotent across a restart. Omit it and a uuid
     is generated.
+
+    ``data_source`` and ``trace_id`` are journey identity: they go in the shard
+    header, not on every event. Setting ``data_source`` is what lets ``fold()``
+    label the journey from the file itself instead of from whoever happened to
+    call the reader. Everything else in ``**metadata`` is a caller tag, also
+    snapshotted into the header, with only later changes riding on events.
 
     An exception escaping the block closes the journey with
     ``termination_reason="ERROR"`` and re-raises unchanged.
@@ -307,7 +334,15 @@ def journey(
             # and _emit() drops before it ever reaches the spool.
             else _NULL_ALLOCATOR
         ),
-        metadata=dict(metadata),
+        # Sanitized here, at the door, rather than on the way out. These tags
+        # are now snapshotted into the shard header, and `header_line` json-dumps
+        # it directly — so a caller passing an enum or any other non-serializable
+        # value (`modality=Modality.TEXT_AUDIO` is a real one) would raise inside
+        # `_open_shard`, leave a zero-byte shard behind, and drop every event of
+        # the journey. `_jsonable` degrades to `repr()` instead of losing data.
+        metadata=_jsonable(dict(metadata)),
+        data_source=data_source,
+        trace_id=trace_id,
     )
     if client is not None:
         client.count_journey()

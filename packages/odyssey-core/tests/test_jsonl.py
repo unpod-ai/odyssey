@@ -14,12 +14,14 @@ from odyssey.jsonl import (
     encode_event,
     header_line,
     read_events,
+    read_header,
     read_schema_version,
     write_events,
 )
 from odyssey.primitives import (
     SCHEMA_VERSION,
     JourneyEvent,
+    JourneyHeader,
     Message,
     Reward,
     RewardComponent,
@@ -308,3 +310,98 @@ def test_blank_lines_are_skipped_silently(tmp_path):
     p.write_text(p.read_text() + "\n\n\n")
     result = read_events(p)
     assert result.clean and len(result.events) == 6
+
+
+# --------------------------------------------------------------------------
+# The v1.1 header: identity travels with the file
+# --------------------------------------------------------------------------
+
+
+HEADER = JourneyHeader(
+    journey_id="j_hdr",
+    data_source="livekit",
+    trace_id="t_9",
+    started_at="2026-01-01T00:00:00+00:00",
+    journey_metadata={"tenant": "acme"},
+)
+
+
+def test_the_header_survives_a_round_trip(tmp_path):
+    """The point of v1.1: a reader learns what the file is from the file.
+
+    Before this, `data_source` had to be supplied by whoever happened to call the
+    reader, so two callers could fold one file into two differently-labelled
+    journeys and neither was wrong.
+    """
+    p = tmp_path / "j.jsonl"
+    write_events(p, rich_stream(), header=HEADER)
+    got = read_events(p).header
+    assert got.journey_id == "j_hdr"
+    assert got.data_source == "livekit"
+    assert got.trace_id == "t_9"
+    assert got.started_at == "2026-01-01T00:00:00+00:00"
+    assert got.journey_metadata == {"tenant": "acme"}
+    assert got.odyssey_schema_version == SCHEMA_VERSION
+
+
+def test_read_header_parses_no_events(tmp_path):
+    """A drain needs the identity, not a journey that may be thousands long."""
+    p = tmp_path / "j.jsonl"
+    write_events(p, rich_stream(), header=HEADER)
+    assert read_header(p) == read_events(p).header
+
+
+def test_read_header_rejects_a_major_it_cannot_parse(tmp_path):
+    p = tmp_path / "j.jsonl"
+    p.write_text('{"odyssey_schema_version":"9.0"}\n')
+    with pytest.raises(SchemaVersionError):
+        read_header(p)
+
+
+def test_a_v1_0_file_still_reads_with_an_empty_header(tmp_path):
+    """Back-compat, and the signal a caller needs.
+
+    Every identity field None is exactly the condition that tells a caller it
+    must supply `data_source` itself.
+    """
+    p = tmp_path / "j.jsonl"
+    p.write_text(
+        '{"odyssey_schema_version":"1.0"}\n'
+        + "".join(encode_event(e) + "\n" for e in rich_stream())
+    )
+    result = read_events(p)
+    assert result.clean and len(result.events) == 6
+    assert result.header.odyssey_schema_version == "1.0"
+    assert result.header.journey_id is None
+    assert result.header.data_source is None
+
+
+def test_unknown_header_keys_are_ignored_not_rejected(tmp_path):
+    """A MINOR bump may add keys; refusing here would make every forward-
+    compatible file unreadable to the build that predates it."""
+    p = tmp_path / "j.jsonl"
+    p.write_text(
+        json.dumps({HEADER_KEY: SCHEMA_VERSION, "journey_id": "j", "future": 1})
+        + "\n"
+        + "".join(encode_event(e) + "\n" for e in rich_stream())
+    )
+    result = read_events(p)
+    assert result.clean
+    assert result.header.journey_id == "j"
+
+
+def test_the_writer_decides_the_version_not_its_payload():
+    """`header.odyssey_schema_version` is informational on the way out."""
+    line = json.loads(header_line(header=JourneyHeader(journey_id="j")))
+    assert line[HEADER_KEY] == SCHEMA_VERSION
+
+
+def test_appending_does_not_write_a_second_header(tmp_path):
+    """A resumed drain sends the tail into a file that already has one."""
+    p = tmp_path / "j.jsonl"
+    events = list(rich_stream())
+    write_events(p, events[:2], header=HEADER)
+    write_events(p, events[2:], append=True, header=HEADER)
+    lines = p.read_text().splitlines()
+    assert sum(1 for ln in lines if HEADER_KEY in ln) == 1
+    assert read_events(p).header == HEADER

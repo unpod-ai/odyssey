@@ -7,9 +7,15 @@ an unknown MAJOR version refuses to parse rather than guessing.
 
 File layout — a header line, then one event per line::
 
-    {"odyssey_schema_version": "1.0"}
+    {"odyssey_schema_version": "1.1", "journey_id": "j_1", "data_source": "livekit",
+     "trace_id": "t_9", "started_at": "...", "journey_metadata": {"tenant": "acme"}}
     {"journey_id": "j_1", "seq": 0, "kind": "message", ...}
     {"journey_id": "j_1", "seq": 1, "kind": "message", ...}
+
+The header states what the events below it are a recording of, once. Anything
+constant for the whole journey belongs there rather than on every event: a v1.0
+file repeating its own tags N times still could not say what it was, and paid for
+the repetition on every line.
 
 Two failure modes are first-class, because both happen in production:
 
@@ -30,6 +36,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from odyssey.primitives import (
     SCHEMA_VERSION,
     JourneyEvent,
+    JourneyHeader,
     Message,
     Reward,
     RewardComponent,
@@ -66,6 +73,10 @@ class ReadResult:
     events: List[JourneyEvent] = field(default_factory=list)
     rejections: List[Rejection] = field(default_factory=list)
     truncated_last_line: bool = False
+    # The parsed header. On a v1.0 file every field but the version is None —
+    # which is exactly the condition a caller needs to detect to know it must
+    # supply `data_source` itself.
+    header: JourneyHeader = field(default_factory=JourneyHeader)
 
     @property
     def rejected_count(self) -> int:
@@ -90,15 +101,70 @@ def _strip_none(obj: Any) -> Any:
     return obj
 
 
+# Message fields the fold derives, paired with the value that means "the writer
+# had nothing to say". Only that value is dropped on encode — see `encode_event`.
+_DERIVED_MESSAGE_DEFAULTS = {"trainable_status": "not_trainable"}
+
+
 def encode_event(event: JourneyEvent) -> str:
-    """One event as one JSON line (no trailing newline)."""
-    return json.dumps(
-        _strip_none(dataclasses.asdict(event)), separators=(",", ":"), sort_keys=True
+    """One event as one JSON line (no trailing newline).
+
+    A ``message.trainable_status`` still sitting at the writer default is dropped
+    on the way out. ``fold.derive_trainable_status`` assigns the label from role,
+    signals and structural flags, so the default carries no information — and
+    emitting it on every line makes the file read as a dead corpus to anyone who
+    opens it, while the folded journey says the opposite.
+
+    A producer that set the field deliberately keeps it. The decoder defaults the
+    absent field back to ``not_trainable``, so dropping the default is
+    round-trip-lossless in both directions; dropping an explicit value would not
+    be.
+    """
+    d = _strip_none(dataclasses.asdict(event))
+    msg = d.get("message")
+    if isinstance(msg, dict):
+        for name, default in _DERIVED_MESSAGE_DEFAULTS.items():
+            if msg.get(name) == default:
+                del msg[name]
+    return json.dumps(d, separators=(",", ":"), sort_keys=True)
+
+
+def header_line(
+    version: str = SCHEMA_VERSION,
+    header: Optional[JourneyHeader] = None,
+) -> str:
+    """The first line of a shard.
+
+    ``header`` carries the journey identity; None-valued fields are omitted, so
+    a caller with nothing to declare still writes the bare v1.0-shaped line.
+    ``version`` always wins over ``header.odyssey_schema_version`` — the writer
+    decides what it is writing, not its payload.
+    """
+    obj: Dict[str, Any] = {HEADER_KEY: version}
+    if header is not None:
+        for name, value in dataclasses.asdict(header).items():
+            if name == "odyssey_schema_version" or value is None:
+                continue
+            obj[name] = value
+    return json.dumps(obj, separators=(",", ":"), sort_keys=True)
+
+
+def decode_header(d: Dict[str, Any]) -> JourneyHeader:
+    """Rebuild a :class:`JourneyHeader` from a decoded header object.
+
+    Unknown keys are ignored rather than rejected: a MINOR bump is allowed to
+    add them, and refusing here would make every forward-compatible file
+    unreadable to the build that predates it.
+    """
+    meta = d.get("journey_metadata")
+    return JourneyHeader(
+        odyssey_schema_version=str(d[HEADER_KEY]),
+        journey_id=d.get("journey_id"),
+        data_source=d.get("data_source"),
+        trace_id=d.get("trace_id"),
+        started_at=d.get("started_at"),
+        journey_metadata=meta if isinstance(meta, dict) else None,
     )
-
-
-def header_line(version: str = SCHEMA_VERSION) -> str:
-    return json.dumps({HEADER_KEY: version}, separators=(",", ":"))
 
 
 def write_events(
@@ -106,6 +172,7 @@ def write_events(
     events: Iterable[JourneyEvent],
     *,
     append: bool = False,
+    header: Optional[JourneyHeader] = None,
 ) -> int:
     """Write events as JSONL, emitting the header when creating the file.
 
@@ -117,7 +184,7 @@ def write_events(
     n = 0
     with p.open(mode, encoding="utf-8") as fh:
         if mode == "w":
-            fh.write(header_line() + "\n")
+            fh.write(header_line(header=header) + "\n")
         for e in events:
             fh.write(encode_event(e) + "\n")
             n += 1
@@ -255,18 +322,16 @@ def decode_event(d: Dict[str, Any]) -> JourneyEvent:
 
 
 def read_schema_version(path: Path | str) -> str:
-    """Read the declared version from the header alone, parsing no events."""
+    """Read the declared version from the header alone, parsing no events.
+
+    Unlike :func:`read_header` this does not check the version, so a caller can
+    ask what a file claims to be before deciding whether it can read it.
+    """
     with Path(path).open(encoding="utf-8") as fh:
         first = fh.readline()
     if not first.strip():
         raise MalformedHeaderError(f"{path}: file is empty, no header")
-    try:
-        obj = json.loads(first)
-    except ValueError as exc:
-        raise MalformedHeaderError(f"{path}: header is not valid JSON") from exc
-    if not isinstance(obj, dict) or HEADER_KEY not in obj:
-        raise MalformedHeaderError(f"{path}: first line is not an odyssey header")
-    return str(obj[HEADER_KEY])
+    return str(_header_from(first, Path(path))[HEADER_KEY])
 
 
 def read_events(path: Path | str) -> ReadResult:
@@ -279,7 +344,8 @@ def read_events(path: Path | str) -> ReadResult:
     ends_clean = raw.endswith("\n")
     lines = raw.splitlines()
 
-    version = _check_version(_header_from(lines[0], p))
+    header = decode_header(_header_from(lines[0], p))
+    version = _check_version(header.odyssey_schema_version)
 
     events: List[JourneyEvent] = []
     rejections: List[Rejection] = []
@@ -313,14 +379,38 @@ def read_events(path: Path | str) -> ReadResult:
         events=events,
         rejections=rejections,
         truncated_last_line=truncated,
+        header=header,
     )
 
 
-def _header_from(line: str, p: Path) -> str:
+def read_header(path: Path | str) -> JourneyHeader:
+    """Parse the header alone, reading no events.
+
+    What a drain needs: the sink writes a new file and has to reproduce the
+    identity of the shard the events came from, without paying to parse a
+    journey that may be thousands of events long.
+    """
+    with Path(path).open(encoding="utf-8") as fh:
+        first = fh.readline()
+    if not first.strip():
+        raise MalformedHeaderError(f"{path}: file is empty, no header")
+    header = decode_header(_header_from(first, Path(path)))
+    _check_version(header.odyssey_schema_version)
+    return header
+
+
+def _header_from(line: str, p: Path) -> Dict[str, Any]:
+    """The header line as a dict, validated as an odyssey header.
+
+    Returns the whole object rather than just the version: v1.1 put journey
+    identity up here, and a reader that extracts one key and drops the rest
+    leaves every consumer to be told out-of-band what the file it is holding
+    actually is.
+    """
     try:
         obj = json.loads(line)
     except ValueError as exc:
         raise MalformedHeaderError(f"{p}: header is not valid JSON") from exc
     if not isinstance(obj, dict) or HEADER_KEY not in obj:
         raise MalformedHeaderError(f"{p}: first line is not an odyssey header")
-    return str(obj[HEADER_KEY])
+    return obj

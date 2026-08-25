@@ -143,8 +143,12 @@ def test_no_step_record_is_ever_encoded():
     """Step is not part of the wire vocabulary at all."""
     assert "Step" not in {"message", "signal", "reward", "terminal"}
     encoded = encode_event(read_events(GOLDEN).events[0])
-    assert "trainable_status" in encoded  # per-message, yes
     assert "messages" not in encoded  # cumulative lists, never
+    # Nor the derived label at its default: `fold` assigns `trainable_status`
+    # from role, signals and structural flags, so `not_trainable` on the wire
+    # carries no information and makes every line look untrainable. Same reason
+    # as Step — a projection is not wire vocabulary.
+    assert "trainable_status" not in encoded
 
 
 def test_spool_to_fold_is_lossless(tmp_path, golden_events):
@@ -165,6 +169,45 @@ def test_projection_is_cumulative_and_monotonic(golden_events):
 
 def test_schema_version_readable_from_the_fixture_header_alone():
     assert read_schema_version(GOLDEN) == SCHEMA_VERSION
+
+
+def test_the_fixture_header_carries_journey_identity():
+    """Part of the contract, not decoration.
+
+    A producer that writes only the version key leaves its consumer to be told
+    out-of-band what the file records. superdialog must emit all of this.
+    """
+    h = read_events(GOLDEN).header
+    assert h.odyssey_schema_version == SCHEMA_VERSION
+    assert h.journey_id == "j_golden_0001"
+    assert h.data_source == "golden"
+    assert h.trace_id == "trace_golden_0001"
+    assert h.started_at == "2026-01-01T09:00:00+00:00"
+    assert h.journey_metadata == {"tenant": "acme", "channel": "voice"}
+
+
+def test_the_header_is_what_labels_the_folded_journey():
+    """The payoff. `fold()` used to demand `data_source` from whoever happened
+    to call the reader, so two callers could fold one file into two differently-
+    labelled journeys and neither was wrong. Now the file answers."""
+    result = read_events(GOLDEN)
+    folded = fold(
+        result.events,
+        data_source=result.header.data_source,
+        conversation_id=result.header.journey_id,
+        trace_id=result.header.trace_id,
+    )
+    assert folded.journey.task.data_source == "golden"
+    assert folded.journey.task.conversation_id == "j_golden_0001"
+    assert folded.journey.trace_id == "trace_golden_0001"
+
+
+def test_journey_level_tags_are_not_repeated_on_events():
+    """The dedup, asserted on the committed bytes rather than on a live spool."""
+    result = read_events(GOLDEN)
+    assert result.header.journey_metadata is not None
+    for key in result.header.journey_metadata:
+        assert all(key not in (e.metadata or {}) for e in result.events)
 
 
 # --------------------------------------------------------------------------

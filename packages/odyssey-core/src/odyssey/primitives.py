@@ -141,7 +141,11 @@ class TelemetryEvent:
         )
     )
     user_id: Optional[str] = None
-    journey_id: Optional[str] = None
+    # `trajectory_id`, not `journey_id`: this is the backend's own id for the
+    # persisted row, returned by upload and stamped back onto buffered events.
+    # The field name is the platform's, so it stays the platform's spelling even
+    # though everything odyssey owns says "journey".
+    trajectory_id: Optional[str] = None
     source: str = "sdk"
     metadata: Optional[Dict[str, Any]] = None
     trace_id: Optional[str] = None
@@ -160,8 +164,8 @@ class TelemetryEvent:
             d["trace_id"] = self.trace_id
         if self.user_id is not None:
             d["user_id"] = self.user_id
-        if self.journey_id is not None:
-            d["journey_id"] = self.journey_id
+        if self.trajectory_id is not None:
+            d["trajectory_id"] = self.trajectory_id
         if self.metadata is not None:
             d["metadata"] = self.metadata
         return d
@@ -266,7 +270,12 @@ class PiiPolicy:
 
 # Bumped only for a breaking change to the on-the-wire event shape. The reader
 # rejects an unknown MAJOR outright rather than mis-parsing (see jsonl.py).
-SCHEMA_VERSION = "1.0"
+#
+# 1.1 — additive: the header line gained journey identity (`JourneyHeader`), and
+# a `message.trainable_status` still at the writer default is no longer encoded.
+# A 1.0 reader still parses a 1.1 file: the extra header keys are ignored and the
+# absent label decodes back to its default. Hence MINOR, not MAJOR.
+SCHEMA_VERSION = "1.1"
 
 EventKind = Literal["message", "signal", "reward", "terminal"]
 SignalKind = Literal["thumbs_up", "thumbs_down", "regenerated", "user_edit"]
@@ -291,6 +300,33 @@ def _new_event_id() -> str:
     from uuid import uuid4
 
     return uuid4().hex
+
+
+@dataclass(frozen=True)
+class JourneyHeader:
+    """The first line of a shard: what the events below it are a recording of.
+
+    v1.0 carried only the schema version, which left a file unable to say what
+    it recorded. Everything ``fold`` needs to build a ``Task`` — ``data_source``
+    for provenance, ``trace_id`` to correlate with telemetry — had to be supplied
+    by whoever happened to call the reader, so two callers could fold one file
+    into two differently-labelled journeys and neither was wrong. Identity
+    belongs in the file that has it.
+
+    Only fields that cannot change once recording starts live here. Mutable
+    caller tags stay on the events, because a shard header is written before the
+    second event exists and a later tag would have nowhere to land.
+    """
+
+    odyssey_schema_version: str = SCHEMA_VERSION
+    journey_id: Optional[str] = None
+    data_source: Optional[str] = None
+    trace_id: Optional[str] = None
+    started_at: Optional[str] = None
+    # Snapshot of the journey-level tags as of the first recorded event. Held as
+    # one nested object rather than spread across the header so a reader can tell
+    # caller-supplied keys from schema-defined ones.
+    journey_metadata: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)

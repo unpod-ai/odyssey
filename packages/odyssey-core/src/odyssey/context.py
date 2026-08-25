@@ -32,17 +32,24 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
-from odyssey.primitives import WRITER_META_KEY
+from odyssey.primitives import WRITER_META_KEY, JourneyHeader
 
 __all__ = [
     "WRITER_META_KEY",
     "JourneyContext",
+    "JourneyHeader",
     "SeqAllocator",
     "bind",
     "current",
     "reset_current",
     "set_current",
 ]
+
+
+def _utc_now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
 
 
 class SeqAllocator:
@@ -103,8 +110,20 @@ class JourneyContext:
 
     journey_id: str
     allocator: SeqAllocator
-    # Caller-supplied tags (user_id, session_id, ...). Copied onto every event.
+    # Caller-supplied tags (user_id, session_id, ...). Snapshotted into the shard
+    # header at construction; only what changes after that rides on an event.
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # Journey identity. These cannot change once recording starts, which is why
+    # they belong in the header rather than on every event: a file that repeats
+    # its own name 29 times still cannot say what it is when you read line 1.
+    #
+    # `data_source` in particular is what `fold()` used to demand from whoever
+    # happened to call the reader, so two callers could fold one file into two
+    # differently-labelled journeys and neither was wrong.
+    data_source: Optional[str] = None
+    trace_id: Optional[str] = None
+    started_at: str = field(default_factory=_utc_now_iso)
     # SDK bookkeeping — integration state, seen-system-prompt, and so on.
     # Deliberately separate from ``metadata``: that one is emitted, this one is
     # not, and mixing them would smear internal counters across the corpus.
@@ -128,8 +147,47 @@ class JourneyContext:
     # Nesting depth. Only the outermost block emits the terminal event.
     depth: int = 0
 
+    # Snapshot of `metadata` as of the first event, and the header built from it.
+    # Both are filled on first use and never recomputed: the header is written
+    # once per shard, so a tag added afterwards has nowhere to land in it.
+    _header: Optional[JourneyHeader] = field(default=None, repr=False)
+
     def next_seq(self) -> int:
         return self.allocator.next(self.journey_id)
+
+    def header(self) -> JourneyHeader:
+        """The shard header for this journey. Built once, then reused.
+
+        Memoized rather than rebuilt per event both because it is written at most
+        once per shard and because the memo *is* the snapshot: it freezes the
+        journey-level tags at the moment of the first event, which is what makes
+        :meth:`event_metadata` able to tell a later tag apart from an original.
+        """
+        if self._header is None:
+            self._header = JourneyHeader(
+                journey_id=self.journey_id,
+                data_source=self.data_source,
+                trace_id=self.trace_id,
+                started_at=self.started_at,
+                journey_metadata=dict(self.metadata) or None,
+            )
+        return self._header
+
+    def event_metadata(self) -> Dict[str, Any]:
+        """Caller tags this event must carry because the header does not.
+
+        Empty for the common case: everything passed to ``journey()`` or
+        ``attach()`` is already in the header, so repeating it on all N events
+        buys nothing and costs the majority of every line.
+
+        A tag added or changed mid-journey — ``journey()`` nesting merges into
+        ``metadata``, and a handoff can retag — is a genuine delta, and the
+        header for this shard was written before it existed. Those ride on the
+        event, where a reader applying header-then-event in order gets the value
+        that was true at that seq.
+        """
+        snapshot = self.header().journey_metadata or {}
+        return {k: v for k, v in self.metadata.items() if snapshot.get(k) != v}
 
 
 _current: ContextVar[Optional[JourneyContext]] = ContextVar(

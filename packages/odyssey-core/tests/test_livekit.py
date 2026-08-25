@@ -176,6 +176,14 @@ def messages(jid=JID):
     return [e.message for e in events(jid) if e.kind == "message" and e.message]
 
 
+def header(jid=JID):
+    for rec in _RECORDERS:
+        rec.flush()
+    client = odyssey.get_client()
+    assert client is not None
+    return odyssey.read_events(client.spool.shards(jid)[0]).header
+
+
 def say(session, role, text, **kw):
     session.emit("conversation_item_added", ItemAdded(ChatMessage(role, [text], **kw)))
 
@@ -258,13 +266,84 @@ def test_a_handoff_item_without_a_role_is_ignored(tmp_path):
     assert messages() == []
 
 
-def test_caller_metadata_reaches_every_event(tmp_path):
+def test_caller_metadata_is_stated_once_in_the_header(tmp_path):
+    """Deployment tags are constant for a call, so they belong on line 1.
+
+    A 29-event call used to repeat `tenant`, `sip_trunk`, `agent_id` and the rest
+    on all 29 lines — the majority of every line, saying nothing a reader could
+    not have learned from the first one.
+    """
     start(tmp_path)
     session = FakeSession()
     attach(session, journey_id=JID, tenant="acme", sip_trunk="tw-1")
     say(session, "user", "hi")
+
+    assert header().journey_metadata == {"tenant": "acme", "sip_trunk": "tw-1"}
     meta = events()[0].metadata or {}
-    assert meta["tenant"] == "acme" and meta["sip_trunk"] == "tw-1"
+    assert "tenant" not in meta and "sip_trunk" not in meta
+
+
+def test_the_header_names_livekit_as_the_data_source(tmp_path):
+    """What `fold()` used to make every caller supply by hand.
+
+    Without it two callers could fold one file into two differently-labelled
+    journeys and neither was wrong. It is also why `source: "livekit"` no longer
+    needs stamping onto every event and every message.
+    """
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "hi")
+
+    h = header()
+    assert h.data_source == "livekit"
+    assert h.journey_id == JID
+    assert h.started_at  # a journey knows when it began
+    assert all("source" not in (e.metadata or {}) for e in events())
+    assert all("source" not in (m.metadata or {}) for m in messages())
+
+
+def test_an_unserializable_tag_cannot_kill_the_journey(tmp_path):
+    """Header tags are json-dumped directly, so they are sanitized at the door.
+
+    A LiveKit deployment passing a domain enum (`modality=Modality.TEXT_AUDIO`
+    is a real one) used to raise inside `_open_shard`, leave a zero-byte shard
+    behind, and drop every event of the call — the loudest possible corpus bug
+    reported as silence.
+    """
+    import enum
+
+    class Modality(enum.Enum):
+        TEXT_AUDIO = "text_audio"
+
+    client = start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID, modality=Modality.TEXT_AUDIO)
+    say(session, "user", "hi")
+
+    assert header().journey_metadata == {"modality": "text_audio"}
+    assert len(events()) == 1
+    assert client.stats.events_dropped == 0
+
+
+def test_a_bare_turn_carries_no_empty_metadata_dict():
+    """`{}` survives `_strip_none`, so it would encode as a key saying nothing.
+
+    Reachable whenever the provider gives an item no id and the STT no
+    confidence — which is every turn from a text-only or synthetic session.
+    """
+    from odyssey.integrations.livekit import _Turn
+
+    turn = _Turn("user")
+    turn.absorb(
+        text="hi",
+        item_id=None,
+        interrupted=False,
+        confidence=None,
+        non_text=[],
+        extra=None,
+    )
+    assert turn.metadata() is None
 
 
 # --------------------------------------------------------------------------
@@ -642,13 +721,92 @@ def test_a_capture_failure_never_reaches_livekit(tmp_path):
     assert client.stats.capture_errors >= 1
 
 
-def test_a_malformed_tools_event_is_survived(tmp_path):
+def test_a_malformed_tools_event_is_survived_but_reported(tmp_path):
+    """The call lives; the lost tool turn is counted rather than swallowed.
+
+    An unreadable event is NOT the same as an empty batch. Treating it as one is
+    how a whole tool turn leaves no trace: the corpus then shows a failed booking
+    as a clean conversation, with `num_tool_calls == 0` to confirm it.
+    """
     client = start(tmp_path)
     session = FakeSession()
     attach(session, journey_id=JID)
-    session.emit("function_tools_executed", object())  # no zipped()
-    assert client.stats.capture_errors == 0  # no pairs, nothing to do
+    session.emit("function_tools_executed", object())  # neither accessor
+    assert messages() == []  # nothing invented from an event we cannot read
+    assert client.stats.capture_errors == 1
+    assert "function_tools_executed" in client.stats.recent_errors[-1]
+
+
+def test_an_empty_tool_batch_is_not_an_error(tmp_path):
+    """The other half of the distinction: genuinely nothing ran."""
+
+    class Empty:
+        def zipped(self):
+            return []
+
+    client = start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    session.emit("function_tools_executed", Empty())
     assert messages() == []
+    assert client.stats.capture_errors == 0
+
+
+def test_tools_are_recorded_from_the_parallel_lists_without_zipped(tmp_path):
+    """Older livekit-agents exposed the lists but no `zipped()`.
+
+    They are what `zipped()` zips, so reading them directly captures the tool
+    turn instead of dropping it.
+    """
+
+    class NoZipped:
+        def __init__(self, calls, outputs):
+            self.function_calls = calls
+            self.function_call_outputs = outputs
+
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    session.emit(
+        "function_tools_executed",
+        NoZipped(
+            [FunctionCall("c1", "check_slot", '{"day": "tue"}')],
+            [FunctionCallOutput("c1", "check_slot", "ok")],
+        ),
+    )
+
+    msgs = messages()
+    assert msgs[0].tool_calls[0].name == "check_slot"
+    assert msgs[0].tool_calls[0].arguments == {"day": "tue"}
+    assert msgs[1].tool_response.response == "ok"
+
+
+def test_a_short_outputs_list_still_records_every_call(tmp_path):
+    """Lists that disagree in length are recorded as far as they go, matching
+    livekit's own `strict=False` zip — a batch half-reported beats one dropped."""
+
+    class Ragged:
+        def __init__(self, calls, outputs):
+            self.function_calls = calls
+            self.function_call_outputs = outputs
+
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    session.emit(
+        "function_tools_executed",
+        Ragged(
+            [FunctionCall("c1", "a", "{}"), FunctionCall("c2", "b", "{}")],
+            [FunctionCallOutput("c1", "a", "done")],
+        ),
+    )
+
+    msgs = messages()
+    assert [c.name for c in msgs[0].tool_calls] == ["a", "b"]
+    # The call with no output is recorded as one — `num_tool_response_none`
+    # counts it, and a silently missing second call would not be countable.
+    assert [m.tool_response.name for m in msgs[1:]] == ["a", "b"]
+    assert msgs[2].tool_response.response is None
 
 
 def test_attach_without_init_records_nothing_and_does_not_raise(tmp_path):
@@ -979,7 +1137,7 @@ def test_an_agent_turn_spoken_as_several_utterances_is_one_message(tmp_path):
     )
     # Nothing is lost: every utterance is still individually addressable.
     assert msgs[1].metadata["utterances"] == 3
-    assert msgs[1].metadata["provider_item_id"] == ["item_a", "item_b", "item_c"]
+    assert msgs[1].metadata["provider_item_ids"] == ["item_a", "item_b", "item_c"]
 
 
 def test_split_stt_finals_are_one_caller_turn(tmp_path):
@@ -998,7 +1156,7 @@ def test_split_stt_finals_are_one_caller_turn(tmp_path):
 
 
 def test_a_single_utterance_turn_reads_exactly_as_before(tmp_path):
-    """Coalescing must not tax the common case with plural metadata."""
+    """One utterance still reports a list — the shape never depends on the count."""
     start(tmp_path)
     session = FakeSession()
     attach(session, journey_id=JID)
@@ -1007,7 +1165,7 @@ def test_a_single_utterance_turn_reads_exactly_as_before(tmp_path):
     say(session, "assistant", "Hi.")
 
     meta = messages()[0].metadata
-    assert meta["provider_item_id"] == "item_solo"
+    assert meta["provider_item_ids"] == ["item_solo"]
     assert meta["transcript_confidence"] == 0.92
     assert "parts" not in meta and "utterances" not in meta
 
@@ -1231,3 +1389,296 @@ def test_close_writes_the_agents_sign_off(tmp_path):
     assert [
         e.message.content for e in client.spool.read(JID) if e.kind == "message"
     ] == ["Thanks.", "Have a great day!"]
+
+
+# --------------------------------------------------------------------------
+# The terminal event: a journey that leaves this process without one is
+# refused by fold() forever, because nothing will arrive to complete it
+# --------------------------------------------------------------------------
+
+
+def test_a_session_that_never_closes_is_terminated_at_shutdown(tmp_path):
+    """`AgentSession._aclose()` emits `close` only after a series of awaits —
+    draining speech, closing recorder IO, closing every toolset. A worker killed
+    or a job shut down partway through never reaches the emit."""
+    client = start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "hi")
+
+    assert client.health()["open_journeys"] == 1
+    assert [e.kind for e in events()] == ["message"]  # no terminal yet
+
+    odyssey.shutdown()  # process exit; no `close` ever fired
+
+    folded = odyssey.fold(
+        odyssey.read_events(tmp_path / "out" / f"{JID}.jsonl").events,
+        data_source="livekit",
+    )
+    assert folded.complete is True
+    assert folded.trainable is True
+    assert folded.journey.execution_metrics.termination_reason == "STALE"
+    # Labelled, not disguised: a corpus stage can drop these on sight.
+    assert "without the session closing its journey" in folded.journey.error
+
+
+def test_a_real_close_keeps_its_own_termination_reason(tmp_path):
+    """Shutdown must not win the race against a session that ended properly.
+
+    Closers are idempotent, so this only ever reaches journeys nothing ended.
+    """
+    client = start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "hi")
+    session.emit("close", CloseEv(Reason("user_initiated")))
+
+    assert client.health()["open_journeys"] == 0
+    odyssey.shutdown()
+
+    folded = odyssey.fold(
+        odyssey.read_events(tmp_path / "out" / f"{JID}.jsonl").events,
+        data_source="livekit",
+    )
+    assert folded.journey.execution_metrics.termination_reason == "ENV_DONE"
+    assert folded.journey.error is None
+
+
+def test_only_one_terminal_event_is_ever_written(tmp_path):
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "hi")
+    session.emit("close", CloseEv(Reason("user_initiated")))
+    odyssey.shutdown()
+
+    out = odyssey.read_events(tmp_path / "out" / f"{JID}.jsonl")
+    assert [e.kind for e in out.events].count("terminal") == 1
+
+
+def test_a_detached_recorder_is_not_terminated_by_shutdown(tmp_path):
+    """`detach` means "stop recording", not "end the journey" — and a detached
+    recorder will never record again, so shutdown has no terminal to add."""
+    client = start(tmp_path)
+    session = FakeSession()
+    rec = attach(session, journey_id=JID)
+    say(session, "user", "hi")
+    rec.detach()
+
+    assert client.health()["open_journeys"] == 0
+    odyssey.shutdown()
+    out = odyssey.read_events(tmp_path / "out" / f"{JID}.jsonl")
+    assert "terminal" not in [e.kind for e in out.events]
+
+
+def test_concurrent_calls_are_each_terminated(tmp_path):
+    """One worker process runs many calls; shutdown must not stop at the first."""
+    start(tmp_path)
+    for i in range(3):
+        session = FakeSession()
+        attach(session, journey_id=f"call_{i}")
+        say(session, "user", "hi", id=f"item_{i}")
+
+    odyssey.shutdown()
+    for i in range(3):
+        events_i = odyssey.read_events(tmp_path / "out" / f"call_{i}.jsonl").events
+        assert events_i[-1].kind == "terminal"
+        assert events_i[-1].terminal.termination_reason == "STALE"
+
+
+# --------------------------------------------------------------------------
+# Flow / playbook mode: the prompt is not on the agent, and LiveKit runs no
+# tools. Both are structural, not misconfiguration.
+# --------------------------------------------------------------------------
+
+
+def test_a_callable_supplies_the_prompt_the_agent_does_not_have(tmp_path):
+    """`llm_node` returning None means LiveKit's LLM never runs, so flow mode
+    builds `Agent(instructions="")` and the prompt lives in the dialog machine.
+    Polling the session finds nothing, forever."""
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID, instructions=lambda: "Node 1 prompt.")
+    say(session, "user", "hi")
+
+    system = [m for m in messages() if m.role == "system"]
+    assert [m.content for m in system] == ["Node 1 prompt."]
+
+
+def test_a_per_node_prompt_change_is_recorded_as_a_handoff(tmp_path):
+    """The reason it is a callable and not a string: the flow rebuilds the
+    prompt per node, and a value frozen at attach time cannot follow that."""
+    prompt = ["Greeting node."]
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID, instructions=lambda: prompt[0])
+
+    say(session, "user", "hi")
+    prompt[0] = "Booking node."
+    say(session, "user", "book me")
+
+    system = [m for m in messages() if m.role == "system"]
+    assert [m.content for m in system] == ["Greeting node.", "Booking node."]
+    assert system[1].metadata["instructions_origin"] == "handoff"
+
+
+def test_the_live_agent_still_wins_over_the_callable(tmp_path):
+    """The callable is a fallback. A deployment that does put the prompt on its
+    agent keeps following handoffs the normal way."""
+
+    class WithAgent(FakeSession):
+        current_agent = type("A", (), {"instructions": "Real agent prompt."})()
+
+    start(tmp_path)
+    session = WithAgent()
+    attach(session, journey_id=JID, instructions=lambda: "fallback")
+    say(session, "user", "hi")
+
+    system = [m for m in messages() if m.role == "system"]
+    assert [m.content for m in system] == ["Real agent prompt."]
+
+
+def test_a_raising_prompt_reader_does_not_break_capture(tmp_path):
+    def boom():
+        raise RuntimeError("machine not started")
+
+    client = start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID, instructions=boom)
+    say(session, "user", "hi")
+
+    assert [m.content for m in messages()] == ["hi"]  # turn still recorded
+    assert client.stats.capture_errors >= 1
+
+
+def test_recorder_tool_records_a_call_livekit_never_ran(tmp_path):
+    """Flow mode executes its own tools, so `function_tools_executed` never
+    fires and the journey shows `num_tool_calls == 0` however many ran."""
+    start(tmp_path)
+    session = FakeSession()
+    rec = attach(session, journey_id=JID)
+    say(session, "user", "Book tomorrow 3pm for four.")
+    rec.tool(
+        "check_availability",
+        {"course": "Qutub", "players": 4},
+        result={"slots": ["15:00"]},
+        call_id="c1",
+    )
+
+    msgs = messages()
+    call = next(m for m in msgs if m.tool_calls)
+    resp = next(m for m in msgs if m.tool_response)
+    assert call.tool_calls[0].name == "check_availability"
+    assert call.tool_calls[0].arguments == {"course": "Qutub", "players": 4}
+    assert resp.tool_response.id == call.tool_calls[0].id == "c1"
+    assert resp.tool_response.response == {"slots": ["15:00"]}
+
+
+def test_a_tool_recorded_by_hand_reaches_the_metrics(tmp_path):
+    """The whole point: a failed booking must stop reading as a clean call."""
+    start(tmp_path)
+    session = FakeSession()
+    rec = attach(session, journey_id=JID)
+    say(session, "user", "book me")
+    rec.tool("check_availability", {"players": 4}, error="upstream 503")
+    session.emit("close", CloseEv(Reason("user_initiated")))
+
+    m = odyssey.fold(events(), data_source="livekit").journey.metrics
+    assert m.num_tool_calls == 1
+    assert m.num_tool_failures == 1
+    assert m.tool_error_rate == 1.0
+
+
+def test_speech_before_a_hand_recorded_tool_joins_the_call_message(tmp_path):
+    """Same shape as the event path: "let me check availability" and the lookup
+    were one turn, and content + tool_calls on one message is how OpenAI and
+    Anthropic represent that."""
+    start(tmp_path)
+    session = FakeSession()
+    rec = attach(session, journey_id=JID)
+    say(session, "assistant", "Ok, let me check availability.")
+    rec.tool("check_availability", {"players": 4}, result="ok")
+
+    call = next(m for m in messages() if m.tool_calls)
+    assert call.content == "Ok, let me check availability."
+    assert call.role == "assistant"
+
+
+def test_a_tool_that_never_returned_is_recorded_as_such(tmp_path):
+    """Distinct from one that returned None — `num_tool_response_none` counts
+    it, and a skipped call could not be counted at all."""
+    start(tmp_path)
+    session = FakeSession()
+    rec = attach(session, journey_id=JID)
+    say(session, "user", "book me")
+    rec.tool("check_availability", {"players": 4}, responded=False)
+    session.emit("close", CloseEv(Reason("user_initiated")))
+
+    m = odyssey.fold(events(), data_source="livekit").journey.metrics
+    assert m.num_tool_response_none == 1
+
+
+def test_a_hand_recorded_tool_gets_a_call_id_when_none_is_given(tmp_path):
+    """Correlation is the thing a corpus cannot reconstruct later."""
+    start(tmp_path)
+    session = FakeSession()
+    rec = attach(session, journey_id=JID)
+    rec.tool("check", {}, result="ok")
+
+    msgs = messages()
+    call = next(m for m in msgs if m.tool_calls)
+    resp = next(m for m in msgs if m.tool_response)
+    assert call.tool_calls[0].id
+    assert call.tool_calls[0].id == resp.tool_response.id
+
+
+def test_unserializable_tool_arguments_do_not_lose_the_turn(tmp_path):
+    """A flow machine passes whatever its nodes hold; `repr()` beats losing the
+    tool call."""
+
+    class Weird:
+        def __repr__(self):
+            return "<Weird>"
+
+    start(tmp_path)
+    session = FakeSession()
+    rec = attach(session, journey_id=JID)
+    rec.tool("check", {"obj": Weird()}, result=Weird())
+
+    call = next(m for m in messages() if m.tool_calls)
+    assert call.tool_calls[0].arguments == {"obj": "<Weird>"}
+
+
+def test_the_system_prompt_can_be_kept_out_of_the_journey(tmp_path):
+    """Some prompts are thousands of tokens of business rules.
+
+    A deployment whose prompt dwarfs the call itself may not want that text
+    copied into every exported artifact. Everything else still lands: the
+    greeting, both sides of the conversation, and the tool calls.
+    """
+    start(tmp_path)
+    session = FakeSession()
+    session.current_agent = FakeAgent("A very long book of business rules.")
+    attach(session, journey_id=JID, record_instructions=False)
+
+    say(session, "assistant", "Good afternoon, Sanyam!")
+    say(session, "user", "book there again")
+
+    recorded = messages()
+    assert [m.role for m in recorded] == ["assistant", "user"]
+    assert recorded[0].content == "Good afternoon, Sanyam!"
+
+
+def test_a_callable_prompt_is_also_skipped_when_recording_is_off(tmp_path):
+    """The flow/playbook seed is the *other* way a prompt reaches the journey."""
+    start(tmp_path)
+    session = FakeSession()
+    attach(
+        session,
+        journey_id=JID,
+        instructions=lambda: "Node 1 prompt.",
+        record_instructions=False,
+    )
+    say(session, "user", "hi")
+
+    assert [m.role for m in messages()] == ["user"]

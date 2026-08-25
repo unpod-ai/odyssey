@@ -94,7 +94,7 @@ def test_push_exits_nonzero_when_the_sink_fails(tmp_path, capsys, monkeypatch):
     root = tmp_path / "spool"
     seed(root)
 
-    def boom(self, journey_id, events):
+    def boom(self, journey_id, events, header=None):
         raise OSError("disk full")
 
     monkeypatch.setattr(FileSink, "send", boom)
