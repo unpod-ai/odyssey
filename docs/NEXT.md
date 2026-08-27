@@ -3,7 +3,9 @@
 Verified against code on 2026-08-27 (`task test` → core 553 passed/1 skipped,
 collector 17 passed, dataprep 13 passed, cli 16 passed).
 Ordered by dependency, not by section number — do these top to bottom.
-Everything below is done except the two blocking items at the bottom.
+Everything below is done except **9.4** at the bottom (`NOTICE` copyright
+holder), the one item left that needs input this session couldn't resolve
+on its own.
 
 ## 1. Lock in what already works
 - [x] **9.2** `.github/workflows/ci-core.yml` — path-filtered to `packages/odyssey-core/**`,
@@ -120,10 +122,17 @@ Everything below is done except the two blocking items at the bottom.
 ## Blocking, separate from the roadmap
 - [ ] **9.4** `NOTICE` copyright holder unresolved — blocks public release regardless
       of feature work. `packages/odyssey-core/NOTICE` exists; holder line needs checking.
-- [ ] **4.3** Define `curated_watermark` — referenced in the corpus-version formula
-      (`sha(recipe_hash + curated_watermark)`) throughout docs/README but not defined
-      anywhere in code. Needed before 4.5 (corpus version function) can start.
-      Confirmed: zero code hits, docs-only.
+- [x] **4.3** Define `curated_watermark` — written up in
+      `openspec/changes/add-journey-schema/design.md` Decision 9 (also closes
+      item 9.6, the previously-cited-but-absent design.md itself). `{seq, hash}`:
+      `hash = content_hash` over the sorted `(journey_id, journey_content_hash)`
+      set — the correctness guarantee (changes iff the curated set or its
+      content actually changes; a timestamp or bare count both fail that,
+      explicitly ruled out) — `seq` a per-corpus incrementing run counter for
+      the human-facing story. Reuses `odyssey.hashing.content_hash` directly,
+      no new hashing primitive. **Definition only — not yet implemented in
+      code.** That's item 4.5 (the corpus version function itself), still open
+      and now unblocked.
 
 ## Untouched, downstream of the above (do not start yet)
 `training/`, `models/`, `evaluation/`, `services/api`, `apps/web`, `sdk/python`,

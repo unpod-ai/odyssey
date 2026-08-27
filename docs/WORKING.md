@@ -406,18 +406,12 @@ already tested.**
 |---|---|---|---|
 | 4.1 | Stable canonical hashing | ✅ | `hashing.content_hash()` |
 | 4.2 | Per-journey delivery watermark | ✅ | `Spool.watermark()` |
-| 4.3 | **`curated_watermark`** | ❌ | A different concept from the delivery watermark. Still undefined anywhere |
+| 4.3 | **`curated_watermark`** | ✅ **defined** | `openspec/changes/add-journey-schema/design.md` Decision 9 — `{seq, hash}`, `hash = content_hash` over the sorted `(journey_id, journey_content_hash)` set (the correctness guarantee), `seq` a per-corpus incrementing run counter (the human-facing half). Not yet implemented in code — that's 4.5 |
 | 4.4 | **`recipe_hash`** | ❌ | Needs 3.9 |
-| 4.5 | **Corpus version function** | ❌ | The `sha(recipe_hash + curated_watermark)` composition |
+| 4.5 | **Corpus version function** | ❌ | The `sha(recipe_hash + curated_watermark)` composition — definition ready (Decision 9), implementation still open |
 | 4.6 | `datasets/registry.yaml` | ❌ | `.gitkeep` only |
 | 4.7 | `datasets/manifests/<name>/v1.json` | ❌ | shards + sha256 + row counts + recipe hash |
 | 4.8 | `datasets/cards/` | ❌ | provenance, license, PII posture, splits, intended use |
-
-⚠️ **Still unresolved: "curated_watermark" is used in the chain and in
-`README.md` but never defined.** Highest annotated `seq`? A timestamp cut-off? A
-count of human-approved journeys? Three different implementations. Needs a
-decision before 4.5 — ideally in the missing
-`openspec/changes/add-journey-schema/design.md`.
 
 ---
 
@@ -509,7 +503,7 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 | 9.3 | `cli/` single entrypoint (Phase 2, ADR 0003) | ✅ | New `typer`+`rich` workspace member; lazy plugin registry via `odyssey.commands` entry points. All 7 `odyssey-core` subcommands (`push`/`export`/`sft`/`dpo`/`status`/`show`/`health`) mounted under `odyssey spool`, plus `odyssey data normalize` from `odyssey-dataprep`. Deprecated `odyssey push`/`odyssey status` top-level aliases warn to stderr. Cold `--help` measured at 172ms, under the 200ms budget (`odyssey doctor`). Core drops `[project.scripts]`; `python -m odyssey.cli` unaffected |
 | 9.4 | `NOTICE` copyright holder | ❌ | **blocks public release** — see [§10](#10-known-gaps) |
 | 9.5 | Stale `src/odyssey/build/` path in `NOTICE` + `pyproject` | ❌ | trivial |
-| 9.6 | `openspec/.../design.md` (cited by code, absent) | ❌ | small — needed for 4.3 |
+| 9.6 | `openspec/.../design.md` (cited by code, absent) | ✅ | Written — Decisions 1/4/8 reconstructed from what the shipped code already establishes, Decision 9 (new) defines `curated_watermark`, closing 4.3 |
 | 9.7 | `.pre-commit-config.yaml`, `CHANGELOG.md`, `SECURITY.md`, `CODEOWNERS` | ❌ | trivial |
 | 9.8 | Two no-op contract tests | 🟡 | trivial — see [§10](#10-known-gaps) |
 | 9.9 | **ADR for the capture layer** | ✅ | [`adr/0004-capture-layer.md`](adr/0004-capture-layer.md) — the design in §1 (event-sourced core, ambient context, single-writer contract with detection, never-raise boundary, local-only recording), and the deliberate exception it carries to ADR 0001 rule 1 (`packages/` = no side effects) |
@@ -1391,11 +1385,8 @@ or schedule a rewrite of `primitives.py`.
 - `NOTICE` and `pyproject.toml` both point at `src/odyssey/build/*`. The
   directory is `src/odyssey/builders/`. For `NOTICE` that is the attribution's
   own "Derived files" line, so it should be exact.
-- `openspec/changes/add-journey-schema/design.md` is cited by `pyproject.toml`
-  and by `fold.py` docstrings ("design.md Decision 4", "Decisions 1 and 8") but
-  the path holds only a `.gitkeep`. Item 4.3 needs it.
 
-### Formerly missing from Phase 1 (both resolved)
+### Formerly missing from Phase 1 (all three resolved)
 
 - ~~No CI.~~ `ci-core.yml`/`ci-collector.yml`/`ci-dataprep.yml`/`ci-cli.yml`
   now exist, path-filtered per member (item 9.2).
@@ -1403,6 +1394,10 @@ or schedule a rewrite of `primitives.py`.
   (item 9.9) — including the deliberate exception to the `packages/ = no
   side effects, no framework imports` rule from `STRUCTURE.md`: `init()`
   installs a global singleton, a background thread, and an `atexit` hook.
+- ~~`openspec/changes/add-journey-schema/design.md` cited but absent.~~
+  Written (item 9.6) — Decisions 1/4/8 reconstructed from what `fold.py`/
+  `primitives.py` already establish, Decision 9 (new) defines
+  `curated_watermark`, closing item 4.3.
 
 ### Tests that are currently no-ops
 
@@ -1575,8 +1570,6 @@ which a lazy loader bypasses by construction.
 - [`adr/0002-artifacts-out-of-git.md`](adr/0002-artifacts-out-of-git.md) — git holds the recipe and the hash; the store holds the bytes
 - [`adr/0003-single-cli-entrypoint.md`](adr/0003-single-cli-entrypoint.md) — one console script, plugin-dispatched
 - [`adr/0004-capture-layer.md`](adr/0004-capture-layer.md) — event-sourced core, ambient context, single-writer contract, never-raise boundary
+- [`../openspec/changes/add-journey-schema/design.md`](../openspec/changes/add-journey-schema/design.md) — the journey-schema decisions cited elsewhere as "design.md Decision N", plus `curated_watermark`'s definition
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — setup, adding a member, tier rules, commit format
 - [`../packages/odyssey-core/README.md`](../packages/odyssey-core/README.md) — module table and test map
-
-**Missing and needed:** `openspec/changes/add-journey-schema/design.md` (cited by
-code, item 4.3's blocker — see [§10](#10-known-gaps)).
