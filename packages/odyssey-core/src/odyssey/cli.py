@@ -15,12 +15,12 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from odyssey.sinks import FileSink
 from odyssey.spool import Spool, SpoolConfig, drain
 
-__all__ = ["FileSink", "build_parser", "main"]
+__all__ = ["FileSink", "build_parser", "main", "register"]
 
 
 def _cmd_push(args: argparse.Namespace) -> int:
@@ -275,6 +275,128 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     return int(args.func(args))
+
+
+def register(app: Any) -> None:
+    """Mount this module's commands as ``odyssey.commands`` plugin entries.
+
+    The ADR 0003 plugin contract: ``cli/`` discovers ``spool = "odyssey.cli:
+    register"`` via entry-point metadata and calls this with a fresh typer
+    sub-app, importing this module (and, transitively, typer) only when the
+    ``spool`` command group is actually invoked — never for a cold
+    ``odyssey --help``.
+
+    Every function below is pure plumbing: it builds the argv :func:`main`
+    (this module's own argparse entrypoint, already tested) already
+    understands and delegates to it. That keeps exactly one implementation
+    of what each command does — this is a friendlier front end, not a
+    second backend — and it is why ``typer`` is imported here, inside the
+    function, rather than at module scope: importing it would break
+    ``odyssey-core``'s ``dependencies = []`` for every caller, not just
+    ``cli/``, which is the only one that actually has it installed.
+    """
+    # pyrefly: ignore[missing-import]  — belongs to cli/, the only member
+    # that actually depends on it; see the docstring for why it's local.
+    import typer  # noqa: PLC0415 - opt-in only when register() is called
+
+    def _run(argv: list) -> None:
+        raise typer.Exit(code=main(argv))
+
+    def push(
+        out: str = typer.Option(..., help="output directory for JSONL"),
+        journey: Optional[str] = typer.Option(None, help="drain only this journey_id"),
+        spool: str = typer.Option(".odyssey", help="spool root"),
+    ) -> None:
+        """Drain the spool now."""
+        argv = ["--spool", spool, "push", "--out", out]
+        if journey:
+            argv += ["--journey", journey]
+        _run(argv)
+
+    def export(
+        out: str = typer.Option(..., help="output directory for *.json"),
+        events: Optional[str] = typer.Option(
+            None, help="directory of drained *.jsonl; default: read --spool"
+        ),
+        journey: Optional[str] = typer.Option(None, help="export only this journey_id"),
+        last_step: bool = typer.Option(
+            False, "--last-step", help="write only the final step"
+        ),
+        spool: str = typer.Option(".odyssey", help="spool root"),
+    ) -> None:
+        """Fold drained events into Trajectory JSON artifacts."""
+        argv = ["--spool", spool, "export", "--out", out]
+        if events:
+            argv += ["--events", events]
+        if journey:
+            argv += ["--journey", journey]
+        if last_step:
+            argv.append("--last-step")
+        _run(argv)
+
+    def sft(
+        out: str = typer.Option(..., help="output .jsonl file (not a directory)"),
+        events: Optional[str] = typer.Option(
+            None, help="directory of drained *.jsonl; default: read --spool"
+        ),
+        journey: Optional[str] = typer.Option(None, help="export only this journey_id"),
+        spool: str = typer.Option(".odyssey", help="spool root"),
+    ) -> None:
+        """Write an SFT training file (one line per trainable turn)."""
+        argv = ["--spool", spool, "sft", "--out", out]
+        if events:
+            argv += ["--events", events]
+        if journey:
+            argv += ["--journey", journey]
+        _run(argv)
+
+    def dpo(
+        out: str = typer.Option(..., help="output .jsonl file (not a directory)"),
+        events: Optional[str] = typer.Option(
+            None, help="directory of drained *.jsonl; default: read --spool"
+        ),
+        journey: Optional[str] = typer.Option(None, help="export only this journey_id"),
+        spool: str = typer.Option(".odyssey", help="spool root"),
+    ) -> None:
+        """Write DPO preference pairs (prompt/chosen/rejected)."""
+        argv = ["--spool", spool, "dpo", "--out", out]
+        if events:
+            argv += ["--events", events]
+        if journey:
+            argv += ["--journey", journey]
+        _run(argv)
+
+    def status(spool: str = typer.Option(".odyssey", help="spool root")) -> None:
+        """Show per-journey spool state."""
+        _run(["--spool", spool, "status"])
+
+    def show(
+        journey: Optional[str] = typer.Argument(None, help="journey_id (default: all)"),
+        spool: str = typer.Option(".odyssey", help="spool root"),
+    ) -> None:
+        """Print a collected journey and what is trainable in it."""
+        argv = ["--spool", spool, "show"]
+        if journey:
+            argv.append(journey)
+        _run(argv)
+
+    def health(
+        journey: Optional[str] = typer.Option(
+            None, help="inspect only this journey_id"
+        ),
+        as_json: bool = typer.Option(False, "--json", help="machine-readable output"),
+        spool: str = typer.Option(".odyssey", help="spool root"),
+    ) -> None:
+        """Is it recording? Per-journey foldability and failures."""
+        argv = ["--spool", spool, "health"]
+        if journey:
+            argv += ["--journey", journey]
+        if as_json:
+            argv.append("--json")
+        _run(argv)
+
+    for fn in (push, export, sft, dpo, status, show, health):
+        app.command()(fn)
 
 
 if __name__ == "__main__":  # pragma: no cover

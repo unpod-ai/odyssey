@@ -12,6 +12,7 @@ from odyssey_dataprep.normalization import (
     NormalizeResult,
     normalize_byod_dir,
     normalize_odyssey_dir,
+    normalize_odyssey_spool,
 )
 
 JID = "j_norm"
@@ -80,6 +81,19 @@ def test_normalize_odyssey_dir_survives_one_bad_shard(tmp_path):
     assert result.count == 1
     assert not result.ok
     assert any("broken.jsonl" in e for e in result.errors)
+
+
+def test_normalize_odyssey_spool_reads_straight_from_the_spool(tmp_path):
+    from odyssey.spool import Spool, SpoolConfig
+
+    spool = Spool(SpoolConfig(root=tmp_path / "spool"))
+    spool.record_all(odyssey_stream(), header=HEADER)
+    spool.close()
+
+    result = normalize_odyssey_spool(tmp_path / "spool", tmp_path / "normalized")
+    assert result.ok and result.count == 1
+    # A view, not a consumption: no watermark moves.
+    assert spool.watermark(JID) is None
 
 
 # --------------------------------------------------------------------------

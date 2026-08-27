@@ -14,6 +14,9 @@ includes:
   dataprep:
     taskfile: ./data_preparation/Taskfile.yml
     dir: ./data_preparation
+  cli:
+    taskfile: ./cli/Taskfile.yml
+    dir: ./cli
 
 vars:
   UV:
@@ -36,6 +39,7 @@ tasks:
       - task: core:check
       - task: collector:check
       - task: dataprep:check
+      - task: cli:check
 
   test:
     desc: Run every member's test suite
@@ -43,3 +47,4 @@ tasks:
       - task: core:test
       - task: collector:test
       - task: dataprep:test
+      - task: cli:test

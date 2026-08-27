@@ -6,8 +6,8 @@
 # `uv sync` if a glob picked it up.
 #
 # Add a member the same commit you add its pyproject.toml:
-#   packages/odyssey-schemas · cli · services/api · data_preparation
+#   packages/odyssey-schemas · services/api
 #   training · evaluation · sdk/python
 
 [tool.uv.workspace]
-members = ["packages/odyssey-core", "services/collector", "data_preparation"]
+members = ["packages/odyssey-core", "services/collector", "data_preparation", "cli"]

@@ -233,9 +233,9 @@ calls viable. A regression guard pins p50 under 90 µs
 - [x] **0** extract `odyssey/` → `packages/odyssey-core`, history preserved
 - [x] **1** workspace root, gitignore contract, version pins, docs, ADRs — *plus `__init__.py`, now closed*
 - [x] **0′** *(inserted)* capture layer: ambient context, `init()`, `@observe`, Anthropic capture, diagnostics
-- [ ] **2** `cli/` — root app, plugin registry, `spool` group (ADR 0003)
+- [x] **2** `cli/` — root app, plugin registry, `spool` group (ADR 0003) — also `data` group
 - [ ] **3** `odyssey-schemas` + `services/api` + `openapi.json` + `sdk/python`
-- [ ] **4** `data_preparation` stages + `datasets/` registry
+- [ ] **4** `data_preparation` stages + `datasets/` registry — `normalization` done
 - [ ] **5** `training` (soup adapter) + `models/registry.yaml` + `evaluation`
 - [ ] **6** `apps/web` + `sdk/javascript` + `sdk/examples`
 
@@ -506,7 +506,7 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 |---|---|---|---|
 | 9.1 | `src/odyssey/__init__.py` public API | ✅ **done** — 131 LOC, 50 exports | — |
 | 9.2 | CI (`.github/workflows/ci-core.yml`) | ✅ **done** — fmt/lint/types/test + golden-fixture check, path-filtered | — |
-| 9.3 | `cli/` single entrypoint (Phase 2, ADR 0003) | ❌ | medium. Now also needs to expose `health` |
+| 9.3 | `cli/` single entrypoint (Phase 2, ADR 0003) | ✅ | New `typer`+`rich` workspace member; lazy plugin registry via `odyssey.commands` entry points. All 7 `odyssey-core` subcommands (`push`/`export`/`sft`/`dpo`/`status`/`show`/`health`) mounted under `odyssey spool`, plus `odyssey data normalize` from `odyssey-dataprep`. Deprecated `odyssey push`/`odyssey status` top-level aliases warn to stderr. Cold `--help` measured at 172ms, under the 200ms budget (`odyssey doctor`). Core drops `[project.scripts]`; `python -m odyssey.cli` unaffected |
 | 9.4 | `NOTICE` copyright holder | ❌ | **blocks public release** — see [§10](#10-known-gaps) |
 | 9.5 | Stale `src/odyssey/build/` path in `NOTICE` + `pyproject` | ❌ | trivial |
 | 9.6 | `openspec/.../design.md` (cited by code, absent) | ❌ | small — needed for 4.3 |
@@ -519,18 +519,19 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 
 ### Recommended order
 
-The dependency graph, not the wish list. Steps 0, 1.5/1.6, 1.8, and 5.4/5.5
-are done — record → spool → `HttpSink` → `services/collector` → durable file
-→ `odyssey sft`/`odyssey dpo` is now a real, verified, end-to-end path. What's
+The dependency graph, not the wish list. Steps 0, 1.5/1.6, 1.8, 5.4/5.5, and
+9.3 are done — record → spool → `HttpSink` → `services/collector` → durable
+file → `odyssey sft`/`odyssey dpo`, all reachable through one real
+`odyssey` console script, is now a real, verified, end-to-end path. What's
 next:
 
 ```
-9.3 cli/ · 9.9 ADR
+9.9 ADR for the capture layer
    ↓
 4.3 curated_watermark definition   ← blocks the datasets/ registry (Step 4)
 ```
 
-0′.1 (OpenAI drop-in) and 3.3 (normalization) are done — see Step 0′ and
+0′.1 (OpenAI drop-in) and 3.3 (normalization) are done too — see Step 0′ and
 Step 3 below.
 
 Everything in Steps 4, 6, 7, 8 can still wait on the above. Live gaps in the
@@ -989,6 +990,9 @@ to understand what the layer actually does.
 
 ### The CLI
 
+Two equivalent front ends. `python -m odyssey.cli` is core's own argparse
+parser — standalone, zero deps, works with only `odyssey-core` installed:
+
 ```bash
 python -m odyssey.cli --spool .odyssey status
 python -m odyssey.cli --spool .odyssey push   --out ./out [--journey <id>]
@@ -998,6 +1002,28 @@ python -m odyssey.cli --spool .odyssey dpo    --out ./prefs.jsonl [--journey <id
 python -m odyssey.cli --spool .odyssey show [<journey_id>]
 python -m odyssey.cli --spool .odyssey health [--journey <id>] [--json]
 ```
+
+`odyssey` (installed via `cli/`, ADR 0003) is the same seven subcommands
+mounted under `spool`, plus every other member's own group — today just
+`data normalize` from `odyssey-dataprep`:
+
+```bash
+odyssey spool status --spool .odyssey
+odyssey spool push   --spool .odyssey --out ./out [--journey <id>]
+odyssey spool export --spool .odyssey --out ./artifacts [--journey <id>] [--events ./out] [--last-step]
+odyssey spool sft    --spool .odyssey --out ./train.jsonl [--journey <id>] [--events ./out]
+odyssey spool dpo    --spool .odyssey --out ./prefs.jsonl [--journey <id>] [--events ./out]
+odyssey spool show   --spool .odyssey [<journey_id>]
+odyssey spool health --spool .odyssey [--journey <id>] [--json]
+odyssey data normalize --out ./normalized [--raw <dir> --format <fmt> --data-source <name> | --events <dir> | --spool .odyssey]
+odyssey doctor        # plugin discovery + cold `--help` timing (budget: 200ms)
+```
+
+Each `odyssey spool <cmd>` takes its own `--spool` rather than inheriting a
+global one — a deliberate simplification to keep the lazy-plugin boundary
+clean (no shared typer `Context` crossing into a member's sub-app). `odyssey
+push`/`odyssey status` still work as deprecated top-level aliases for one
+minor release, warning to stderr, exactly as ADR 0003 specifies.
 
 `push` and `export` are the two halves of the same pipeline and they fail
 differently, which is why they are separate commands: a drain that cannot reach
@@ -1515,11 +1541,31 @@ shape of an existing kind changes incompatibly, bump `SCHEMA_VERSION`'s MAJOR �
 old readers then refuse the file instead of mis-parsing it. **This is the path
 for voice events (item 0′.4) if `metadata` turns out not to be enough.**
 
-**A new CLI command.** Per ADR 0003, not in core. `cli/` owns the `odyssey`
-console script and dispatches plugins lazily from the `odyssey.commands`
-entry-point group; core registers `spool = "odyssey.cli:register"` and keeps
-working standalone as `python -m odyssey.cli`. The CLI holds no logic — a command
-parses arguments, calls a member's public API, and renders.
+**A new CLI command group.** ADR 0003 is built — `cli/` owns the `odyssey`
+console script (item 9.3, done) and dispatches plugins lazily from the
+`odyssey.commands` entry-point group; core registers `spool = "odyssey.cli:
+register"`, `odyssey-dataprep` registers `data = "odyssey_dataprep.cli:
+register"`, and core keeps working standalone as `python -m odyssey.cli`
+(verified: it never depended on `[project.scripts]`, only `-m`). A new
+member adds a group by declaring one entry point in its own
+`pyproject.toml` and a `register(app)` function — no change to `cli/` itself.
+`register(app)` does a *local* `import typer` inside the function, never at
+module scope: that keeps the registering member's own `dependencies = []`
+true, since typer is only ever imported by the process that already depends
+on it (`cli/`) calling in. See `odyssey.cli.register` (delegates to the
+existing, already-tested `main()` — pure argv-translation plumbing) and
+`odyssey_dataprep.cli.register` (calls its module's functions directly,
+since that member had no pre-existing CLI to delegate to) for the two
+reference shapes.
+
+Two typer 0.27 quirks worth knowing before touching `cli/registry.py`
+again: subclass `typer.core.TyperGroup`, not raw `click.Group` — typer no
+longer shares one exception hierarchy with the installed `click` package for
+its own `ctx.exit()`, so a plain `click.Group` root mixed with
+`typer.main.get_command()`-built subcommands breaks nested `--help`. And a
+command returned from a custom `get_command` has no name of its own unless
+you set `.name` explicitly — typer only assigns it via `add_typer(name=...)`,
+which a lazy loader bypasses by construction.
 
 ---
 

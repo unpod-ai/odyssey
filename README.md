@@ -3,8 +3,9 @@
 Training-data framework — agent traces in, training corpora out.
 
 Extracted from `super.ai/super @ odyssey-v1` (subdir `odyssey/`) with history preserved. The library
-that came across is at `packages/odyssey-core`; everything else in the tree is scaffolding for the
-phases below and holds no code yet.
+that came across is at `packages/odyssey-core`. `services/collector`, `cli`, and `data_preparation`
+(normalization only) now have real code too; everything else in the tree is still scaffolding for the
+phases below.
 
 ## Layout
 
@@ -12,9 +13,9 @@ phases below and holds no code yet.
 |---|---|---|
 | `packages/odyssey-core` | journey schema, fold, JSONL codec, spool, builders, CLI | **code, tested** |
 | `packages/odyssey-schemas` | pydantic DTOs shared by API and pipelines; source of OpenAPI | scaffold |
-| `cli` | the single `odyssey` entrypoint, lazy plugin dispatch | scaffold |
+| `cli` | the single `odyssey` entrypoint, lazy plugin dispatch | **code, tested** |
 | `services/api` | FastAPI backend; emits `openapi.json` | scaffold |
-| `services/collector` | high-write trace ingest, spool → object store | scaffold |
+| `services/collector` | high-write trace ingest, spool → object store | **code, tested** |
 | `apps/web` | Next.js dashboard, consumes `@odyssey/sdk` | scaffold |
 | `data_preparation` | collection → cleaning → normalization → annotation → augmentation → validation → splitting | normalization done; rest scaffold |
 | `training` | soup/soup-cli adapter, configs, experiment manifests | scaffold |
@@ -70,13 +71,23 @@ python -m odyssey.cli --spool .odyssey status
 python -m odyssey.cli --spool .odyssey push --out ./out
 ```
 
+Or via the installed `odyssey` console script (`cli/`, ADR 0003) — every
+member's commands, discovered lazily:
+
+```bash
+odyssey --help
+odyssey spool status --spool .odyssey
+odyssey data normalize --raw ./raw_exports --format openai_chat --data-source demo --out ./normalized
+odyssey doctor           # plugin discovery + cold-start timing
+```
+
 ## Phases
 
 - [x] **0** extract `odyssey/` → `packages/odyssey-core`, history preserved
 - [x] **1** workspace root, gitignore contract, version pins, docs, ADRs
-- [ ] **2** `cli/` — root app, plugin registry, `spool` group; core's console script moves here (ADR 0003)
+- [x] **2** `cli/` — root app, plugin registry, `spool` group; core's console script moved here (ADR 0003)
 - [ ] **3** `packages/odyssey-schemas` + `services/api` + `openapi.json` + `sdk/python`
-- [ ] **4** `data_preparation` stages over the existing fold/builders + `datasets/` registry
+- [ ] **4** `data_preparation` stages over the existing fold/builders + `datasets/` registry — `normalization` done
 - [ ] **5** `training` (soup adapter) + `models/registry.yaml` + `evaluation` harness
 - [ ] **6** `apps/web` + `sdk/javascript` + `sdk/examples`
 

@@ -92,6 +92,28 @@ def normalize_odyssey_dir(
     )
 
 
+def normalize_odyssey_spool(
+    spool_root: Path | str,
+    out_dir: Path | str,
+    *,
+    journey_id: Optional[str] = None,
+    indent: Optional[int] = 2,
+) -> NormalizeResult:
+    """Coerce straight from a spool into canonical artifacts, no drain first.
+
+    A thin rename of :func:`odyssey.export.export_spool` — "show me the
+    normalized artifact for the call I just recorded" without requiring a
+    push first, same reasoning as the spool-default convention every other
+    odyssey-core exporter (``export``/``sft``/``dpo``) already uses.
+    """
+    from odyssey.export import export_spool
+
+    result = export_spool(spool_root, out_dir, journey_id=journey_id, indent=indent)
+    return NormalizeResult(
+        written=result.written, incomplete=result.incomplete, errors=result.errors
+    )
+
+
 def normalize_byod_dir(
     raw_dir: Path | str,
     out_dir: Path | str,

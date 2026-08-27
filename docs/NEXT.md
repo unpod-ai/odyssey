@@ -87,9 +87,23 @@ Ordered by dependency, not by section number — do these top to bottom.
       and `instrument()`'s default patch target verified against the real
       SDK's internal module layout. `stream=True` passes through unrecorded
       (open item, same as Anthropic's async streaming gap).
-- [ ] **9.3** `cli/` real entrypoint (ADR 0003) — plugin-dispatched `odyssey` console
-      script owned by `cli/`, core's `argparse` parser demoted to a registered plugin.
-      Confirmed: `cli/` is three empty `.gitkeep` dirs; core still owns the console script.
+- [x] **9.3** `cli/` real entrypoint (ADR 0003) — new `typer`+`rich` workspace
+      member. Lazy plugin registry (`odyssey.commands` entry-point group):
+      `list_commands` reads entry-point names via `importlib.metadata` (no
+      import), `get_command` only calls `entry_point.load()` for the one
+      group actually dispatched — verified `odyssey --help` never imports
+      `odyssey.cli`. All 7 `odyssey-core` subcommands mounted under
+      `odyssey spool`, `odyssey data normalize` from `odyssey-dataprep`,
+      deprecated `odyssey push`/`odyssey status` top-level aliases (warn to
+      stderr), `odyssey doctor` (cold `--help` measured at 172ms, under the
+      200ms budget). Core drops `[project.scripts]`, registers
+      `spool = "odyssey.cli:register"` instead; `python -m odyssey.cli`
+      unaffected. Hit two real typer 0.27 quirks while building this (both
+      documented in `registry.py`'s docstring): a raw `click.Group` root
+      breaks nested `--help` once mixed with typer-built subcommands (typer
+      no longer shares one exception hierarchy with installed `click`), and
+      a lazily-returned command has no `.name` unless set explicitly. 16
+      tests, `ci-cli.yml` added.
 - [ ] **9.9** ADR for the capture layer — the design in WORKING.md §1 (single-writer
       contract, ambient context, never-raise boundary) has no ADR, unlike 0001–0003.
 
