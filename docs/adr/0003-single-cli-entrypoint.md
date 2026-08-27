@@ -31,7 +31,9 @@ spool = "odyssey.cli:register"
 
 - `cli/src/odyssey_cli/registry.py` reads entry-point *metadata* at startup and imports a command module
   only when its subcommand is dispatched. `odyssey --help` never imports torch; a `doctor` check asserts
-  cold `--help` stays under 200 ms.
+  cold `--help` stays under 400 ms (originally stated as 200 ms here; raised once CI measurements showed
+  the honest floor for "spawn Python, import typer" alone is 180-280 ms on both a dev machine and CI —
+  200 ms had no real margin against baseline cost, not against anything this check is meant to catch).
 - Core's existing `argparse` parser is untouched and stays usable as `python -m odyssey.cli`, so core keeps
   working standalone with zero dependencies. Typer and rich live in `cli/`, never in core.
 - `odyssey push` / `odyssey status` survive one minor release as deprecated aliases of
