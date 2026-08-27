@@ -29,7 +29,7 @@ import dataclasses
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from odyssey.fold import FoldResult, fold
 from odyssey.jsonl import _strip_none, read_events
@@ -277,6 +277,59 @@ def _fold_with_header(
     return fold(events, **kwargs)
 
 
+def _gather_from_dir(
+    events_dir: Path, journey_id: Optional[str]
+) -> Tuple[List[FoldResult], List[str]]:
+    """Fold every drained ``*.jsonl`` in a directory. Shared by every exporter
+    that reads drained output — Trajectory JSON, SFT, DPO — so there is one
+    "one bad shard must not abort the run" policy, not one per exporter.
+    """
+    shards = (
+        [events_dir / f"{journey_id}.jsonl"]
+        if journey_id
+        else sorted(events_dir.glob("*.jsonl"))
+    )
+    results: List[FoldResult] = []
+    errors: List[str] = []
+    for shard in shards:
+        try:
+            results.append(fold_shard(shard))
+        except (OSError, ValueError) as exc:
+            # One unreadable shard must not abort the run: the other journeys in
+            # this directory are fine and a partial export beats none.
+            errors.append(f"{shard.name}: {type(exc).__name__}: {exc}")
+    return results, errors
+
+
+def _gather_from_spool(
+    spool_root: Path, journey_id: Optional[str]
+) -> Tuple[List[FoldResult], List[str]]:
+    """Fold straight from the spool. The read side of :func:`_gather_from_dir`
+    for "show me the artifact for the call I just recorded" — the spool is not
+    a flat directory, it nests one directory per journey and rotates shards
+    inside it, so only ``Spool.read`` knows how to reassemble one.
+    """
+    from odyssey.spool import Spool, SpoolConfig
+
+    spool = Spool(SpoolConfig(root=spool_root))
+    targets = [journey_id] if journey_id else spool.journey_ids()
+
+    results: List[FoldResult] = []
+    errors: List[str] = []
+    for jid in targets:
+        try:
+            events = spool.read(jid)
+            if not events:
+                raise ExportError(f"{jid}: no events to fold")
+            header = spool.header(jid) or JourneyHeader(journey_id=jid)
+            results.append(_fold_with_header(events, header, {}))
+        except (OSError, ValueError) as exc:
+            # One unfoldable journey must not abort the run — the rest of the
+            # spool is fine, and a partial export beats none.
+            errors.append(f"{jid}: {type(exc).__name__}: {exc}")
+    return results, errors
+
+
 def export_dir(
     events_dir: Path | str,
     out_dir: Path | str,
@@ -292,21 +345,7 @@ def export_dir(
     separate because they fail differently — a drain that cannot reach its sink
     is retried, an export that cannot fold is a data problem.
     """
-    src = Path(events_dir)
-    shards = (
-        [src / f"{journey_id}.jsonl"] if journey_id else sorted(src.glob("*.jsonl"))
-    )
-
-    results: List[FoldResult] = []
-    errors: List[str] = []
-    for shard in shards:
-        try:
-            results.append(fold_shard(shard))
-        except (OSError, ValueError) as exc:
-            # One unreadable shard must not abort the run: the other journeys in
-            # this directory are fine and a partial export beats none.
-            errors.append(f"{shard.name}: {type(exc).__name__}: {exc}")
-
+    results, errors = _gather_from_dir(Path(events_dir), journey_id)
     result = save(results, out_dir, indent=indent, last_step_only=last_step_only)
     return dataclasses.replace(result, errors=errors + result.errors)
 
@@ -330,24 +369,6 @@ def export_spool(
     Reading the spool does **not** drain it: no watermark moves, so a later
     ``push`` still ships every event. Exporting is a view, not a consumption.
     """
-    from odyssey.spool import Spool, SpoolConfig
-
-    spool = Spool(SpoolConfig(root=Path(spool_root)))
-    targets = [journey_id] if journey_id else spool.journey_ids()
-
-    results: List[FoldResult] = []
-    errors: List[str] = []
-    for jid in targets:
-        try:
-            events = spool.read(jid)
-            if not events:
-                raise ExportError(f"{jid}: no events to fold")
-            header = spool.header(jid) or JourneyHeader(journey_id=jid)
-            results.append(_fold_with_header(events, header, {}))
-        except (OSError, ValueError) as exc:
-            # One unfoldable journey must not abort the run — the rest of the
-            # spool is fine, and a partial export beats none.
-            errors.append(f"{jid}: {type(exc).__name__}: {exc}")
-
+    results, errors = _gather_from_spool(Path(spool_root), journey_id)
     result = save(results, out_dir, indent=indent, last_step_only=last_step_only)
     return dataclasses.replace(result, errors=errors + result.errors)

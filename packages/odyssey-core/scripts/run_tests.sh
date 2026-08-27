@@ -4,10 +4,13 @@
 #   build       — ported message adapters, metrics, reward, cumulative steps
 #   jsonl       — versioned JSONL codec: truncation and per-line rejection
 #   spool       — local append-only capture, watermark, drain, handle cache
+#   sinks       — drain destinations: FileSink, HttpSink over stdlib HTTP
 #   context     — ambient journey context and seq allocation
 #   sdk         — init(), journey(), observe(), health(); capture never raises
 #   integrations— provider capture: drop-in client, opt-in patch, no duplicates
 #   cli         — the command-line drain trigger and health report
+#   sft         — SFT export: one line per trainable turn
+#   dpo         — DPO pair extraction: (prompt, chosen, rejected)
 #   contract    — the golden fixture and the no-import-coupling gate
 #   all         — everything
 #
@@ -35,6 +38,9 @@ case "$MODULE" in
   spool)
     uv run pytest tests/test_spool.py "$@"
     ;;
+  sinks)
+    uv run pytest tests/test_sinks.py "$@"
+    ;;
   context)
     uv run pytest tests/test_context.py "$@"
     ;;
@@ -46,6 +52,12 @@ case "$MODULE" in
     ;;
   cli)
     uv run pytest tests/test_cli.py "$@"
+    ;;
+  sft)
+    uv run pytest tests/test_sft.py "$@"
+    ;;
+  dpo)
+    uv run pytest tests/test_dpo.py "$@"
     ;;
   contract)
     uv run pytest tests/test_contract.py "$@"

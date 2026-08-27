@@ -81,6 +81,57 @@ def _cmd_export(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def _cmd_sft(args: argparse.Namespace) -> int:
+    """Write the SFT training file: one JSON line per trainable turn.
+
+    Same read side as `export` — spool by default, `--events` for an
+    already-drained directory — but the output is a single `.jsonl` file, not
+    a directory of Trajectory JSON: this is a training shard, and every SFT
+    trainer that reads JSONL wants one file to point at.
+    """
+    from odyssey.sft import export_sft_dir, export_sft_spool
+
+    if args.events:
+        result = export_sft_dir(
+            Path(args.events), Path(args.out), journey_id=args.journey
+        )
+    else:
+        result = export_sft_spool(
+            Path(args.spool), Path(args.out), journey_id=args.journey
+        )
+    print(f"wrote {result.written} example(s)")
+    for jid, reason in sorted(result.skipped_incomplete.items()):
+        print(f"skipped {jid}: {reason}", file=sys.stderr)
+    for err in result.errors:
+        print(f"error   {err}", file=sys.stderr)
+    return 0 if result.ok else 1
+
+
+def _cmd_dpo(args: argparse.Namespace) -> int:
+    """Write DPO preference pairs: one `(prompt, chosen, rejected)` line per pair.
+
+    A pair exists wherever a regenerated/edited answer was later accepted —
+    see `odyssey.dpo` for exactly how a pair is found. A journey with no such
+    decision point contributes nothing, which is not an error.
+    """
+    from odyssey.dpo import export_dpo_dir, export_dpo_spool
+
+    if args.events:
+        result = export_dpo_dir(
+            Path(args.events), Path(args.out), journey_id=args.journey
+        )
+    else:
+        result = export_dpo_spool(
+            Path(args.spool), Path(args.out), journey_id=args.journey
+        )
+    print(f"wrote {result.written} pair(s)")
+    for jid, reason in sorted(result.skipped_incomplete.items()):
+        print(f"skipped {jid}: {reason}", file=sys.stderr)
+    for err in result.errors:
+        print(f"error   {err}", file=sys.stderr)
+    return 0 if result.ok else 1
+
+
 def _cmd_status(args: argparse.Namespace) -> int:
     spool = Spool(SpoolConfig(root=Path(args.spool)))
     ids = spool.journey_ids()
@@ -172,6 +223,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="write only the final step (it already holds the whole conversation)",
     )
     export.set_defaults(func=_cmd_export)
+
+    sft = sub.add_parser(
+        "sft", help="write an SFT training file (one line per trainable turn)"
+    )
+    sft.add_argument(
+        "--events",
+        default=None,
+        help="directory of drained *.jsonl (push --out); default: read --spool",
+    )
+    sft.add_argument(
+        "--out", required=True, help="output .jsonl file (not a directory)"
+    )
+    sft.add_argument("--journey", default=None, help="export only this journey_id")
+    sft.set_defaults(func=_cmd_sft)
+
+    dpo = sub.add_parser(
+        "dpo", help="write DPO preference pairs (prompt/chosen/rejected)"
+    )
+    dpo.add_argument(
+        "--events",
+        default=None,
+        help="directory of drained *.jsonl (push --out); default: read --spool",
+    )
+    dpo.add_argument(
+        "--out", required=True, help="output .jsonl file (not a directory)"
+    )
+    dpo.add_argument("--journey", default=None, help="export only this journey_id")
+    dpo.set_defaults(func=_cmd_dpo)
 
     status = sub.add_parser("status", help="show per-journey spool state")
     status.set_defaults(func=_cmd_status)

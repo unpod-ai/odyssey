@@ -308,3 +308,100 @@ def test_show_with_no_journey_argument_renders_all(tmp_path, capsys):
 def test_show_on_an_empty_spool_says_so(tmp_path, capsys):
     assert main(["--spool", str(tmp_path / "none"), "show"]) == 0
     assert "empty" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# sft / dpo — the training exporters
+# --------------------------------------------------------------------------
+
+
+def test_cli_sft_writes_a_jsonl_file(tmp_path, capsys):
+    s = Spool(SpoolConfig(root=tmp_path / "spool"))
+    s.record_all(
+        [
+            JourneyEvent(
+                journey_id=JID,
+                seq=0,
+                kind="message",
+                event_id="m0",
+                message=Message(role="user", content="q"),
+            ),
+            JourneyEvent(
+                journey_id=JID,
+                seq=1,
+                kind="message",
+                event_id="m1",
+                message=Message(role="assistant", content="a"),
+            ),
+            JourneyEvent(
+                journey_id=JID,
+                seq=2,
+                kind="terminal",
+                event_id="t2",
+                terminal=Terminal(termination_reason="ENV_DONE"),
+            ),
+        ]
+    )
+    out = tmp_path / "train.jsonl"
+    rc = main(["--spool", str(tmp_path / "spool"), "sft", "--out", str(out)])
+    assert rc == 0
+    assert "wrote 1 example" in capsys.readouterr().out
+    assert out.exists()
+
+
+def test_cli_dpo_writes_a_jsonl_file(tmp_path, capsys):
+    s = Spool(SpoolConfig(root=tmp_path / "spool"))
+    s.record_all(
+        [
+            JourneyEvent(
+                journey_id=JID,
+                seq=0,
+                kind="message",
+                event_id="m0",
+                message=Message(role="user", content="q"),
+            ),
+            JourneyEvent(
+                journey_id=JID,
+                seq=1,
+                kind="message",
+                event_id="m1",
+                message=Message(role="assistant", content="weak"),
+            ),
+            JourneyEvent(
+                journey_id=JID,
+                seq=2,
+                kind="signal",
+                event_id="s2",
+                signal=Signal(signal="regenerated", target_seq=1),
+            ),
+            JourneyEvent(
+                journey_id=JID,
+                seq=3,
+                kind="message",
+                event_id="m3",
+                message=Message(role="assistant", content="strong"),
+            ),
+            JourneyEvent(
+                journey_id=JID,
+                seq=4,
+                kind="terminal",
+                event_id="t4",
+                terminal=Terminal(termination_reason="ENV_DONE"),
+            ),
+        ]
+    )
+    out = tmp_path / "prefs.jsonl"
+    rc = main(["--spool", str(tmp_path / "spool"), "dpo", "--out", str(out)])
+    assert rc == 0
+    assert "wrote 1 pair" in capsys.readouterr().out
+    assert out.exists()
+
+
+def test_cli_sft_reports_a_skipped_incomplete_journey(tmp_path, capsys):
+    seed(tmp_path / "spool")  # three messages, no terminal -> not trainable
+    out = tmp_path / "train.jsonl"
+    rc = main(["--spool", str(tmp_path / "spool"), "sft", "--out", str(out)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "wrote 0 example" in captured.out
+    assert "skipped" in captured.err

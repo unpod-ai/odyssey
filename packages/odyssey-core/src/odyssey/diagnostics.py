@@ -288,8 +288,5 @@ def render_journey(
             f"tool calls {j.metrics.num_tool_calls} · "
             f"failures {j.metrics.num_tool_failures}"
         )
-    lines.append(
-        "  NOTE: no exporter writes these to an SFT/DPO file yet "
-        "(WORKING.md items 5.4 / 5.5)."
-    )
+    lines.append("  NOTE: 'odyssey sft'/'odyssey dpo' write these to a training file.")
     return "\n".join(lines)

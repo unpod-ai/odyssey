@@ -41,6 +41,13 @@ from odyssey.client import (
 )
 from odyssey.config import Config
 from odyssey.context import JourneyContext, SeqAllocator, bind, current
+from odyssey.dpo import (
+    DpoResult,
+    dpo_pairs,
+    export_dpo_dir,
+    export_dpo_spool,
+    save_dpo,
+)
 from odyssey.export import (
     ExportResult,
     export_dir,
@@ -66,7 +73,14 @@ from odyssey.primitives import (
     ToolDefinition,
     ToolResponse,
 )
-from odyssey.sinks import FileSink
+from odyssey.sft import (
+    SftResult,
+    export_sft_dir,
+    export_sft_spool,
+    save_sft,
+    sft_examples,
+)
+from odyssey.sinks import FileSink, HttpSink, HttpSinkError
 from odyssey.spool import DrainResult, IntervalDrainer, Sink, Spool, SpoolConfig, drain
 
 __version__ = "0.1.0"
@@ -120,11 +134,24 @@ __all__ = [
     "read_header",
     "write_events",
     "ReadResult",
+    # Training exporters
+    "sft_examples",
+    "save_sft",
+    "export_sft_dir",
+    "export_sft_spool",
+    "SftResult",
+    "dpo_pairs",
+    "save_dpo",
+    "export_dpo_dir",
+    "export_dpo_spool",
+    "DpoResult",
     # Storage and delivery
     "Spool",
     "SpoolConfig",
     "Sink",
     "FileSink",
+    "HttpSink",
+    "HttpSinkError",
     "IntervalDrainer",
     "DrainResult",
     "drain",
