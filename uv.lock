@@ -5,6 +5,7 @@ requires-python = "==3.12.*"
 [manifest]
 members = [
     "odyssey",
+    "odyssey-collector",
 ]
 
 [[package]]
@@ -259,6 +260,34 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
 ]
 provides-extras = ["dev", "anthropic"]
+
+[[package]]
+name = "odyssey-collector"
+version = "0.1.0"
+source = { editable = "services/collector" }
+dependencies = [
+    { name = "odyssey" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "black" },
+    { name = "flake8" },
+    { name = "isort" },
+    { name = "pyrefly" },
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "black", marker = "extra == 'dev'", specifier = "==26.3.1" },
+    { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.3" },
+    { name = "isort", marker = "extra == 'dev'", specifier = ">=5.13" },
+    { name = "odyssey", editable = "packages/odyssey-core" },
+    { name = "pyrefly", marker = "extra == 'dev'", specifier = ">=0.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "packaging"

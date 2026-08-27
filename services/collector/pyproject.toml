@@ -1,0 +1,45 @@
+[project]
+name = "odyssey-collector"
+version = "0.1.0"
+description = "Minimal ingest endpoint for odyssey.HttpSink — the wire receiver, not the read API."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Unpod", email = "parvinder@unpod.ai" }]
+
+# stdlib http.server only, matching odyssey-core's own dependency discipline.
+# Reused for the JSONL codec (odyssey.jsonl) so the on-the-wire parsing has one
+# implementation, not a second one written against this service's own copy of
+# the format. See README.md for why this is not FastAPI yet.
+dependencies = ["odyssey"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "black==26.3.1",
+  "isort>=5.13",
+  "flake8>=7.3",
+  "pyrefly>=0.1",
+]
+
+[project.scripts]
+odyssey-collector = "odyssey_collector.server:main"
+
+[tool.uv.sources]
+odyssey = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/odyssey_collector"]
+
+[tool.black]
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -10,4 +10,4 @@
 #   training · evaluation · sdk/python
 
 [tool.uv.workspace]
-members = ["packages/odyssey-core"]
+members = ["packages/odyssey-core", "services/collector"]

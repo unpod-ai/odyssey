@@ -1,0 +1,50 @@
+version: "3"
+
+vars:
+  UV:
+    sh: command -v uv 2>/dev/null || echo "${HOME}/.local/bin/uv"
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  sync:
+    desc: Sync deps via uv
+    cmds:
+      - "{{.UV}} sync --extra dev"
+
+  fmt:
+    desc: Format (black + isort)
+    cmds:
+      - "{{.UV}} run --extra dev isort ."
+      - "{{.UV}} run --extra dev black ."
+
+  lint:
+    desc: Lint (flake8)
+    cmds:
+      - "{{.UV}} run --extra dev flake8 --max-line-length=88 --extend-ignore=E203,E501,W503,F541,F841 src tests"
+
+  types:
+    desc: Type check (pyrefly)
+    cmds:
+      - "{{.UV}} run --extra dev pyrefly check"
+
+  check:
+    desc: fmt + lint + types + tests
+    cmds:
+      - task: fmt
+      - task: lint
+      - task: types
+      - task: test
+
+  test:
+    desc: Run the test suite
+    cmds:
+      - "{{.UV}} run pytest tests"
+
+  run:
+    desc: Run the collector locally
+    cmds:
+      - "{{.UV}} run odyssey-collector {{.CLI_ARGS}}"

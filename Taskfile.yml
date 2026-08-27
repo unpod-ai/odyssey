@@ -8,6 +8,9 @@ includes:
   core:
     taskfile: ./packages/odyssey-core/Taskfile.yml
     dir: ./packages/odyssey-core
+  collector:
+    taskfile: ./services/collector/Taskfile.yml
+    dir: ./services/collector
 
 vars:
   UV:
@@ -28,8 +31,10 @@ tasks:
     desc: fmt + lint + types + tests across every member
     cmds:
       - task: core:check
+      - task: collector:check
 
   test:
     desc: Run every member's test suite
     cmds:
       - task: core:test
+      - task: collector:test
