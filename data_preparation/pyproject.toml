@@ -1,0 +1,40 @@
+[project]
+name = "odyssey-dataprep"
+version = "0.1.0"
+description = "data_preparation stages, starting with normalization: raw traces -> canonical Journey artifacts."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Unpod", email = "parvinder@unpod.ai" }]
+
+# The engine already exists in odyssey-core (fold(), builders/messages.py);
+# this member is the stage wrapper over it, not new parsing logic.
+dependencies = ["odyssey"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "black==26.3.1",
+  "isort>=5.13",
+  "flake8>=7.3",
+  "pyrefly>=0.1",
+]
+
+[tool.uv.sources]
+odyssey = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/odyssey_dataprep"]
+
+[tool.black]
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

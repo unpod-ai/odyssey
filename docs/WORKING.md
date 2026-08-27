@@ -387,7 +387,7 @@ No `pyproject.toml`, so it is not a workspace member yet.
 |---|---|---|---|
 | 3.1 | `collection/` | ❌ | Pull from spool / collector / object store → raw layer |
 | 3.2 | `cleaning/` | ❌ | Dedupe (keys exist), dead-turn drop, encoding repair, PII scrub (needs 2.15) |
-| 3.3 | `normalization/` | 🟡 | **The engine exists** — `fold()` + `builders/messages.py` already do schema coercion and role canon. Needs a stage wrapper, not new logic |
+| 3.3 | `normalization/` | ✅ | `data_preparation/src/odyssey_dataprep/normalization/` — `normalize_odyssey_dir` (thin wrapper over `export_dir`) and `normalize_byod_dir` (parse via `builders/messages` + `build_journey_from_messages`, dispatched by format name). Also fixes a real gap found while building it: `build_journey_from_messages` runs no `fold()`, so BYOD messages kept the dataclass default `trainable_status="not_trainable"` including the assistant's own replies — useless to every later stage. Now reuses `fold.derive_trainable_status` directly (empty signal list) to label them, same rule an odyssey-recorded journey with no signals gets |
 | 3.4 | `annotation/` | 🟡 | `Signal`, `Reward`, `build_reward_from_scalar()` exist and are now *populated by the SDK*. Human-in-loop queue adapters do not exist |
 | 3.5 | `augmentation/` | ❌ | Paraphrase, synthetic negatives, tool-call perturbation |
 | 3.6 | `validation/` | ❌ | Schema assert, leakage check, drift, PII assert. **Must exit 3 on breach** (ADR 0003) |
@@ -525,14 +525,13 @@ are done — record → spool → `HttpSink` → `services/collector` → durabl
 next:
 
 ```
-3.3 normalization stage (thin wrapper over fold)   ← cheapest pipeline win
-   ↓
 9.3 cli/ · 9.9 ADR
    ↓
 4.3 curated_watermark definition   ← blocks the datasets/ registry (Step 4)
 ```
 
-0′.1 (OpenAI drop-in) is done — see Step 0′ below.
+0′.1 (OpenAI drop-in) and 3.3 (normalization) are done — see Step 0′ and
+Step 3 below.
 
 Everything in Steps 4, 6, 7, 8 can still wait on the above. Live gaps in the
 Step 1 destination itself: project scoping (multi-tenant auth beyond one

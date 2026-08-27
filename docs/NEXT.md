@@ -54,9 +54,21 @@ Ordered by dependency, not by section number — do these top to bottom.
   FoldResults from a directory or a spool" implementation instead of three.
 
 ## 4. Cheapest real pipeline win
-- [ ] **3.3** `data_preparation/normalization` — thin wrapper over `fold()` +
-      `builders/messages.py`, which already exist and are fully tested. Confirmed:
-      `data_preparation/` has zero code, nine `.gitkeep`s, no `pyproject.toml`.
+- [x] **3.3** `data_preparation/normalization` — new workspace member
+      (`odyssey-dataprep`). `normalize_odyssey_dir` (thin wrapper over
+      `odyssey.export.export_dir`) and `normalize_byod_dir` (dispatches to
+      `builders/messages` parsers by format name, then
+      `build_journey_from_messages`). Found and fixed a real gap while
+      building it: BYOD-built journeys had every `trainable_status` stuck at
+      the dataclass default (`not_trainable`), including assistant replies,
+      since `build_journey_from_messages` runs no `fold()`. Fixed by reusing
+      `fold.derive_trainable_status` directly (empty signal list) — no new
+      logic, same rule a signal-less odyssey-recorded journey gets. 12
+      tests + a live smoke test (verified the fix visually: assistant turn
+      correctly labelled `trainable` before writing the regression test).
+      CI added (`ci-dataprep.yml`). Sibling stages (`collection`,
+      `cleaning`, `annotation`, `augmentation`, `validation`, `splitting`,
+      `flows`, `recipes`) are untouched, still `.gitkeep` scaffolding.
 
 ## 5. Round out collection
 - [x] **0′.1** OpenAI drop-in client + patch — `integrations/openai.py` +

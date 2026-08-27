@@ -16,7 +16,7 @@ phases below and holds no code yet.
 | `services/api` | FastAPI backend; emits `openapi.json` | scaffold |
 | `services/collector` | high-write trace ingest, spool → object store | scaffold |
 | `apps/web` | Next.js dashboard, consumes `@odyssey/sdk` | scaffold |
-| `data_preparation` | collection → cleaning → normalization → annotation → augmentation → validation → splitting | scaffold |
+| `data_preparation` | collection → cleaning → normalization → annotation → augmentation → validation → splitting | normalization done; rest scaffold |
 | `training` | soup/soup-cli adapter, configs, experiment manifests | scaffold |
 | `models` | model registry + cards. **Not** weight storage | scaffold |
 | `evaluation` | harness, benchmarks, metric code, frozen eval sets | scaffold |

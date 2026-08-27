@@ -11,6 +11,9 @@ includes:
   collector:
     taskfile: ./services/collector/Taskfile.yml
     dir: ./services/collector
+  dataprep:
+    taskfile: ./data_preparation/Taskfile.yml
+    dir: ./data_preparation
 
 vars:
   UV:
@@ -32,9 +35,11 @@ tasks:
     cmds:
       - task: core:check
       - task: collector:check
+      - task: dataprep:check
 
   test:
     desc: Run every member's test suite
     cmds:
       - task: core:test
       - task: collector:test
+      - task: dataprep:test
