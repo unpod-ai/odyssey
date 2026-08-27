@@ -23,6 +23,13 @@ def register(app: Any) -> None:
     # that actually depends on it; see the module docstring.
     import typer  # noqa: PLC0415 - opt-in only when register() is called
 
+    from odyssey_dataprep.datasets import (
+        build_manifest,
+        next_version,
+        update_registry,
+        write_card,
+        write_manifest,
+    )
     from odyssey_dataprep.normalization import (
         NormalizeResult,
         normalize_byod_dir,
@@ -107,6 +114,79 @@ def register(app: Any) -> None:
         watermark = compute_curated_watermark(curated, seq=seq)
         print(corpus_version(_recipe_hash(load_recipe(recipe)), watermark))
 
+    def build_corpus(
+        name: str = typer.Option(..., "--name", help="corpus name"),
+        recipe: str = typer.Option(
+            ..., "--recipe", help="path to a recipes/*.yaml file"
+        ),
+        curated: str = typer.Option(
+            ..., "--curated", help="directory of normalized *.json journeys"
+        ),
+        shard: list[str] = typer.Option(
+            ...,
+            "--shard",
+            help="a corpus shard file (e.g. odyssey sft/dpo output); repeatable",
+        ),
+        manifests: str = typer.Option(
+            "datasets/manifests", "--manifests", help="manifests root"
+        ),
+        registry: str = typer.Option(
+            "datasets/registry.yaml", "--registry", help="registry.yaml path"
+        ),
+    ) -> None:
+        """Build and register one corpus version (items 4.6/4.7): a manifest
+        (shards + sha256 + row counts + recipe_hash) plus a registry.yaml entry."""
+        recipe_h = _recipe_hash(load_recipe(recipe))
+        seq = next_version(name, manifests)
+        watermark = compute_curated_watermark(curated, seq=seq)
+        manifest = build_manifest(
+            name,
+            manifests,
+            corpus_version=corpus_version(recipe_h, watermark),
+            recipe_hash=recipe_h,
+            curated_watermark=watermark,
+            shard_paths=shard,
+        )
+        manifest_path = write_manifest(manifest, manifests)
+        update_registry(registry, name, manifest_path)
+        print(f"wrote {manifest_path}")
+        print(manifest["corpus_version"])
+
+    def card(
+        name: str = typer.Option(..., "--name", help="corpus name"),
+        license: str = typer.Option(..., "--license"),
+        pii_posture: str = typer.Option(..., "--pii-posture"),
+        intended_use: str = typer.Option(..., "--intended-use"),
+        version: Optional[int] = typer.Option(
+            None, "--version", help="manifest version; default: latest"
+        ),
+        splits: Optional[str] = typer.Option(None, "--splits"),
+        manifests: str = typer.Option(
+            "datasets/manifests", "--manifests", help="manifests root"
+        ),
+        cards: str = typer.Option("datasets/cards", "--cards", help="cards root"),
+    ) -> None:
+        """Write a corpus card (item 4.8): provenance, license, PII posture,
+        splits, intended use."""
+        import json
+        from pathlib import Path
+
+        v = version if version is not None else next_version(name, manifests) - 1
+        if v < 1:
+            print(f"no manifest found for {name!r} under {manifests}", file=sys.stderr)
+            raise typer.Exit(code=1)
+        manifest_path = Path(manifests) / name / f"v{v}.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        path = write_card(
+            manifest,
+            cards,
+            license=license,
+            pii_posture=pii_posture,
+            intended_use=intended_use,
+            splits=splits,
+        )
+        print(f"wrote {path}")
+
     # A no-op callback keeps `data` a named command group even with a single
     # subcommand today — without it typer collapses a one-command app so
     # `odyssey data --out ...` would work instead of `odyssey data normalize
@@ -118,3 +198,5 @@ def register(app: Any) -> None:
     app.command()(normalize)
     app.command("recipe-hash")(recipe_hash)
     app.command("corpus-version")(corpus_version_cmd)
+    app.command("build-corpus")(build_corpus)
+    app.command("card")(card)
