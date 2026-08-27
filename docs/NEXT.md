@@ -1,7 +1,9 @@
 # odyssey — next-up checklist
 
-Verified against code on 2026-08-27 (`uv run pytest tests -q` → 468 passed, 1 skipped).
+Verified against code on 2026-08-27 (`task test` → core 553 passed/1 skipped,
+collector 17 passed, dataprep 13 passed, cli 16 passed).
 Ordered by dependency, not by section number — do these top to bottom.
+Everything below is done except the two blocking items at the bottom.
 
 ## 1. Lock in what already works
 - [x] **9.2** `.github/workflows/ci-core.yml` — path-filtered to `packages/odyssey-core/**`,
@@ -104,8 +106,16 @@ Ordered by dependency, not by section number — do these top to bottom.
       no longer shares one exception hierarchy with installed `click`), and
       a lazily-returned command has no `.name` unless set explicitly. 16
       tests, `ci-cli.yml` added.
-- [ ] **9.9** ADR for the capture layer — the design in WORKING.md §1 (single-writer
-      contract, ambient context, never-raise boundary) has no ADR, unlike 0001–0003.
+- [x] **9.9** ADR for the capture layer — `docs/adr/0004-capture-layer.md`.
+      Covers the event-sourced core (JourneyEvent as the sole wire unit,
+      Step[] as a read-time projection), ambient ContextVar-based journey
+      tracking, the single-writer-per-journey contract with detection
+      (writer_id, fold's writer_conflict, CLI exit 3), the never-raise
+      boundary, and local-only recording (the spool as retry queue). Also
+      names its own deliberate exception to ADR 0001 rule 1 (packages/ = no
+      side effects) explicitly, which is what item 9.9 actually asked for.
+      Fixed two other stale "no ADR" / "no CI" references elsewhere in
+      WORKING.md that had drifted since those items shipped.
 
 ## Blocking, separate from the roadmap
 - [ ] **9.4** `NOTICE` copyright holder unresolved — blocks public release regardless

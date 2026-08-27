@@ -512,7 +512,7 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 | 9.6 | `openspec/.../design.md` (cited by code, absent) | ❌ | small — needed for 4.3 |
 | 9.7 | `.pre-commit-config.yaml`, `CHANGELOG.md`, `SECURITY.md`, `CODEOWNERS` | ❌ | trivial |
 | 9.8 | Two no-op contract tests | 🟡 | trivial — see [§10](#10-known-gaps) |
-| 9.9 | **ADR for the capture layer** | ❌ | The design in §1 has no ADR. It also documents a deliberate exception to the `packages/ = no side effects` rule, which is exactly what an ADR is for |
+| 9.9 | **ADR for the capture layer** | ✅ | [`adr/0004-capture-layer.md`](adr/0004-capture-layer.md) — the design in §1 (event-sourced core, ambient context, single-writer contract with detection, never-raise boundary, local-only recording), and the deliberate exception it carries to ADR 0001 rule 1 (`packages/` = no side effects) |
 | 9.10 | 77 pyrefly errors in `tests/` | ❌ | **Not re-verified in the 2026-08-25 pass** — `pyrefly check` now stops at *“No `pyrefly.toml` found”* and asks for `pyrefly init`, so the count below is the last one actually measured. Latent: `task types` uses pyrefly's auto-config, which checks `src` + `scripts` only. Adding any `[tool.pyrefly]` key switches to explicit config and surfaces them |
 
 ---
@@ -522,13 +522,13 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 The dependency graph, not the wish list. Steps 0, 1.5/1.6, 1.8, 5.4/5.5, and
 9.3 are done — record → spool → `HttpSink` → `services/collector` → durable
 file → `odyssey sft`/`odyssey dpo`, all reachable through one real
-`odyssey` console script, is now a real, verified, end-to-end path. What's
-next:
+`odyssey` console script, is now a real, verified, end-to-end path. 9.9
+(ADR for the capture layer) is done too. What's next:
 
 ```
-9.9 ADR for the capture layer
-   ↓
 4.3 curated_watermark definition   ← blocks the datasets/ registry (Step 4)
+   ↓
+9.4 NOTICE copyright holder        ← blocks public release
 ```
 
 0′.1 (OpenAI drop-in) and 3.3 (normalization) are done too — see Step 0′ and
@@ -1395,15 +1395,14 @@ or schedule a rewrite of `primitives.py`.
   and by `fold.py` docstrings ("design.md Decision 4", "Decisions 1 and 8") but
   the path holds only a `.gitkeep`. Item 4.3 needs it.
 
-### Still missing from Phase 1
+### Formerly missing from Phase 1 (both resolved)
 
-- **No CI.** `.github/workflows/` holds only a `.gitkeep`, while
-  `CONTRIBUTING.md` requires a path-filtered workflow per member. 468 tests
-  pass and nothing locks it in. This is the cheapest high-value item in the repo.
-- **No ADR for the capture layer** (9.9). It also encodes a deliberate exception
-  to the `packages/ = no side effects, no framework imports` rule from
-  `STRUCTURE.md`: `init()` installs a global singleton, a background thread and
-  an `atexit` hook. That exception should be written down, not discovered.
+- ~~No CI.~~ `ci-core.yml`/`ci-collector.yml`/`ci-dataprep.yml`/`ci-cli.yml`
+  now exist, path-filtered per member (item 9.2).
+- ~~No ADR for the capture layer.~~ [`adr/0004-capture-layer.md`](adr/0004-capture-layer.md)
+  (item 9.9) — including the deliberate exception to the `packages/ = no
+  side effects, no framework imports` rule from `STRUCTURE.md`: `init()`
+  installs a global singleton, a background thread, and an `atexit` hook.
 
 ### Tests that are currently no-ops
 
@@ -1575,9 +1574,9 @@ which a lazy loader bypasses by construction.
 - [`adr/0001-monorepo-layout.md`](adr/0001-monorepo-layout.md) — why a monorepo
 - [`adr/0002-artifacts-out-of-git.md`](adr/0002-artifacts-out-of-git.md) — git holds the recipe and the hash; the store holds the bytes
 - [`adr/0003-single-cli-entrypoint.md`](adr/0003-single-cli-entrypoint.md) — one console script, plugin-dispatched
+- [`adr/0004-capture-layer.md`](adr/0004-capture-layer.md) — event-sourced core, ambient context, single-writer contract, never-raise boundary
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — setup, adding a member, tier rules, commit format
 - [`../packages/odyssey-core/README.md`](../packages/odyssey-core/README.md) — module table and test map
 
 **Missing and needed:** `openspec/changes/add-journey-schema/design.md` (cited by
-code), and an ADR for the capture layer — the design in §1 has none, and it
-carries a deliberate exception to a tier rule that should be recorded (item 9.9).
+code, item 4.3's blocker — see [§10](#10-known-gaps)).
