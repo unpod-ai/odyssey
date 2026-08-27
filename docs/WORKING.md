@@ -507,7 +507,7 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 | 9.7 | `.pre-commit-config.yaml`, `CHANGELOG.md`, `SECURITY.md`, `CODEOWNERS` | ✅ | All four written — `.pre-commit-config.yaml` mirrors the isort/black/flake8 versions and args every member's own `Taskfile.yml` already runs; `CODEOWNERS` lives at `.github/CODEOWNERS`, GitHub's own convention |
 | 9.8 | Two no-op contract tests | ✅ | `packages/odyssey-core/docs/README.md` written — the 60-second quickstart both tests were checking against but that never existed. Verified live: breaking a backticked symbol in it now fails `test_docs_reference_only_symbols_that_exist` |
 | 9.9 | **ADR for the capture layer** | ✅ | [`adr/0004-capture-layer.md`](adr/0004-capture-layer.md) — the design in §1 (event-sourced core, ambient context, single-writer contract with detection, never-raise boundary, local-only recording), and the deliberate exception it carries to ADR 0001 rule 1 (`packages/` = no side effects) |
-| 9.10 | 77 pyrefly errors in `tests/` | ❌ | **Not re-verified in the 2026-08-25 pass** — `pyrefly check` now stops at *“No `pyrefly.toml` found”* and asks for `pyrefly init`, so the count below is the last one actually measured. Latent: `task types` uses pyrefly's auto-config, which checks `src` + `scripts` only. Adding any `[tool.pyrefly]` key switches to explicit config and surfaces them |
+| 9.10 | 77 pyrefly errors in `tests/` | ❌ | **Re-verified 2026-08-27: now 158, not 77** — grown since last measured. The *"No `pyrefly.toml` found"* line is informational, not a stop: `pyrefly check` still runs and still reports `0 errors` today, because `task types`'s auto-config checks `src` + `scripts` only, confirmed unaffected. Adding `[tool.pyrefly] project-includes = ["src", "tests", "scripts"]` is what surfaces the 158 — one is real (`src/odyssey/integrations/livekit.py:893`, a `getattr`+`callable` narrowing gap pyrefly can't see through on an `Any`-typed value; not a runtime bug, the full suite passes), the other 157 are `tests/`, overwhelmingly "assert x is not None" on one line not narrowing `x.attr` on the next. Enabling `tests/` type-checking is a scope decision (more strict tests, ~150+ touch points), not a bug fix — left open, not attempted here for that reason |
 
 ---
 
@@ -1434,10 +1434,11 @@ or schedule a rewrite of `primitives.py`.
   recording one journey still corrupt it; the fold refuses the result rather than
   exporting it. Per-writer sequences would prevent it and cost a
   `SCHEMA_VERSION` major bump.
-- **77 pyrefly errors in `tests/`** (9.10), last measured before the type
-  checker lost its config — `pyrefly check` exits asking for `pyrefly init`
-  today, so treat the number as stale until 9.2 pins the toolchain in CI.
-  Invisible either way because auto-config covers `src` + `scripts` only.
+- **158 pyrefly errors, re-verified 2026-08-27, if `tests/` is opted into
+  type-checking** (9.10) — one real (`livekit.py:893`), 157 are `assert x is
+  not None` narrowing gaps in `tests/`. `task types` in CI is unaffected;
+  auto-config covers `src` + `scripts` only. Enabling `tests/` is a scope
+  decision, not attempted here — see item 9.10's own row for detail.
 - **The artifact is one training example per call, not per turn, by default in
   the LiveKit deployment.** `last_step_only=True` keeps the final step, which is
   the whole conversation; the per-turn steps that a curriculum wanting one example
