@@ -23,6 +23,11 @@ def register(app: Any) -> None:
     # that actually depends on it; see the module docstring.
     import typer  # noqa: PLC0415 - opt-in only when register() is called
 
+    from odyssey_dataprep.annotation import apply_reviews as _apply_reviews
+    from odyssey_dataprep.annotation import build_queue
+    from odyssey_dataprep.augmentation import perturb_tool_calls
+    from odyssey_dataprep.cleaning import clean_dir
+    from odyssey_dataprep.collection import collect_from_collector, collect_from_spool
     from odyssey_dataprep.datasets import (
         build_manifest,
         next_version,
@@ -38,6 +43,8 @@ def register(app: Any) -> None:
     )
     from odyssey_dataprep.recipes import load_recipe
     from odyssey_dataprep.recipes import recipe_hash as _recipe_hash
+    from odyssey_dataprep.splitting import split_dir
+    from odyssey_dataprep.validation import validate_dir
     from odyssey_dataprep.versioning import compute_curated_watermark, corpus_version
 
     def _report(result: NormalizeResult) -> None:
@@ -187,6 +194,106 @@ def register(app: Any) -> None:
         )
         print(f"wrote {path}")
 
+    def collect(
+        out: str = typer.Option(..., "--out", help="flat raw-layer output directory"),
+        spool: Optional[str] = typer.Option(None, "--spool", help="a spool root"),
+        collector: Optional[str] = typer.Option(
+            None, "--collector", help="a services/collector data_dir"
+        ),
+    ) -> None:
+        """Pull raw traces into a flat raw layer (item 3.1): one *.jsonl per
+        journey, reassembled from wherever it's rotated/date-partitioned."""
+        if bool(spool) == bool(collector):
+            print("exactly one of --spool or --collector is required", file=sys.stderr)
+            raise typer.Exit(code=2)
+        result = (
+            collect_from_spool(spool, out)
+            if spool
+            else collect_from_collector(collector, out)
+        )
+        print(f"collected {result.count}")
+        for err in result.errors:
+            print(f"error   {err}", file=sys.stderr)
+        raise typer.Exit(code=0 if result.ok else 1)
+
+    def clean(
+        journeys: str = typer.Option(..., "--journeys", help="normalized *.json dir"),
+        out: str = typer.Option(..., "--out", help="output directory"),
+    ) -> None:
+        """Dedupe, drop dead turns, repair encoding (item 3.2)."""
+        result = clean_dir(journeys, out)
+        print(
+            f"cleaned {result.count} "
+            f"(dropped {result.duplicates_dropped} duplicate(s), "
+            f"{result.dead_turns_dropped} dead turn(s), "
+            f"repaired {result.encoding_repairs} string(s))"
+        )
+
+    def queue(
+        journeys: str = typer.Option(..., "--journeys", help="normalized *.json dir"),
+        out: str = typer.Option(..., "--out", help="queue *.jsonl path"),
+    ) -> None:
+        """Write a human-review queue (item 3.4)."""
+        n = build_queue(journeys, out)
+        print(f"queued {n}")
+
+    def apply_reviews(
+        journeys: str = typer.Option(..., "--journeys", help="normalized *.json dir"),
+        decisions: str = typer.Option(
+            ..., "--decisions", help="reviewer decisions *.jsonl"
+        ),
+        out: str = typer.Option(..., "--out", help="output directory"),
+    ) -> None:
+        """Apply reviewer decisions -- reward + approval -- onto journeys
+        (item 3.4)."""
+        result = _apply_reviews(journeys, decisions, out)
+        print(f"applied {result.count}")
+        for jid in result.skipped:
+            print(f"no journey found for decision: {jid}", file=sys.stderr)
+
+    def augment(
+        journeys: str = typer.Option(..., "--journeys", help="normalized *.json dir"),
+        out: str = typer.Option(
+            ..., "--out", help="output directory for synthetic journeys"
+        ),
+    ) -> None:
+        """Generate synthetic negatives via tool-call perturbation (item 3.5)."""
+        import json
+        from pathlib import Path
+
+        src = Path(journeys)
+        dest_dir = Path(out)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        n = 0
+        for path in sorted(src.glob("*.json")):
+            journey = json.loads(path.read_text(encoding="utf-8"))
+            for synthetic in perturb_tool_calls(journey):
+                cid = synthetic["task"]["conversation_id"]
+                dest = dest_dir / f"{cid}.json"
+                dest.write_text(json.dumps(synthetic, indent=2, sort_keys=True) + "\n")
+                n += 1
+        print(f"generated {n}")
+
+    def validate(
+        journeys: str = typer.Option(..., "--journeys", help="normalized *.json dir"),
+    ) -> None:
+        """Schema + PII-redaction checks (item 3.6). Exits 3 on breach — the
+        lineage-violation code CI greps for (ADR 0003)."""
+        result = validate_dir(journeys)
+        for err in result.errors:
+            print(err, file=sys.stderr)
+        print(f"{'ok' if result.ok else 'FAILED'}: {len(result.errors)} error(s)")
+        raise typer.Exit(code=0 if result.ok else 3)
+
+    def split(
+        journeys: str = typer.Option(..., "--journeys", help="cleaned *.json dir"),
+        out: str = typer.Option(..., "--out", help="output root (train/val/test)"),
+    ) -> None:
+        """Split by group key, never by row (item 3.7)."""
+        written = split_dir(journeys, out)
+        for name, paths in sorted(written.items()):
+            print(f"{name}: {len(paths)}")
+
     # A no-op callback keeps `data` a named command group even with a single
     # subcommand today — without it typer collapses a one-command app so
     # `odyssey data --out ...` would work instead of `odyssey data normalize
@@ -200,3 +307,10 @@ def register(app: Any) -> None:
     app.command("corpus-version")(corpus_version_cmd)
     app.command("build-corpus")(build_corpus)
     app.command("card")(card)
+    app.command("collect")(collect)
+    app.command("clean")(clean)
+    app.command("queue")(queue)
+    app.command("apply-reviews")(apply_reviews)
+    app.command("augment")(augment)
+    app.command("validate")(validate)
+    app.command("split")(split)
