@@ -59,12 +59,19 @@ Authorization: Bearer <api_key>          # only when the server requires one
 
 ## Storage
 
-Today: a local directory of `<journey_id>.jsonl`, byte-identical in shape to
-what `FileSink` produces, written through the same `odyssey.jsonl` codec so
-there's one parser for the wire format, not two. `docs/STRUCTURE.md` names
-"spool → object store" as this service's eventual destination — that's a
-deliberately deferred upgrade: swap the storage call inside `_Handler._store`,
-the endpoint contract doesn't move.
+Today: a local directory, partitioned by the UTC date a batch was received —
+`<data_dir>/<YYYY-MM-DD>/<journey_id>.jsonl`. Each file is byte-identical in
+shape to what `FileSink` produces (own header, own contiguous events), written
+through the same `odyssey.jsonl` codec so there's one parser for the wire
+format, not two. Date-bucketing keeps a directory — and a single long-lived
+`journey_id`'s file — from growing without bound, and makes old dates trivial
+to archive or delete wholesale. A journey whose events straddle midnight
+splits across two date directories; rare in practice (a journey is normally
+one call or session) and each half is still independently readable.
+
+`docs/STRUCTURE.md` names "spool → object store" as this service's eventual
+destination — that's a deliberately deferred upgrade: swap the storage call
+inside `_Handler._store`, the endpoint contract doesn't move.
 
 ## Not done here
 

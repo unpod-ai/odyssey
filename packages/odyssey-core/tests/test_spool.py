@@ -195,6 +195,94 @@ def test_zero_shard_size_rejected(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# Date-partitioned shard names — "<date>.<seq>.jsonl"
+#
+# A shard's date is fixed at the moment it is created, same reasoning as a
+# rotated shard repeating the header rather than inheriting a sibling's
+# identity: a file that predates a day boundary should not silently keep
+# growing across it, and a long-lived journey_id should not accumulate one
+# unbounded file forever.
+# --------------------------------------------------------------------------
+
+
+def test_a_fresh_shard_is_named_with_todays_date(tmp_path):
+    s = spool(tmp_path, date_fn=lambda: "2026-08-27")
+    s.record(ev(0))
+    assert s.shards(JID)[0].name == "2026-08-27.000.jsonl"
+
+
+def test_a_new_day_starts_a_fresh_shard_via_the_cold_path(tmp_path):
+    """The date changes between two separate Spool instances (e.g. a
+    process restart the next morning) — no cached handle involved."""
+    s1 = Spool(SpoolConfig(root=tmp_path / "spool", date_fn=lambda: "2026-08-27"))
+    s1.record(ev(0))
+    s1.close()
+
+    s2 = Spool(SpoolConfig(root=tmp_path / "spool", date_fn=lambda: "2026-08-28"))
+    s2.record(ev(1))
+
+    names = sorted(p.name for p in s2.shards(JID))
+    assert names == ["2026-08-27.000.jsonl", "2026-08-28.000.jsonl"]
+    assert [e.seq for e in s2.read(JID)] == [0, 1]
+
+
+def test_a_new_day_rotates_a_cached_handle_too(tmp_path):
+    """The date changes mid-process, with the previous shard still cached
+    open — the hot path must notice, not just the cold one."""
+    today = ["2026-08-27"]
+    s = spool(tmp_path, date_fn=lambda: today[0])
+    s.record(ev(0))
+    assert s.open_shard_count() == 1
+
+    today[0] = "2026-08-28"
+    s.record(ev(1))
+
+    names = sorted(p.name for p in s.shards(JID))
+    assert names == ["2026-08-27.000.jsonl", "2026-08-28.000.jsonl"]
+    assert [e.seq for e in s.read(JID)] == [0, 1]
+    # Still one handle open — the stale one was closed and replaced, not
+    # left leaking alongside the new one.
+    assert s.open_shard_count() == 1
+
+
+def test_a_new_days_shard_still_starts_at_seq_zero_numbering_but_keeps_seq(
+    tmp_path,
+):
+    """Shard *filename* sequence resets per day; JourneyEvent.seq does not —
+    those are two different counters and must not be confused."""
+    today = ["2026-08-27"]
+    s = spool(tmp_path, date_fn=lambda: today[0])
+    s.record_all([ev(0), ev(1)])
+    today[0] = "2026-08-28"
+    s.record(ev(2))
+    assert s.shards(JID)[-1].name == "2026-08-28.000.jsonl"
+    assert [e.seq for e in s.read(JID)] == [0, 1, 2]
+    assert s.highest_seq(JID) == 2
+
+
+def test_size_rotation_within_one_day_still_increments_the_shard_sequence(
+    tmp_path,
+):
+    s = spool(tmp_path, max_shard_bytes=400, date_fn=lambda: "2026-08-27")
+    s.record_all([ev(i) for i in range(20)])
+    names = sorted(p.name for p in s.shards(JID))
+    assert len(names) > 1
+    assert all(n.startswith("2026-08-27.") for n in names)
+    assert names == sorted(names)  # zero-padded seq still sorts correctly
+    assert [e.seq for e in s.read(JID)] == list(range(20))
+
+
+def test_every_rotated_shard_of_the_day_repeats_the_header_too(tmp_path):
+    s = spool(tmp_path, max_shard_bytes=200, date_fn=lambda: "2026-08-27")
+    for i in range(20):
+        s.record(ev(i, content="x" * 40))
+    shards = s.shards(JID)
+    assert len(shards) > 1
+    for shard in shards:
+        assert shard.read_text().startswith('{"odyssey_schema_version"')
+
+
+# --------------------------------------------------------------------------
 # Redaction
 # --------------------------------------------------------------------------
 
@@ -588,7 +676,12 @@ def test_highest_seq_survives_an_unreadable_shard(tmp_path):
     s = spool(tmp_path)
     s.record_all([ev(i) for i in range(3)])
     s.close()
-    (s.root / "journeys" / JID / "001.jsonl").write_text("not json at all\n")
+    # Named as the *next* shard after the real one, so it sorts last and
+    # highest_seq() must fall back past it rather than accidentally skip it.
+    real = s.shards(JID)[0]
+    date_str, seq = real.stem.split(".", 1)
+    garbage = real.parent / f"{date_str}.{int(seq) + 1:03d}.jsonl"
+    garbage.write_text("not json at all\n")
     assert s.highest_seq(JID) == 2
 
 

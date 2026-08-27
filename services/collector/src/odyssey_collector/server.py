@@ -13,10 +13,18 @@ for once ``odyssey-schemas`` exists (see ``docs/WORKING.md`` items 8.2/1.8:
 away or awkwardly merged when that lands; the wire contract below is what has
 to stay stable in the meantime.
 
-Storage today is a local directory of ``<journey_id>.jsonl`` — the exact
-shape ``FileSink`` writes. "spool -> object store" (``docs/STRUCTURE.md``'s
-stated destination for this service) is a deliberately deferred upgrade: swap
-:meth:`_Handler._store`, keep the endpoint contract.
+Storage today is a local directory, partitioned by the UTC date a batch was
+received: ``<data_dir>/<YYYY-MM-DD>/<journey_id>.jsonl`` — files a shard on
+disk would hold, just date-bucketed so neither a directory nor a single
+long-lived journey_id's file grows without bound, and old dates are trivial
+to archive or delete wholesale. A journey whose events straddle midnight
+splits across two date directories, each a complete, independently-readable
+file in its own right (own header, own contiguous seq range for what landed
+that day) — an acceptable cost against the alternative of unbounded growth,
+and rare in practice since a journey is normally one call or one session.
+"spool -> object store" (``docs/STRUCTURE.md``'s stated destination for this
+service) is a deliberately deferred upgrade: swap :meth:`_Handler._store`,
+keep the endpoint contract.
 
 Wire contract (matches ``odyssey.sinks.HttpSink`` exactly)::
 
@@ -39,9 +47,10 @@ import os
 import tempfile
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 from urllib.parse import unquote
 
 from odyssey.jsonl import (
@@ -61,6 +70,29 @@ DEFAULT_PORT = 8787
 DEFAULT_DATA_DIR = "./collector-data"
 
 
+def _today_utc() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _safe_stem(journey_id: str) -> str:
+    """``journey_id`` as a filename-safe stem, path traversal stripped.
+
+    journey_ids are caller-chosen and nothing stops one holding a separator:
+    written naively, ``a/b`` silently creates a subdirectory and
+    ``../../etc/passwd`` escapes ``data_dir`` entirely. Same defense as
+    ``odyssey.export._filename``, reimplemented rather than imported — this
+    service treats odyssey-core's export module as someone else's exporter,
+    not a place to reach into privates for an unrelated concern.
+    """
+    segments = [
+        seg
+        for seg in journey_id.strip().replace("\\", "/").split("/")
+        if seg and seg not in (".", "..")
+    ]
+    stem = "_".join(segments).lstrip(".")[:200]
+    return stem or "journey"
+
+
 class BatchRejected(ValueError):
     """A posted batch parsed but wasn't a clean, well-formed odyssey stream."""
 
@@ -72,6 +104,8 @@ class CollectorConfig:
     data_dir: Path = Path(DEFAULT_DATA_DIR)
     # None means open: no Authorization header is required. Set to require one.
     api_key: Optional[str] = None
+    # Injectable for tests that need a fixed date rather than the real one.
+    date_fn: Callable[[], str] = _today_utc
 
 
 def resolve_config(
@@ -177,8 +211,10 @@ class _Handler(BaseHTTPRequestHandler):
             )
             raise BatchRejected(f"malformed batch: {reason}")
 
-        dest = self.server.config.data_dir / f"{journey_id}.jsonl"
+        date_dir = self.server.config.data_dir / self.server.config.date_fn()
+        dest = date_dir / f"{_safe_stem(journey_id)}.jsonl"
         with self.server.write_lock:
+            date_dir.mkdir(parents=True, exist_ok=True)
             write_events(dest, result.events, append=True, header=result.header)
         return len(result.events)
 

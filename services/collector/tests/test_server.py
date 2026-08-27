@@ -19,9 +19,10 @@ from odyssey.jsonl import read_events
 from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
 from odyssey.sinks import HttpSinkError
 
-from odyssey_collector.server import resolve_config, serve
+from odyssey_collector.server import CollectorConfig, _safe_stem, serve
 
 JID = "j_collector"
+FIXED_DATE = "2026-08-27"
 
 HEADER = JourneyHeader(
     journey_id=JID,
@@ -52,8 +53,11 @@ def evs() -> list[JourneyEvent]:
 
 @pytest.fixture
 def running(tmp_path):
-    config = resolve_config(
-        host="127.0.0.1", port=0, data_dir=tmp_path / "data", api_key=None
+    config = CollectorConfig(
+        host="127.0.0.1",
+        port=0,
+        data_dir=tmp_path / "data",
+        date_fn=lambda: FIXED_DATE,
     )
     server = serve(config)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -71,7 +75,7 @@ def endpoint(server) -> str:
 
 
 def stored_path(server, journey_id: str = JID):
-    return server.config.data_dir / f"{journey_id}.jsonl"
+    return server.config.data_dir / FIXED_DATE / f"{_safe_stem(journey_id)}.jsonl"
 
 
 # --------------------------------------------------------------------------
@@ -112,14 +116,69 @@ def test_different_journeys_land_in_different_files(running):
 
 
 # --------------------------------------------------------------------------
+# Date partitioning — <data_dir>/<date>/<journey_id>.jsonl
+# --------------------------------------------------------------------------
+
+
+def test_a_batch_lands_under_the_date_it_was_received(running):
+    HttpSink(endpoint(running)).send(JID, evs())
+    assert (running.config.data_dir / FIXED_DATE / f"{JID}.jsonl").exists()
+    # And nowhere else — no flat <data_dir>/<journey_id>.jsonl left behind.
+    assert not (running.config.data_dir / f"{JID}.jsonl").exists()
+
+
+def test_a_new_day_starts_a_fresh_date_directory(tmp_path):
+    today = [FIXED_DATE]
+    config = CollectorConfig(
+        host="127.0.0.1", port=0, data_dir=tmp_path / "data", date_fn=lambda: today[0]
+    )
+    server = serve(config)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        HttpSink(endpoint(server)).send(JID, evs()[:1])
+        today[0] = "2026-08-28"
+        HttpSink(endpoint(server)).send(JID, evs()[1:])
+
+        first_day = config.data_dir / FIXED_DATE / f"{JID}.jsonl"
+        second_day = config.data_dir / "2026-08-28" / f"{JID}.jsonl"
+        assert first_day.exists() and second_day.exists()
+        assert [e.seq for e in read_events(first_day).events] == [0]
+        assert [e.seq for e in read_events(second_day).events] == [1]
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_a_traversal_journey_id_cannot_escape_data_dir(running):
+    """A journey_id is caller-chosen; nothing stops one holding a separator.
+    Written naively, "../../etc/passwd" would escape data_dir entirely."""
+    HttpSink(endpoint(running)).send("../../../etc/passwd", evs())
+
+    escaped = (
+        running.config.data_dir / ".." / ".." / ".." / "etc" / "passwd"
+    ).resolve()
+    assert not escaped.exists()
+
+    written = list((running.config.data_dir / FIXED_DATE).glob("*.jsonl"))
+    assert len(written) == 1
+    assert written[0].resolve().is_relative_to(running.config.data_dir.resolve())
+    assert "etc_passwd" in written[0].name
+
+
+# --------------------------------------------------------------------------
 # Auth
 # --------------------------------------------------------------------------
 
 
 @pytest.fixture
 def guarded(tmp_path):
-    config = resolve_config(
-        host="127.0.0.1", port=0, data_dir=tmp_path / "data", api_key="sk-collector"
+    config = CollectorConfig(
+        host="127.0.0.1",
+        port=0,
+        data_dir=tmp_path / "data",
+        api_key="sk-collector",
+        date_fn=lambda: FIXED_DATE,
     )
     server = serve(config)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

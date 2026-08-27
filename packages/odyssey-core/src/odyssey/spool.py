@@ -15,9 +15,19 @@ persistence. Both lose data. This does not.
 
 Layout::
 
-    <root>/journeys/<journey_id>/000.jsonl   active shard (rotates at size cap)
-    <root>/journeys/<journey_id>/001.jsonl
-    <root>/watermarks.json                   {journey_id: last acked seq}
+    <root>/journeys/<journey_id>/2026-08-27.000.jsonl   active shard
+    <root>/journeys/<journey_id>/2026-08-27.001.jsonl   rotated at size cap
+    <root>/journeys/<journey_id>/2026-08-28.000.jsonl   rotated at day change
+    <root>/watermarks.json                              {journey_id: last acked seq}
+
+Shard names are ``<date>.<seq>.jsonl``: a new day starts a fresh shard even
+with room left in the current one, same reasoning as a rotated shard
+repeating the header rather than inheriting a sibling's identity — a file
+that predates a day boundary should not silently keep growing across it, and
+a long-lived journey_id should not accumulate one unbounded file forever.
+``seq`` still resets to 0 per day; it is a shard-naming counter, not
+``JourneyEvent.seq``, which is never reset and keeps numbering across shards
+and across days.
 """
 
 from __future__ import annotations
@@ -28,9 +38,11 @@ import os
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import (
     Any,
+    Callable,
     Dict,
     Iterable,
     List,
@@ -68,6 +80,11 @@ DEFAULT_REDACT_KEYS: frozenset[str] = frozenset(
 )
 
 _DEFAULT_SHARD_BYTES = 100 * 1024 * 1024  # 100 MB, matching the donor's cap
+
+
+def _today() -> str:
+    return date.today().isoformat()
+
 
 # Cap on cached shard handles. One open file descriptor per actively-recording
 # journey buys a ~15x faster record() (no per-event mkdir/glob/stat), but an
@@ -116,6 +133,9 @@ class SpoolConfig:
     # is machine loss rather than process loss.
     fsync: bool = False
     max_open_shards: int = _DEFAULT_MAX_OPEN_SHARDS
+    # Injectable for tests that need to simulate a day boundary without
+    # sleeping one; every real caller gets the actual date.
+    date_fn: Callable[[], str] = _today
 
     def __post_init__(self) -> None:
         if self.max_shard_bytes <= 0:
@@ -311,14 +331,32 @@ class Spool:
             else []
         )
 
+    def _shard_path(self, journey_id: str, date_str: str, seq: int) -> Path:
+        return self._journey_dir(journey_id) / f"{date_str}.{seq:03d}.jsonl"
+
+    @staticmethod
+    def _shard_date(path: Path) -> str:
+        # Shard stems are "<date>.<seq>"; date is the part before the first dot.
+        return path.stem.split(".", 1)[0]
+
+    @staticmethod
+    def _shard_seq(path: Path) -> int:
+        return int(path.stem.split(".", 1)[1])
+
     def _active_shard(self, journey_id: str) -> Path:
         d = self._journey_dir(journey_id)
         existing = sorted(d.glob("*.jsonl"))
+        today = self._cfg.date_fn()
         if not existing:
-            return d / "000.jsonl"
+            return self._shard_path(journey_id, today, 0)
         last = existing[-1]
+        # A new day starts a fresh shard even if the last one has room left:
+        # a shard's date is fixed once written, same reasoning as a rotated
+        # shard repeating the header rather than inheriting a sibling's.
+        if self._shard_date(last) != today:
+            return self._shard_path(journey_id, today, 0)
         if last.stat().st_size >= self._cfg.max_shard_bytes:
-            return d / f"{int(last.stem) + 1:03d}.jsonl"
+            return self._shard_path(journey_id, today, self._shard_seq(last) + 1)
         return last
 
     # -- cached shard handles ---------------------------------------------
@@ -355,7 +393,11 @@ class Spool:
 
     def _rotate(self, journey_id: str, st: _ShardState) -> _ShardState:
         self._close_state(st)
-        nxt = st.path.parent / f"{int(st.path.stem) + 1:03d}.jsonl"
+        today = self._cfg.date_fn()
+        if self._shard_date(st.path) != today:
+            nxt = self._shard_path(journey_id, today, 0)
+        else:
+            nxt = self._shard_path(journey_id, today, self._shard_seq(st.path) + 1)
         return self._open_shard(journey_id, nxt)
 
     def _evict(self) -> None:
@@ -367,7 +409,8 @@ class Spool:
         st = self._open.get(journey_id)
         if st is not None:
             self._open.move_to_end(journey_id)
-            if st.size >= self._cfg.max_shard_bytes:
+            stale_date = self._shard_date(st.path) != self._cfg.date_fn()
+            if st.size >= self._cfg.max_shard_bytes or stale_date:
                 st = self._rotate(journey_id, st)
             return st
         # Cold path, once per journey: this is where journey_id validation and
