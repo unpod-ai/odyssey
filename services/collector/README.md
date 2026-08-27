@@ -38,8 +38,9 @@ Env-first, explicit argument wins — same precedence as `odyssey.config.resolve
 |---|---|---|---|
 | `ODYSSEY_COLLECTOR_HOST` | `--host` | `127.0.0.1` | |
 | `ODYSSEY_COLLECTOR_PORT` | `--port` | `8787` | |
-| `ODYSSEY_COLLECTOR_DATA_DIR` | `--data-dir` | `./collector-data` | where `<journey_id>.jsonl` files land |
+| `ODYSSEY_COLLECTOR_DATA_DIR` | `--data-dir` | `./collector-data` | where `<date>/<journey_id>.jsonl` files land |
 | `ODYSSEY_COLLECTOR_API_KEY` | `--api-key` | unset (open) | if set, requires `Authorization: Bearer <key>` |
+| `ODYSSEY_COLLECTOR_TIMEZONE` | `--timezone` | `UTC` | IANA name (e.g. `Asia/Kolkata`); which day a batch's date-partition belongs to. Unrecognised names fall back to UTC |
 
 ## Wire contract
 
@@ -59,7 +60,8 @@ Authorization: Bearer <api_key>          # only when the server requires one
 
 ## Storage
 
-Today: a local directory, partitioned by the UTC date a batch was received —
+Today: a local directory, partitioned by the date a batch was received (UTC
+by default, `ODYSSEY_COLLECTOR_TIMEZONE`/`--timezone` to change it) —
 `<data_dir>/<YYYY-MM-DD>/<journey_id>.jsonl`. Each file is byte-identical in
 shape to what `FileSink` produces (own header, own contiguous events), written
 through the same `odyssey.jsonl` codec so there's one parser for the wire

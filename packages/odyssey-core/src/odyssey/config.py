@@ -70,6 +70,10 @@ class Config:
     max_open_shards: int
     redact_keys: frozenset
     fsync: bool
+    # None here means "let SpoolConfig resolve ODYSSEY_TIMEZONE itself" — see
+    # spool._make_date_fn. Threaded through mainly so init(timezone=...) works
+    # without touching the environment, same as every other knob here.
+    timezone: Optional[str]
 
 
 def resolve(
@@ -85,6 +89,7 @@ def resolve(
     max_open_shards: Optional[int] = None,
     redact_keys: Optional[frozenset] = None,
     fsync: bool = False,
+    timezone: Optional[str] = None,
 ) -> Config:
     """Merge explicit arguments over environment over defaults.
 
@@ -120,4 +125,5 @@ def resolve(
         ),
         redact_keys=redact_keys if redact_keys is not None else DEFAULT_REDACT_KEYS,
         fsync=fsync,
+        timezone=timezone,
     )

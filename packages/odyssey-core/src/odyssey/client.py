@@ -94,6 +94,7 @@ class Client:
                 redact_keys=config.redact_keys,
                 fsync=config.fsync,
                 max_open_shards=config.max_open_shards,
+                timezone=config.timezone,
             )
         )
         self.allocator = SeqAllocator(self.spool.highest_seq)
@@ -291,6 +292,7 @@ def init(
     max_open_shards: Optional[int] = None,
     redact_keys: Optional[frozenset] = None,
     fsync: bool = False,
+    timezone: Optional[str] = None,
     force: bool = False,
 ) -> Client:
     """Start recording. Call once, as early as the process allows.
@@ -298,6 +300,11 @@ def init(
     Every argument has an ``ODYSSEY_*`` environment equivalent; explicit
     arguments win. ``drain_interval=None`` disables the background drain, in
     which case nothing leaves the spool until :func:`flush` or the CLI runs.
+
+    ``timezone`` (``ODYSSEY_TIMEZONE``) is which day a shard rotation belongs
+    to, not a display setting — UTC by default, so a shard's date means the
+    same thing regardless of which machine wrote it. IANA names only (e.g.
+    ``"Asia/Kolkata"``); an unrecognised one falls back to UTC.
 
     ``instrument`` opt-in patches provider SDKs in place — ``["anthropic"]``
     makes every existing ``anthropic`` client record without touching app code.
@@ -331,6 +338,7 @@ def init(
             debug=debug,
             max_open_shards=max_open_shards,
             redact_keys=redact_keys,
+            timezone=timezone,
             fsync=fsync,
         )
         client = Client(config, sink=sink)

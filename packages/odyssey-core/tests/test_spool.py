@@ -283,6 +283,69 @@ def test_every_rotated_shard_of_the_day_repeats_the_header_too(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# Timezone — which day a shard belongs to is UTC by default, configurable
+# --------------------------------------------------------------------------
+
+
+def test_default_timezone_is_utc(tmp_path, monkeypatch):
+    monkeypatch.delenv("ODYSSEY_TIMEZONE", raising=False)
+    from datetime import datetime, timezone
+
+    s = spool(tmp_path)
+    s.record(ev(0))
+    expected = datetime.now(timezone.utc).date().isoformat()
+    assert s.shards(JID)[0].name == f"{expected}.000.jsonl"
+
+
+def test_explicit_timezone_argument_wins(tmp_path):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    s = spool(tmp_path, timezone="Asia/Kolkata")
+    s.record(ev(0))
+    expected = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    assert s.shards(JID)[0].name == f"{expected}.000.jsonl"
+
+
+def test_the_timezone_env_var_is_respected(tmp_path, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    monkeypatch.setenv("ODYSSEY_TIMEZONE", "Asia/Kolkata")
+    s = spool(tmp_path)
+    s.record(ev(0))
+    expected = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    assert s.shards(JID)[0].name == f"{expected}.000.jsonl"
+
+
+def test_explicit_timezone_beats_the_environment(tmp_path, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    monkeypatch.setenv("ODYSSEY_TIMEZONE", "UTC")
+    s = spool(tmp_path, timezone="Asia/Kolkata")
+    s.record(ev(0))
+    expected = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    assert s.shards(JID)[0].name == f"{expected}.000.jsonl"
+
+
+def test_an_unknown_timezone_name_falls_back_to_utc_not_a_crash(tmp_path):
+    from datetime import datetime, timezone
+
+    s = spool(tmp_path, timezone="Not/A_Real_Zone")
+    s.record(ev(0))
+    expected = datetime.now(timezone.utc).date().isoformat()
+    assert s.shards(JID)[0].name == f"{expected}.000.jsonl"
+
+
+def test_explicit_date_fn_bypasses_timezone_entirely(tmp_path):
+    """The low-level override still works even with `timezone` unset."""
+    s = spool(tmp_path, date_fn=lambda: "1999-12-31")
+    s.record(ev(0))
+    assert s.shards(JID)[0].name == "1999-12-31.000.jsonl"
+
+
+# --------------------------------------------------------------------------
 # Redaction
 # --------------------------------------------------------------------------
 

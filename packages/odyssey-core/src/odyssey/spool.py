@@ -38,7 +38,7 @@ import os
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 from typing import (
     Any,
@@ -51,6 +51,7 @@ from typing import (
     TextIO,
     runtime_checkable,
 )
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from odyssey.jsonl import encode_event, header_line, read_events, read_header
 from odyssey.primitives import JourneyEvent, JourneyHeader
@@ -81,9 +82,39 @@ DEFAULT_REDACT_KEYS: frozenset[str] = frozenset(
 
 _DEFAULT_SHARD_BYTES = 100 * 1024 * 1024  # 100 MB, matching the donor's cap
 
+# Env-first, same precedence config.py's own resolve() uses elsewhere:
+# explicit beats environment beats this default. UTC by default because a
+# shard's date has to mean the same thing regardless of which machine, and in
+# which local timezone, wrote it — the same reasoning services/collector
+# partitions by UTC date.
+ENV_TIMEZONE = "ODYSSEY_TIMEZONE"
+DEFAULT_TIMEZONE = "UTC"
 
-def _today() -> str:
-    return date.today().isoformat()
+
+def _make_date_fn(tz_name: Optional[str]) -> Callable[[], str]:
+    """Resolve a timezone once and return a cheap closure over it.
+
+    Resolution happens here, at SpoolConfig-construction time, specifically
+    so record() — on the capture hot path, called once per event — never
+    does an env lookup or a zoneinfo file read; see
+    test_record_is_fast_enough_for_a_capture_hot_path.
+    """
+    name = (
+        tz_name
+        if tz_name is not None
+        else os.environ.get(ENV_TIMEZONE, DEFAULT_TIMEZONE)
+    )
+    try:
+        tz = ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        # A bad timezone name must not take recording down — same policy as
+        # a malformed ODYSSEY_DRAIN_INTERVAL in config.py.
+        tz = ZoneInfo(DEFAULT_TIMEZONE)
+
+    def date_fn() -> str:
+        return datetime.now(tz).date().isoformat()
+
+    return date_fn
 
 
 # Cap on cached shard handles. One open file descriptor per actively-recording
@@ -133,15 +164,21 @@ class SpoolConfig:
     # is machine loss rather than process loss.
     fsync: bool = False
     max_open_shards: int = _DEFAULT_MAX_OPEN_SHARDS
+    # Explicit wins over ODYSSEY_TIMEZONE, which wins over UTC. Only an IANA
+    # name zoneinfo recognises (e.g. "Asia/Kolkata"); see _make_date_fn.
+    timezone: Optional[str] = None
     # Injectable for tests that need to simulate a day boundary without
-    # sleeping one; every real caller gets the actual date.
-    date_fn: Callable[[], str] = _today
+    # sleeping one, or an exact timezone without touching the environment.
+    # Passing this directly bypasses `timezone` entirely.
+    date_fn: Callable[[], str] = field(default_factory=lambda: _make_date_fn(None))
 
     def __post_init__(self) -> None:
         if self.max_shard_bytes <= 0:
             raise ValueError("max_shard_bytes must be positive")
         if self.max_open_shards <= 0:
             raise ValueError("max_open_shards must be positive")
+        if self.timezone is not None:
+            object.__setattr__(self, "date_fn", _make_date_fn(self.timezone))
 
 
 @dataclass(frozen=True)

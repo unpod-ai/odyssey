@@ -19,7 +19,7 @@ from odyssey.jsonl import read_events
 from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
 from odyssey.sinks import HttpSinkError
 
-from odyssey_collector.server import CollectorConfig, _safe_stem, serve
+from odyssey_collector.server import CollectorConfig, _safe_stem, resolve_config, serve
 
 JID = "j_collector"
 FIXED_DATE = "2026-08-27"
@@ -145,6 +145,78 @@ def test_a_new_day_starts_a_fresh_date_directory(tmp_path):
         assert first_day.exists() and second_day.exists()
         assert [e.seq for e in read_events(first_day).events] == [0]
         assert [e.seq for e in read_events(second_day).events] == [1]
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_default_timezone_is_utc(tmp_path, monkeypatch):
+    monkeypatch.delenv("ODYSSEY_COLLECTOR_TIMEZONE", raising=False)
+    from datetime import datetime, timezone
+
+    config = CollectorConfig(host="127.0.0.1", port=0, data_dir=tmp_path / "data")
+    server = serve(config)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        HttpSink(endpoint(server)).send(JID, evs())
+        expected = datetime.now(timezone.utc).date().isoformat()
+        assert (config.data_dir / expected / f"{JID}.jsonl").exists()
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_explicit_timezone_is_respected(tmp_path):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    config = CollectorConfig(
+        host="127.0.0.1", port=0, data_dir=tmp_path / "data", timezone="Asia/Kolkata"
+    )
+    server = serve(config)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        HttpSink(endpoint(server)).send(JID, evs())
+        expected = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+        assert (config.data_dir / expected / f"{JID}.jsonl").exists()
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_the_timezone_env_var_is_respected(tmp_path, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    monkeypatch.setenv("ODYSSEY_COLLECTOR_TIMEZONE", "Asia/Kolkata")
+    config = resolve_config(host="127.0.0.1", port=0, data_dir=tmp_path / "data")
+    server = serve(config)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        HttpSink(endpoint(server)).send(JID, evs())
+        expected = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+        assert (config.data_dir / expected / f"{JID}.jsonl").exists()
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def test_an_unknown_timezone_falls_back_to_utc(tmp_path):
+    from datetime import datetime, timezone
+
+    config = CollectorConfig(
+        host="127.0.0.1", port=0, data_dir=tmp_path / "data", timezone="Not/A_Real_Zone"
+    )
+    server = serve(config)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        HttpSink(endpoint(server)).send(JID, evs())
+        expected = datetime.now(timezone.utc).date().isoformat()
+        assert (config.data_dir / expected / f"{JID}.jsonl").exists()
     finally:
         server.shutdown()
         thread.join()

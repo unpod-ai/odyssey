@@ -1078,6 +1078,7 @@ conversations is the one corruption that reads as valid data.
 | `ODYSSEY_DRAIN_INTERVAL` | background drain seconds; a bad value falls back to 30 |
 | `ODYSSEY_DEBUG` | `1` re-raises capture failures instead of counting them |
 | `ODYSSEY_MAX_OPEN_SHARDS` | cached file-handle cap (default 256) |
+| `ODYSSEY_TIMEZONE` | IANA name (e.g. `Asia/Kolkata`) for which day a shard rotation belongs to; default `UTC`, unrecognised names fall back to `UTC` |
 
 `ODYSSEY_OUT` names where the artifact lands. The **drain** destination is a
 separate decision and is passed to `init(sink=...)`: pointing a `FileSink` at

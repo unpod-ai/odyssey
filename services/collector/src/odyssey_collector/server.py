@@ -13,15 +13,16 @@ for once ``odyssey-schemas`` exists (see ``docs/WORKING.md`` items 8.2/1.8:
 away or awkwardly merged when that lands; the wire contract below is what has
 to stay stable in the meantime.
 
-Storage today is a local directory, partitioned by the UTC date a batch was
-received: ``<data_dir>/<YYYY-MM-DD>/<journey_id>.jsonl`` — files a shard on
-disk would hold, just date-bucketed so neither a directory nor a single
-long-lived journey_id's file grows without bound, and old dates are trivial
-to archive or delete wholesale. A journey whose events straddle midnight
-splits across two date directories, each a complete, independently-readable
-file in its own right (own header, own contiguous seq range for what landed
-that day) — an acceptable cost against the alternative of unbounded growth,
-and rare in practice since a journey is normally one call or one session.
+Storage today is a local directory, partitioned by date a batch was received
+(UTC by default, ``ODYSSEY_COLLECTOR_TIMEZONE``/``--timezone`` to change it):
+``<data_dir>/<YYYY-MM-DD>/<journey_id>.jsonl`` — files a shard on disk would
+hold, just date-bucketed so neither a directory nor a single long-lived
+journey_id's file grows without bound, and old dates are trivial to archive
+or delete wholesale. A journey whose events straddle midnight splits across
+two date directories, each a complete, independently-readable file in its own
+right (own header, own contiguous seq range for what landed that day) — an
+acceptable cost against the alternative of unbounded growth, and rare in
+practice since a journey is normally one call or one session.
 "spool -> object store" (``docs/STRUCTURE.md``'s stated destination for this
 service) is a deliberately deferred upgrade: swap :meth:`_Handler._store`,
 keep the endpoint contract.
@@ -46,12 +47,13 @@ import json
 import os
 import tempfile
 import threading
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 from urllib.parse import unquote
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from odyssey.jsonl import (
     MalformedHeaderError,
@@ -64,14 +66,37 @@ ENV_HOST = "ODYSSEY_COLLECTOR_HOST"
 ENV_PORT = "ODYSSEY_COLLECTOR_PORT"
 ENV_DATA_DIR = "ODYSSEY_COLLECTOR_DATA_DIR"
 ENV_API_KEY = "ODYSSEY_COLLECTOR_API_KEY"
+ENV_TIMEZONE = "ODYSSEY_COLLECTOR_TIMEZONE"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 DEFAULT_DATA_DIR = "./collector-data"
+DEFAULT_TIMEZONE = "UTC"
 
 
-def _today_utc() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+def _make_date_fn(tz_name: Optional[str]) -> Callable[[], str]:
+    """Resolve a timezone once and return a cheap closure over it.
+
+    Which day a batch's date-partition belongs to — UTC by default, since a
+    shared server can receive traffic from writers in any timezone and the
+    partition has to mean the same thing regardless of which one sent it.
+    Mirrors odyssey.spool._make_date_fn; not imported from it, since it's
+    private to a different package for an unrelated concern.
+    """
+    name = (
+        tz_name
+        if tz_name is not None
+        else os.environ.get(ENV_TIMEZONE, DEFAULT_TIMEZONE)
+    )
+    try:
+        tz = ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = ZoneInfo(DEFAULT_TIMEZONE)
+
+    def date_fn() -> str:
+        return datetime.now(tz).date().isoformat()
+
+    return date_fn
 
 
 def _safe_stem(journey_id: str) -> str:
@@ -104,8 +129,15 @@ class CollectorConfig:
     data_dir: Path = Path(DEFAULT_DATA_DIR)
     # None means open: no Authorization header is required. Set to require one.
     api_key: Optional[str] = None
+    # Explicit wins over ODYSSEY_COLLECTOR_TIMEZONE, which wins over UTC.
+    timezone: Optional[str] = None
     # Injectable for tests that need a fixed date rather than the real one.
-    date_fn: Callable[[], str] = _today_utc
+    # Passing this directly bypasses `timezone` entirely.
+    date_fn: Callable[[], str] = field(default_factory=lambda: _make_date_fn(None))
+
+    def __post_init__(self) -> None:
+        if self.timezone is not None:
+            object.__setattr__(self, "date_fn", _make_date_fn(self.timezone))
 
 
 def resolve_config(
@@ -114,6 +146,7 @@ def resolve_config(
     port: Optional[int] = None,
     data_dir: Optional[Path | str] = None,
     api_key: Optional[str] = None,
+    timezone: Optional[str] = None,
 ) -> CollectorConfig:
     """Explicit arguments win over ``ODYSSEY_COLLECTOR_*`` env vars — the same
     precedence ``odyssey.config.resolve()`` uses on the recording side."""
@@ -126,6 +159,7 @@ def resolve_config(
             else os.environ.get(ENV_DATA_DIR, DEFAULT_DATA_DIR)
         ),
         api_key=api_key if api_key is not None else os.environ.get(ENV_API_KEY),
+        timezone=timezone,
     )
 
 
@@ -242,10 +276,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--api-key", default=None, help="require this bearer token; default: open"
     )
+    parser.add_argument(
+        "--timezone",
+        default=None,
+        help="IANA name for date-partition boundaries; default: UTC",
+    )
     args = parser.parse_args(argv)
 
     config = resolve_config(
-        host=args.host, port=args.port, data_dir=args.data_dir, api_key=args.api_key
+        host=args.host,
+        port=args.port,
+        data_dir=args.data_dir,
+        api_key=args.api_key,
+        timezone=args.timezone,
     )
     server = serve(config)
     print(
