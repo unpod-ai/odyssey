@@ -1,0 +1,53 @@
+name: ci-core
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/odyssey-core/**"
+      - ".github/workflows/ci-core.yml"
+  pull_request:
+    paths:
+      - "packages/odyssey-core/**"
+      - ".github/workflows/ci-core.yml"
+
+defaults:
+  run:
+    working-directory: packages/odyssey-core
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: isort (check only)
+        run: uv run --extra dev isort --check-only .
+
+      - name: black (check only)
+        run: uv run --extra dev black --check .
+
+      - name: flake8
+        run: uv run --extra dev flake8 --max-line-length=88 --extend-ignore=E203,E501,W503,F541,F841 src tests
+
+      - name: pyrefly
+        run: uv run --extra dev pyrefly check
+
+      - name: tests
+        run: bash scripts/run_tests.sh all
+
+      - name: golden fixture is not stale
+        run: uv run --extra dev python scripts/make_golden.py --check

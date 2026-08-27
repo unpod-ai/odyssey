@@ -38,9 +38,7 @@ _ERROR_RING = 5
 # What a journey that was never closed is stamped with at process exit. `STALE`
 # is the schema's word for "recording stopped without an ending", and it is what
 # `capture.journey()` already uses for an abandoned scope.
-_ABANDONED = (
-    "recording ended at process exit without the session closing its journey"
-)
+_ABANDONED = "recording ended at process exit without the session closing its journey"
 
 
 @runtime_checkable

@@ -1125,7 +1125,12 @@ def test_an_agent_turn_spoken_as_several_utterances_is_one_message(tmp_path):
 
     say(session, "user", "Yeah, yeah.")
     say(session, "assistant", "I have found a slot at three PM.", id="item_a")
-    say(session, "assistant", "The price is five thousand four hundred rupees.", id="item_b")
+    say(
+        session,
+        "assistant",
+        "The price is five thousand four hundred rupees.",
+        id="item_b",
+    )
     say(session, "assistant", "Would you like to book this slot?", id="item_c")
 
     msgs = messages()
