@@ -12,7 +12,7 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "Unpod", email = "parvinder@unpod.ai" }]
 
 # Deliberately empty. The ported schema (src/odyssey/primitives.py) and builders
-# (src/odyssey/build/) import only json + typing + dataclasses — verified against
+# (src/odyssey/builders/) import only json + typing + dataclasses — verified against
 # the upstream tree. The spool and the JSONL codec are stdlib. Adding a
 # dependency nothing imports is a phantom dep; the change that needs one adds it.
 dependencies = []

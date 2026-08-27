@@ -409,9 +409,9 @@ already tested.**
 | 4.3 | **`curated_watermark`** | ✅ | `openspec/changes/add-journey-schema/design.md` Decision 9 — `{seq, hash}`, `hash = content_hash` over the sorted `(journey_id, journey_content_hash)` set. Implemented: `data_preparation/src/odyssey_dataprep/versioning.compute_curated_watermark` |
 | 4.4 | **`recipe_hash`** | ✅ | `odyssey_dataprep.recipes.recipe_hash` — `content_hash` over the recipe's own dict, reused not reinvented |
 | 4.5 | **Corpus version function** | ✅ | `odyssey_dataprep.versioning.corpus_version` — `content_hash({"recipe": recipe_hash, "watermark": curated_watermark})` per Decision 9. Reachable via `odyssey data recipe-hash` / `odyssey data corpus-version`, verified end-to-end against a real recipe file and a curated directory |
-| 4.6 | `datasets/registry.yaml` | ❌ | `.gitkeep` only |
-| 4.7 | `datasets/manifests/<name>/v1.json` | ❌ | shards + sha256 + row counts + recipe hash |
-| 4.8 | `datasets/cards/` | ❌ | provenance, license, PII posture, splits, intended use |
+| 4.6 | `datasets/registry.yaml` | ✅ | `odyssey_dataprep.datasets.update_registry` — `name -> versions -> manifest sha -> URI`, per `docs/STRUCTURE.md`. `uri` falls back to the manifest's own git-tracked path; no object store exists yet (1.10) |
+| 4.7 | `datasets/manifests/<name>/v1.json` | ✅ | `odyssey_dataprep.datasets.build_manifest`/`write_manifest` — shards + sha256 + row counts + `recipe_hash`, computed from the actual shard files, not trusted from the caller. `next_version` doubles as `curated_watermark.seq` (design.md Decision 9: one curation run = one seq) |
+| 4.8 | `datasets/cards/` | ✅ | `odyssey_dataprep.datasets.write_card` — provenance (from the manifest) + license/PII posture/intended use (caller-supplied, policy calls no code can infer) + splits (defaults to "not yet split", 3.7 doesn't exist). Reachable via `odyssey data build-corpus` / `odyssey data card`, verified end-to-end |
 
 ---
 
@@ -502,7 +502,7 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 | 9.2 | CI (`.github/workflows/ci-core.yml`) | ✅ **done** — fmt/lint/types/test + golden-fixture check, path-filtered | — |
 | 9.3 | `cli/` single entrypoint (Phase 2, ADR 0003) | ✅ | New `typer`+`rich` workspace member; lazy plugin registry via `odyssey.commands` entry points. All 7 `odyssey-core` subcommands (`push`/`export`/`sft`/`dpo`/`status`/`show`/`health`) mounted under `odyssey spool`, plus `odyssey data normalize` from `odyssey-dataprep`. Deprecated `odyssey push`/`odyssey status` top-level aliases warn to stderr. Cold `--help` measured at 172ms, under the 200ms budget (`odyssey doctor`). Core drops `[project.scripts]`; `python -m odyssey.cli` unaffected |
 | 9.4 | `NOTICE` copyright holder | ❌ | **blocks public release** — see [§10](#10-known-gaps) |
-| 9.5 | Stale `src/odyssey/build/` path in `NOTICE` + `pyproject` | ❌ | trivial |
+| 9.5 | Stale `src/odyssey/build/` path in `NOTICE` + `pyproject` | ✅ | Fixed to `src/odyssey/builders/`, the directory that actually exists |
 | 9.6 | `openspec/.../design.md` (cited by code, absent) | ✅ | Written — Decisions 1/4/8 reconstructed from what the shipped code already establishes, Decision 9 (new) defines `curated_watermark`, closing 4.3 |
 | 9.7 | `.pre-commit-config.yaml`, `CHANGELOG.md`, `SECURITY.md`, `CODEOWNERS` | ❌ | trivial |
 | 9.8 | Two no-op contract tests | 🟡 | trivial — see [§10](#10-known-gaps) |

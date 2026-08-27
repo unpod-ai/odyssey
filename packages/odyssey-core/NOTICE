@@ -47,7 +47,7 @@ code must be rewritten. Internal use is unaffected.
 
 Picked up later.
 
-Derived files: src/odyssey/primitives.py, src/odyssey/build/*.
+Derived files: src/odyssey/primitives.py, src/odyssey/builders/*.
 
 MIT License text, to be completed with the holder above:
 
