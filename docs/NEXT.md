@@ -49,37 +49,72 @@ actually reach out, not more engineering.
 
 ## Start here next session
 
-Since the summary above was written, two more units shipped:
+Since the summary above was written, `data_preparation`'s entire Step 3
+(all seven stages) plus Step 4's `datasets/` layer shipped:
 
-- **3.9 → 4.4 → 4.5** — `data_preparation/src/odyssey_dataprep/recipes/`
-  (`Recipe`/`RecipeStage`/`load_recipe`/`recipe_hash`) and
-  `.../versioning.py` (`compute_curated_watermark`/`corpus_version`),
-  reachable via `odyssey data recipe-hash` / `odyssey data corpus-version`.
-- **4.6 → 4.7 → 4.8** — `.../datasets.py` (`next_version`/`build_manifest`/
-  `write_manifest`/`update_registry`/`write_card`), reachable via
-  `odyssey data build-corpus` / `odyssey data card`. `datasets/registry.yaml`
-  (`name -> versions -> manifest sha -> URI`, per `docs/STRUCTURE.md`) and
-  `datasets/manifests/<name>/v<N>.json` (shards + sha256 + row counts +
-  `recipe_hash`, computed from the actual shard files, not trusted from the
-  caller) both write for real now; `next_version` doubles as
-  `curated_watermark.seq` so there is exactly one counter, not two to keep
-  in sync. `datasets/cards/<name>-v<N>.md` writes provenance from the
-  manifest plus caller-supplied license/PII-posture/intended-use.
-- **9.5 / 9.7 / 9.8** — stale `src/odyssey/build/` path fixed to
-  `src/odyssey/builders/`; `.pre-commit-config.yaml`/`CHANGELOG.md`/
-  `SECURITY.md`/`.github/CODEOWNERS` written; `packages/odyssey-core/docs/
-  README.md` written, closing both contract tests that were previously
-  no-ops (verified live — breaking a symbol in it now fails the test).
+- **3.9 → 4.4 → 4.5** — `recipes/` (`Recipe`/`recipe_hash`) and
+  `versioning.py` (`compute_curated_watermark`/`corpus_version`), via
+  `odyssey data recipe-hash` / `odyssey data corpus-version`.
+- **4.6 → 4.7 → 4.8** — `datasets.py` (manifest/registry/card writers), via
+  `odyssey data build-corpus` / `odyssey data card`. `next_version` doubles
+  as `curated_watermark.seq` — one counter, not two to keep in sync.
+- **3.1 collection** — `collect_from_spool`/`collect_from_collector`
+  reassemble rotated or date-partitioned shards into one flat `*.jsonl` per
+  journey (grouped by each event's own `journey_id`, not filename — the
+  collector's filename stem is not guaranteed reversible).
+- **3.2 cleaning** — dedupe by `content_hash`, dead-turn drop (splices the
+  dropped delta out of every later step's cumulative history — a naive
+  per-message filter would have corrupted the prefix invariant), NFC +
+  control-char encoding repair. Content-level PII scrub intentionally not
+  here — still needs item 2.15, which doesn't exist.
+- **3.4 annotation** — a local-JSONL human-review queue (`build_queue`) and
+  decision-apply (`apply_reviews`, reuses `build_reward_from_scalar`).
+- **3.5 augmentation** — `perturb_tool_calls`, deterministic synthetic
+  negatives via a dropped required argument. Paraphrase/general synthetic
+  negatives need an LLM and are deliberately not implemented — flagged 🟡,
+  not faked.
+- **3.6 validation** — schema/PII-redaction/leakage/drift checks; `odyssey
+  data validate` exits 3 on breach (ADR 0003's lineage-violation code).
+  PII check reuses `odyssey.spool._is_secret`'s exact matching rule.
+- **3.7 splitting** — groups by `trace_id` (session), assigns via a
+  deterministic hash, never `random`. Ships the test 3.7 explicitly
+  demanded: same group key never lands in two splits.
+- **3.8 flows** — `run_recipe`, a stdlib sequencer (deliberately not
+  Prefect — no scheduling/retry/UI need to justify the dependency) chaining
+  `collection → normalization → cleaning → validation → splitting`.
+  `annotation`/`augmentation` don't fit the uniform dir-in/dir-out contract
+  and are called directly, not auto-sequenced.
+- **9.5 / 9.7 / 9.8** — stale `src/odyssey/build/` path fixed;
+  `.pre-commit-config.yaml`/`CHANGELOG.md`/`SECURITY.md`/`CODEOWNERS`
+  written; `packages/odyssey-core/docs/README.md` written, closing both
+  contract tests that were previously no-ops.
 - **9.10 re-verified, not fixed** — opting `tests/` into pyrefly surfaces
-  158 errors today (was 77, stale count), one real
-  (`src/odyssey/integrations/livekit.py:893`, a `getattr`+`callable`
-  narrowing gap pyrefly can't see through), 157 are `assert x is not None`
-  narrowing gaps in test files. `task types`/CI is unaffected either way —
-  confirmed the auto-config still only covers `src`+`scripts`. Deliberately
-  not touched: enabling `tests/` type-checking is a scope decision (~150+
-  touch points across test files), not a bug fix.
-25 tests added this session across `data_preparation` (7 → 32) — all real,
-verified against a live CLI round trip end to end, not just unit-tested.
+  158 errors today (was 77, stale), one real, 157 narrowing gaps in test
+  files. `task types`/CI unaffected either way. Left open — a scope
+  decision (~150+ touch points), not a bug fix.
+
+70 tests added this session across `data_preparation` (7 → 77) — every
+new stage verified with a real end-to-end `odyssey data <cmd>` run, not
+just unit-tested: `collect → normalize → clean → validate → split` and
+`queue → apply-reviews`, `augment`, all exercised against real files on
+disk with real exit codes checked (including `validate`'s exit 3).
+
+**What's next, in dependency order:**
+
+1. **9.4** — `NOTICE` copyright holder. The only remaining hard blocker
+   (public distribution), and it needs a human, not more engineering.
+2. **5.6 soup-cli adapter** — the next genuinely unblocked item: 3 + 4 now
+   produce a real corpus with a real version string for training to
+   consume. `5.7`/`5.8` (`configs/{sft,dpo,grpo}`, `experiments/<exp_id>.yaml`)
+   are the natural companions.
+3. **`services/api`** (8.1–8.3) — bigger scope (`odyssey-schemas` +
+   FastAPI + OpenAPI), still the next major unbuilt piece per
+   `docs/STRUCTURE.md`.
+
+**Smaller, still open:** 0.10/0.11 (LangChain/OTel hooks), 0′.6 (sampling),
+1.7 (batching/backpressure), 1.10 (object-store landing — would unblock
+`collection`'s third source), 1.12/2.14 (retention/TTL), 2.15
+(content-level PII scrub — would unblock `cleaning`'s deferred PII stage).
 
 **What's next, in dependency order:**
 

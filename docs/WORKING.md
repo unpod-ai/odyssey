@@ -380,23 +380,24 @@ This step is the strongest part of the repo. 2.14–2.15 are real but not blocki
 
 ### Step 3 — `data_preparation` (7 stages)
 
-`data_preparation/src/odyssey_dataprep/` — **nine `.gitkeep` files, zero code.**
-No `pyproject.toml`, so it is not a workspace member yet.
+All nine stages have real code now, reachable via `odyssey data <cmd>`.
 
 | # | Stage | Status | What it needs |
 |---|---|---|---|
-| 3.1 | `collection/` | ❌ | Pull from spool / collector / object store → raw layer |
-| 3.2 | `cleaning/` | ❌ | Dedupe (keys exist), dead-turn drop, encoding repair, PII scrub (needs 2.15) |
+| 3.1 | `collection/` | ✅ | `collect_from_spool`/`collect_from_collector` — reassembles rotated (spool) or date-partitioned (collector) shards into one flat `*.jsonl` per journey, grouped by each event's own `journey_id`, not filename. Object-store source not wired (needs 1.10, which doesn't exist) |
+| 3.2 | `cleaning/` | ✅ | `dedupe_journeys` (by `content_hash`), `drop_dead_turns` (splices a dead delta out of every later step's cumulative history, not just a naive per-message filter), `repair_encoding` (NFC + strip C0 controls). **Content-level PII scrub not here** — still needs 2.15, which doesn't exist; wiring it in is one call once it does |
 | 3.3 | `normalization/` | ✅ | `data_preparation/src/odyssey_dataprep/normalization/` — `normalize_odyssey_dir` (thin wrapper over `export_dir`) and `normalize_byod_dir` (parse via `builders/messages` + `build_journey_from_messages`, dispatched by format name). Also fixes a real gap found while building it: `build_journey_from_messages` runs no `fold()`, so BYOD messages kept the dataclass default `trainable_status="not_trainable"` including the assistant's own replies — useless to every later stage. Now reuses `fold.derive_trainable_status` directly (empty signal list) to label them, same rule an odyssey-recorded journey with no signals gets |
-| 3.4 | `annotation/` | 🟡 | `Signal`, `Reward`, `build_reward_from_scalar()` exist and are now *populated by the SDK*. Human-in-loop queue adapters do not exist |
-| 3.5 | `augmentation/` | ❌ | Paraphrase, synthetic negatives, tool-call perturbation |
-| 3.6 | `validation/` | ❌ | Schema assert, leakage check, drift, PII assert. **Must exit 3 on breach** (ADR 0003) |
-| 3.7 | `splitting/` | ❌ | **By session/group key, never by row.** A test must enforce this |
-| 3.8 | `flows/` | ❌ | Prefect orchestration |
-| 3.9 | `recipes/*.yaml` | ✅ | `data_preparation/src/odyssey_dataprep/recipes/` — `load_recipe`/`Recipe`/`RecipeStage`; declarative, order-sensitive, no stage-name validation (a recipe can name a stage before it exists). Runner deliberately not built — belongs with `flows/` (3.8) once there is more than one real stage to sequence |
+| 3.4 | `annotation/` | ✅ | `build_queue` (one JSONL line per journey, with a preview) + `apply_reviews` (a decision's `score` becomes the journey's `Reward` via `build_reward_from_scalar`, reused not re-derived; `approved`/`notes` land under `telemetry.data.annotation`). No external queue system — a local JSONL file is the queue |
+| 3.5 | `augmentation/` | 🟡 | `perturb_tool_calls` — deterministic synthetic negatives via a dropped required argument. Paraphrase and general synthetic-negative generation need an LLM in the loop and are deliberately not implemented — a real dependency this stage has no justification to add speculatively |
+| 3.6 | `validation/` | ✅ | `validate_schema`, `check_pii_redaction` (reuses `odyssey.spool._is_secret`'s exact matching rule, not a re-derived one), `check_leakage`, `check_drift`. `odyssey data validate` exits 3 on breach — the lineage-violation code CI greps for (ADR 0003) |
+| 3.7 | `splitting/` | ✅ | `split_dir` — groups by `trace_id` (falls back to the journey's own id), assigns via a deterministic hash of the group key, never `random`. `test_split_dir_never_splits_a_group_across_two_splits` is the test 3.7 explicitly demanded |
+| 3.8 | `flows/` | ✅ | `run_recipe` — a stdlib sequencer over `collection`/`normalization`/`cleaning`/`validation`/`splitting` (uniform dir-in/dir-out contract), reading a `Recipe`. Deliberately not Prefect — no scheduling/retry/UI need to justify the dependency. `validation` is a gate (does not advance the working directory, aborts the run on breach); `splitting` fans out and must be last. `annotation`/`augmentation` don't fit the uniform contract and are called directly, not sequenced |
+| 3.9 | `recipes/*.yaml` | ✅ | `data_preparation/src/odyssey_dataprep/recipes/` — `load_recipe`/`Recipe`/`RecipeStage`; declarative, order-sensitive, no stage-name validation (a recipe can name a stage before it exists) |
 
-Cheapest real win in the whole repo: **3.3 is mostly a wrapper over code that is
-already tested.**
+77 tests in `data_preparation/tests/`, all real (dead-turn splicing, leakage
+detection, deterministic split assignment, cross-date-partition merging —
+each verified against a case that would actually fail if the logic were
+wrong, not just "runs without crashing").
 
 ---
 
@@ -517,22 +518,23 @@ The dependency graph, not the wish list. Steps 0, 1.5/1.6, 1.8, 5.4/5.5, and
 9.3 are done — record → spool → `HttpSink` → `services/collector` → durable
 file → `odyssey sft`/`odyssey dpo`, all reachable through one real
 `odyssey` console script, is now a real, verified, end-to-end path. 9.9
-(ADR for the capture layer) is done too. Step 4's whole
-`recipe → recipe_hash`, `curated set → curated_watermark`,
-`corpus_version = sha(recipe_hash + curated_watermark)` chain (3.9, 4.3, 4.4,
-4.5) is now real too, reachable via `odyssey data recipe-hash` /
-`odyssey data corpus-version`. What's next:
+(ADR for the capture layer) is done too. Step 3 (`data_preparation`, all
+seven stages plus recipes) and Step 4's whole `recipe → recipe_hash`,
+`curated set → curated_watermark`,
+`corpus_version = sha(recipe_hash + curated_watermark)`,
+`datasets/registry.yaml` + manifests + cards chain (3.1–3.9, 4.3–4.8) are
+now real, reachable via `odyssey data <cmd>` end to end: `collect` →
+`normalize` → `clean` → `validate` → `split` → `build-corpus` → `card`,
+or the whole thing sequenced by `run_recipe` (3.8). What's next:
 
 ```
-4.6/4.7 datasets/registry.yaml + manifests   ← the corpus_version now has a value to register
-   ↓
-9.4 NOTICE copyright holder                  ← blocks public release
+9.4 NOTICE copyright holder   ← blocks public release, needs a human
 ```
 
-0′.1 (OpenAI drop-in) and 3.3 (normalization) are done too — see Step 0′ and
-Step 3 below.
+0′.1 (OpenAI drop-in) is done too — see Step 0′ below.
 
-Everything in Steps 4, 6, 7, 8 can still wait on the above. Live gaps in the
+Everything in Steps 5–8 can still wait on the above (5's soup-cli adapter is
+the next real unblocked one — 3/4 already feed it a corpus). Live gaps in the
 Step 1 destination itself: project scoping (multi-tenant auth beyond one
 shared key) and object-store backing (`services/collector` still writes local
 disk) — see its README's "Not done here".
