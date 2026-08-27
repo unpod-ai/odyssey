@@ -49,28 +49,35 @@ actually reach out, not more engineering.
 
 ## Start here next session
 
-`curated_watermark` is now *defined* (`design.md` Decision 9) but not
-*implemented*. The natural next unit of work, in order:
+Items 3.9 → 4.4 → 4.5 shipped since the summary above was written:
+`data_preparation/src/odyssey_dataprep/recipes/` (`Recipe`/`RecipeStage`/
+`load_recipe`/`recipe_hash`) and `.../versioning.py`
+(`compute_curated_watermark`/`corpus_version`), reachable end-to-end via
+`odyssey data recipe-hash <path>` and `odyssey data corpus-version --recipe
+<path> --curated <dir> --seq N`. 25 tests in `data_preparation/tests/`
+(`test_recipes.py`, `test_versioning.py`), verified live against a real
+recipe file and a real curated directory, not just unit-tested. `docs/
+WORKING.md` Step 4's table and "Recommended order" are updated to match.
 
-1. **3.9** — a minimal `data_preparation/recipes/*.yaml` format: declarative,
-   hashable, describing a cleaning/normalization/augmentation pipeline config.
-2. **4.4** — `recipe_hash`: hash that recipe with the already-existing
-   `odyssey.hashing.content_hash` (reuse, not a new primitive).
-3. **4.5** — the corpus version function itself:
-   `content_hash({"recipe": recipe_hash, "watermark": curated_watermark})`,
-   per `design.md`'s exact spec. This is genuinely unblocked now — the only
-   reason it wasn't started this session is running out of session, not a
-   design gap.
+The `raw traces → recipe_hash + curated_watermark → corpus_version` chain
+is now real end to end. What it doesn't yet do anything with: nothing reads
+`corpus_version` back. The natural next unit of work, in order:
 
-That's a clean, self-contained unit: define the recipe shape, hash it, wire
-it to the already-written `curated_watermark` definition, and the whole
-`raw traces → corpus version` half of the lineage chain in `README.md`
-becomes real for the first time.
+1. **4.6** — `datasets/registry.yaml`: the durable home for "corpus name →
+   latest `seq`" (currently the caller has to track `--seq` by hand every
+   `odyssey data corpus-version` call).
+2. **4.7** — `datasets/manifests/<name>/v<N>.json`: shards + sha256 + row
+   counts + `recipe_hash`, written once per curation run — the artifact
+   `corpus_version` was computed *for*.
+3. **4.8** — `datasets/cards/`: provenance, license, PII posture, splits,
+   intended use — per-corpus documentation, not code.
 
 **Other legitimate directions**, if priorities have shifted: keep extending
-`data_preparation` (`cleaning`/`annotation`/`validation` are still
-`.gitkeep`s), or start `services/api` (bigger scope — `odyssey-schemas` +
-FastAPI + OpenAPI, the next major unbuilt piece per `docs/STRUCTURE.md`).
+`data_preparation` (`cleaning`/`annotation`/`validation`/`augmentation`/
+`splitting`/`flows` are still `.gitkeep`s — 3.9's `Recipe` shape has no
+runner yet because there's nothing but `normalization` to sequence), or
+start `services/api` (bigger scope — `odyssey-schemas` + FastAPI + OpenAPI,
+the next major unbuilt piece per `docs/STRUCTURE.md`).
 
 ---
 

@@ -393,7 +393,7 @@ No `pyproject.toml`, so it is not a workspace member yet.
 | 3.6 | `validation/` | ❌ | Schema assert, leakage check, drift, PII assert. **Must exit 3 on breach** (ADR 0003) |
 | 3.7 | `splitting/` | ❌ | **By session/group key, never by row.** A test must enforce this |
 | 3.8 | `flows/` | ❌ | Prefect orchestration |
-| 3.9 | `recipes/*.yaml` | ❌ | Declarative + hashed — `recipe_hash` is half the corpus version |
+| 3.9 | `recipes/*.yaml` | ✅ | `data_preparation/src/odyssey_dataprep/recipes/` — `load_recipe`/`Recipe`/`RecipeStage`; declarative, order-sensitive, no stage-name validation (a recipe can name a stage before it exists). Runner deliberately not built — belongs with `flows/` (3.8) once there is more than one real stage to sequence |
 
 Cheapest real win in the whole repo: **3.3 is mostly a wrapper over code that is
 already tested.**
@@ -406,9 +406,9 @@ already tested.**
 |---|---|---|---|
 | 4.1 | Stable canonical hashing | ✅ | `hashing.content_hash()` |
 | 4.2 | Per-journey delivery watermark | ✅ | `Spool.watermark()` |
-| 4.3 | **`curated_watermark`** | ✅ **defined** | `openspec/changes/add-journey-schema/design.md` Decision 9 — `{seq, hash}`, `hash = content_hash` over the sorted `(journey_id, journey_content_hash)` set (the correctness guarantee), `seq` a per-corpus incrementing run counter (the human-facing half). Not yet implemented in code — that's 4.5 |
-| 4.4 | **`recipe_hash`** | ❌ | Needs 3.9 |
-| 4.5 | **Corpus version function** | ❌ | The `sha(recipe_hash + curated_watermark)` composition — definition ready (Decision 9), implementation still open |
+| 4.3 | **`curated_watermark`** | ✅ | `openspec/changes/add-journey-schema/design.md` Decision 9 — `{seq, hash}`, `hash = content_hash` over the sorted `(journey_id, journey_content_hash)` set. Implemented: `data_preparation/src/odyssey_dataprep/versioning.compute_curated_watermark` |
+| 4.4 | **`recipe_hash`** | ✅ | `odyssey_dataprep.recipes.recipe_hash` — `content_hash` over the recipe's own dict, reused not reinvented |
+| 4.5 | **Corpus version function** | ✅ | `odyssey_dataprep.versioning.corpus_version` — `content_hash({"recipe": recipe_hash, "watermark": curated_watermark})` per Decision 9. Reachable via `odyssey data recipe-hash` / `odyssey data corpus-version`, verified end-to-end against a real recipe file and a curated directory |
 | 4.6 | `datasets/registry.yaml` | ❌ | `.gitkeep` only |
 | 4.7 | `datasets/manifests/<name>/v1.json` | ❌ | shards + sha256 + row counts + recipe hash |
 | 4.8 | `datasets/cards/` | ❌ | provenance, license, PII posture, splits, intended use |
@@ -517,12 +517,16 @@ The dependency graph, not the wish list. Steps 0, 1.5/1.6, 1.8, 5.4/5.5, and
 9.3 are done — record → spool → `HttpSink` → `services/collector` → durable
 file → `odyssey sft`/`odyssey dpo`, all reachable through one real
 `odyssey` console script, is now a real, verified, end-to-end path. 9.9
-(ADR for the capture layer) is done too. What's next:
+(ADR for the capture layer) is done too. Step 4's whole
+`recipe → recipe_hash`, `curated set → curated_watermark`,
+`corpus_version = sha(recipe_hash + curated_watermark)` chain (3.9, 4.3, 4.4,
+4.5) is now real too, reachable via `odyssey data recipe-hash` /
+`odyssey data corpus-version`. What's next:
 
 ```
-4.3 curated_watermark definition   ← blocks the datasets/ registry (Step 4)
+4.6/4.7 datasets/registry.yaml + manifests   ← the corpus_version now has a value to register
    ↓
-9.4 NOTICE copyright holder        ← blocks public release
+9.4 NOTICE copyright holder                  ← blocks public release
 ```
 
 0′.1 (OpenAI drop-in) and 3.3 (normalization) are done too — see Step 0′ and
