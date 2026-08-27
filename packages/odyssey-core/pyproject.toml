@@ -29,6 +29,10 @@ dev = [
 # wrapper's __init__, never at module scope, so `import odyssey` stays
 # dependency-free and only code that touches the integration needs this extra.
 anthropic = ["anthropic>=0.40"]
+# Same shape, same reasoning. Also covers OpenAI-compatible providers (Groq,
+# Together, local vLLM/Ollama, ...) — they're driven through this same SDK
+# with a different base_url, not a separate client.
+openai = ["openai>=1.0"]
 
 [project.scripts]
 odyssey = "odyssey.cli:main"

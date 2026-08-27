@@ -7,7 +7,7 @@
 #   sinks       — drain destinations: FileSink, HttpSink over stdlib HTTP
 #   context     — ambient journey context and seq allocation
 #   sdk         — init(), journey(), observe(), health(); capture never raises
-#   integrations— provider capture: drop-in client, opt-in patch, no duplicates
+#   integrations— provider capture: Anthropic + OpenAI drop-in/patch, no duplicates
 #   cli         — the command-line drain trigger and health report
 #   sft         — SFT export: one line per trainable turn
 #   dpo         — DPO pair extraction: (prompt, chosen, rejected)
@@ -48,7 +48,7 @@ case "$MODULE" in
     uv run pytest tests/test_sdk.py "$@"
     ;;
   integrations)
-    uv run pytest tests/test_integrations.py "$@"
+    uv run pytest tests/test_integrations.py tests/test_openai_integration.py "$@"
     ;;
   cli)
     uv run pytest tests/test_cli.py "$@"

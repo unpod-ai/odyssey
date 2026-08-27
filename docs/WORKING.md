@@ -45,7 +45,7 @@ A Langfuse-style SDK is these layers. Ticks are verified, not aspirational.
 | L2 | **Local buffer + delivery** | survive process death, retry, dedupe | in-memory queue + background flush | ✅ **done** (disk-backed — stronger than Langfuse) |
 | L3 | **Projection / read side** | events → usable conversation | server-side trace assembly | ✅ **done** (`fold`) |
 | L4 | **Ambient context** | auto `journey_id` + auto `seq`, no threading params | `contextvar` trace/span stack | ✅ **done** (`context.py`) |
-| L5 | **Auto-instrumentation** | drop-in clients, decorator, framework callbacks | `@observe`, `openai` shim, LangChain handler, OTel | 🟡 **Anthropic + LiveKit done**; OpenAI / LangChain / OTel open |
+| L5 | **Auto-instrumentation** | drop-in clients, decorator, framework callbacks | `@observe`, `openai` shim, LangChain handler, OTel | 🟡 **Anthropic + OpenAI + LiveKit done**; LangChain / OTel open |
 | L6 | **One-line init** | `odyssey.init()` + env vars + `atexit` flush | `langfuse.init()` | ✅ **done** (`client.py`) |
 | L7 | **HTTP transport** | ship to a server, not a folder | `/api/public/ingestion` | ❌ **0%** (only `FileSink`) |
 | L8 | **Collector / server** | the "one place" everything lands | Langfuse server | ❌ **0%** |
@@ -283,7 +283,7 @@ Legend: ✅ done & tested · 🟡 partly there · ❌ not started
 | 0.6 | **`odyssey.init()`** | ✅ | `client.py` + `config.py`. Second call warns and reuses; `force=True` replaces |
 | 0.7 | **`@observe` decorator** | ✅ | `capture.observe()` — sync and async |
 | 0.8 | **`with odyssey.journey(...)`** | ✅ | Nesting joins the parent; an exception closes with `ERROR` and re-raises |
-| 0.9 | **Drop-in provider client** | 🟡 | Anthropic sync + async + patch done. **OpenAI, Gemini not written** |
+| 0.9 | **Drop-in provider client** | 🟡 | Anthropic and OpenAI (sync + async + patch) done — OpenAI's wrapper also covers OpenAI-*compatible* providers (Groq, Together, local vLLM/Ollama) for free, since they speak the same SDK with a different `base_url`. **Gemini not written** |
 | 0.10 | **Framework hooks** (LangChain/LangGraph, LlamaIndex) | ❌ | Not started |
 | 0.11 | **OTel bridge** | ❌ | Not started |
 | 0.12 | **Flush on exit** | ✅ | `atexit` by default. SIGTERM is **opt-in** (`init(handle_sigterm=True)`) — `atexit` does not run on SIGTERM, and hijacking a signal from a library is rude |
@@ -318,7 +318,7 @@ Legend: ✅ done & tested · 🟡 partly there · ❌ not started
 
 | # | Item | Status | Note |
 |---|---|---|---|
-| 0′.1 | OpenAI drop-in + patch | ❌ | `messages_from_openai_chat` already parses the format; the wrapper is what is missing |
+| 0′.1 | OpenAI drop-in + patch | ✅ | `integrations/openai.py` + `integrations/_openai_base.py`. Simpler than Anthropic's: OpenAI's system prompt is `messages[0]`, not a separate kwarg, so no special dedup case is needed — the existing "record only the unrecorded tail" logic already covers it. Verified against the real `openai` SDK (not just the fake), including `instrument()`'s default patch target. `stream=True` passes through unrecorded (open item, same as Anthropic's async streaming) |
 | 0′.2 | LangChain / LangGraph callback handler | ❌ | |
 | 0′.3 | OTel bridge | ❌ | Would make every OTel-instrumented app record for free |
 | 0′.4 | **Voice events** | ❌ | STT input, TTS output, barge-in, per-turn latency do not fit `Message`, which is LLM-turn shaped. Needs a decision: new `EventKind` (schema major bump) or `metadata` convention |
@@ -527,10 +527,12 @@ next:
 ```
 3.3 normalization stage (thin wrapper over fold)   ← cheapest pipeline win
    ↓
-0′.1 OpenAI wrapper · 9.3 cli/ · 9.9 ADR
+9.3 cli/ · 9.9 ADR
    ↓
 4.3 curated_watermark definition   ← blocks the datasets/ registry (Step 4)
 ```
+
+0′.1 (OpenAI drop-in) is done — see Step 0′ below.
 
 Everything in Steps 4, 6, 7, 8 can still wait on the above. Live gaps in the
 Step 1 destination itself: project scoping (multi-tenant auth beyond one
@@ -611,8 +613,10 @@ nothing imports is a phantom dep, and the change that needs one adds it.
 | `client.py` | 427 | The singleton: spool, allocator, drainer, `atexit`, opt-in SIGTERM, counters, `health()`. `init(sink=...)` accepts any destination |
 | `capture.py` | 534 | `journey()`, `JourneyHandle`, `observe()`, `_emit()`. The never-raise boundary |
 | `diagnostics.py` | 295 | `scan()` a spool, `render_journey()` for `show`, formatters |
-| `integrations/_base.py` | 283 | Request+response → events: prefix dedup, unknown-block handling |
+| `integrations/_base.py` | 283 | Request+response → events: prefix dedup, unknown-block handling (Anthropic) |
 | `integrations/anthropic.py` | 249 | Drop-in sync/async client, opt-in patch. Provider imported **inside** `__init__` |
+| `integrations/_openai_base.py` | 235 | Same job, OpenAI's shape. No separate system-prompt case needed — it's `messages[0]`, covered by the same tail-tracking logic |
+| `integrations/openai.py` | 225 | Drop-in sync/async client, opt-in patch. Also covers OpenAI-*compatible* providers via `base_url=...` — same SDK, same wrapper |
 | `integrations/livekit.py` | 939 | One `attach()` per `AgentSession`. Coalesces streamed utterances into one message per turn, pairs tool calls with their outputs, reads the system prompt off the live agent — or skips it entirely under `record_instructions=False`. `.tool()` records a call LiveKit never ran, which is how flow- and playbook-driven deployments get tool turns at all |
 
 **`context.py`** — the piece that made everything else possible.
@@ -1476,19 +1480,28 @@ Keeping `dependencies = []` means `urllib.request` rather than `httpx`, or an
 optional extra with a lazy import — the pattern `integrations/anthropic.py`
 already uses.
 
-**A new provider integration** (item 0′.1, OpenAI). Three pieces:
+**A new provider integration.** OpenAI (item 0′.1) is the worked example, now
+done — `integrations/openai.py` + `integrations/_openai_base.py`. Three pieces:
 
-1. A parser — `builders/messages.messages_from_openai_chat` already exists.
-2. Request/response capture in `integrations/_base.py`-shape: track how much of
-   the message list has been recorded, record the system prompt and tool schema
-   only when they change, and separate unknown content types instead of letting
-   the parser refuse them.
+1. A parser — `builders/messages.messages_from_openai_chat` already existed.
+2. Request/response capture in `_base.py`-shape: track how much of the message
+   list has been recorded, record tool schemas only when they change, and
+   degrade gracefully on a shape the parser refuses rather than losing the
+   turn (`_safe_openai_messages`, since `messages_from_openai_chat` raises by
+   design — right for a batch import, wrong on an auto-capture path). OpenAI
+   needed no separate system-prompt tracking the way Anthropic's `_base.py`
+   does: its system prompt is `messages[0]`, already covered by the same
+   "record only the unrecorded tail" logic every other turn uses.
 3. A wrapper that *wraps* rather than subclasses, importing the provider inside
    `__init__`. Subclassing would need the import at class-definition time and
    break `dependencies = []`.
 
-Then add `optional-dependencies` for it and a `sys.modules`-injected fake in the
-tests, so the core test path needs no real install.
+`optional-dependencies` (`openai>=1.0`) and a `sys.modules`-injected fake in the
+tests, so the core test path needs no real install — plus one live smoke test
+against the real `openai` package (not just the fake) to catch response-shape
+drift the fake can't. OpenAI-*compatible* providers (Groq, Together, local
+vLLM/Ollama) are covered for free: they speak the identical SDK, just with a
+different `base_url` — nothing extra to write per provider.
 
 **A new provider *parser*.** Write
 `messages_from_myformat(raw) -> list[Message]` on top of `normalize_role`,

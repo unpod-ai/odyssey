@@ -59,9 +59,22 @@ Ordered by dependency, not by section number — do these top to bottom.
       `data_preparation/` has zero code, nine `.gitkeep`s, no `pyproject.toml`.
 
 ## 5. Round out collection
-- [ ] **0′.1** OpenAI drop-in client + patch — `messages_from_openai_chat` already
-      parses the format; only the wrapper (mirroring `integrations/anthropic.py`)
-      is missing. Confirmed: `integrations/` has only `anthropic.py` and `livekit.py`.
+- [x] **0′.1** OpenAI drop-in client + patch — `integrations/openai.py` +
+      `integrations/_openai_base.py`, mirroring `integrations/anthropic.py`.
+      Simpler in one respect: OpenAI's system prompt is `messages[0]`, not a
+      separate kwarg, so the existing "record only the unrecorded tail" logic
+      already covers it with no special case. `messages_from_openai_chat`
+      raises on a malformed entry (right for a batch import, wrong on an
+      auto-capture path) — `_safe_openai_messages` degrades to a best-effort
+      message instead of losing the turn. **OpenAI-compatible providers**
+      (Groq, Together, local vLLM/Ollama, ...) work automatically: they speak
+      the same SDK with a different `base_url`, and the wrapper forwards
+      constructor kwargs untouched — no per-provider code needed. 24 tests
+      against a fake SDK plus a live smoke test against the real installed
+      `openai` package (request build + response parse, not just the fake),
+      and `instrument()`'s default patch target verified against the real
+      SDK's internal module layout. `stream=True` passes through unrecorded
+      (open item, same as Anthropic's async streaming gap).
 - [ ] **9.3** `cli/` real entrypoint (ADR 0003) — plugin-dispatched `odyssey` console
       script owned by `cli/`, core's `argparse` parser demoted to a registered plugin.
       Confirmed: `cli/` is three empty `.gitkeep` dirs; core still owns the console script.
