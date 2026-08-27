@@ -50,7 +50,7 @@ A Langfuse-style SDK is these layers. Ticks are verified, not aspirational.
 | L7 | **HTTP transport** | ship to a server, not a folder | `/api/public/ingestion` | ❌ **0%** (only `FileSink`) |
 | L8 | **Collector / server** | the "one place" everything lands | Langfuse server | ❌ **0%** |
 | L9 | **Dashboard** | look at what landed | Langfuse UI | ❌ **0%** |
-| L10 | **Training export** | corpus → SFT/DPO files | (Langfuse: dataset export) | 🟡 **Trajectory JSON ships** (`odyssey export`); SFT/DPO writers open |
+| L10 | **Training export** | corpus → SFT/DPO files | (Langfuse: dataset export) | ✅ **Trajectory JSON, SFT, and DPO all ship** (`odyssey export` / `sft` / `dpo`) |
 
 **6 of 10 layers built.** L4 and L6 — the "install it in one place" half — landed
 in the capture-layer change. What remains between "an agent runs" and "a model
@@ -121,7 +121,7 @@ pytest tests -q                     → 468 passed, 1 skipped   (2.3 s)
 pytest --collect-only -q            → 469 collected across 17 files
 flake8 --max-line-length=100        → exit 0, clean
 scripts/make_golden.py --check      → golden fixture is current   ← wire format intact
-python -m odyssey.cli --help        → push · export · status · show · health
+python -m odyssey.cli --help        → push · export · sft · dpo · status · show · health
 python -m odyssey.cli export --help → --events · --out · --journey · --last-step
 ```
 
@@ -339,18 +339,18 @@ place. **This is the top of the critical path.**
 | 1.2 | Drain with at-least-once + watermark | ✅ | Verified: 8 pushed, second push 0 |
 | 1.3 | Retry semantics | ✅ | Failure leaves shard *and* watermark untouched; the shard **is** the retry queue |
 | 1.4 | `FileSink` | ✅ | `sinks.py` (moved out of `cli.py` so the library never imports the CLI) |
-| 1.5 | **`HttpSink`** | ❌ | No HTTP client in `src/` — verified by grep. **The next thing to build** |
-| 1.6 | **Auth** (API key, project scoping) | ❌ | `init()` has no `api_key` argument yet |
+| 1.5 | **`HttpSink`** | ✅ | `sinks.py` — stdlib `urllib` only (core stays `dependencies = []`). One POST per journey batch to `{endpoint}/journeys/{journey_id}/events`, body is the same JSONL bytes a shard on disk holds. Raises `HttpSinkError` on failure, which `drain()` already treats as retryable — no new abstraction needed |
+| 1.6 | **Auth** (API key) | 🟡 | `HttpSink(api_key=...)` / `ODYSSEY_API_KEY` sends a `Bearer` token. Project scoping still needs a server to scope against — open until 1.8 |
 | 1.7 | **Batching / compression / backpressure on the wire** | ❌ | |
-| 1.8 | **Ingest endpoint** (`services/collector`) | ❌ | Still a single `.gitkeep` |
+| 1.8 | **Ingest endpoint** (`services/collector`) | ✅ | `services/collector` — stdlib `http.server`, not FastAPI (deliberately; see its README). Receives exactly what `HttpSink` posts, round-trips it through `odyssey.jsonl.read_events`/`write_events` (one codec, not two), writes `<journey_id>.jsonl` files identical in shape to `FileSink`'s output. `GET /health`, optional `Authorization: Bearer` gate. Verified end-to-end with a live smoke test (SDK → spool → HttpSink → collector → readable file) in addition to its own test suite |
 | 1.9 | **Server-side idempotency** | 🟡 | Keys exist and are now populated on every event: `event_id`, `WRITER_META_KEY`, `hashing.idempotency_key()`. No server consumes them |
 | 1.10 | **Object-store landing** (raw layer) | ❌ | ADR 0002 defines the contract; no code |
 | 1.11 | `TelemetryEvent` → API | 🟡 | Still **dead code**: 2 grep hits, both its own definition, zero call sites. Targets a `POST /api/v1/telemetry/events` and a `push_events()` that do not exist |
 | 1.12 | **Retention / TTL** | ❌ | Nothing prunes a drained spool. `Spool.close()` releases handles; it does not delete shards |
 
-`HttpSink` needs no new abstraction — it is one class with one `send()` method,
-and `Spool.push()` / `IntervalDrainer` / the CLI all drive it unchanged. See
-[§11 Extension points](#11-extension-points).
+`HttpSink` needed no new abstraction — it is one class with one `send()` method,
+and `Spool.push()` / `IntervalDrainer` / the CLI all drive it unchanged, exactly
+as predicted. See [§11 Extension points](#11-extension-points).
 
 ---
 
@@ -431,8 +431,8 @@ decision before 4.5 — ideally in the missing
 | 5.2 | Per-turn `trainable_status` | ✅ | Only assistant turns carry gradient by default |
 | 5.3 | Preference chain (chosen / rejected) | ✅ | `Signal` with `regen_order` + `edited_output`, **now emitted by the SDK** — `test_a_regeneration_supersedes_the_earlier_answer` |
 | 5.4a | **Trajectory JSON export writer** | ✅ | `export.py` + `odyssey export` — one `{conversation_id}.json` per conversation, the shape `tj.save()` produces and the platform consumes. `--last-step` / `last_step_only=True` writes the final step alone: every step is a prefix of the next, so all N cost O(N**2) bytes and the last one already holds the whole conversation |
-| 5.4b | **SFT export writer** | ❌ | Nothing converts a `Journey` into a messages-only SFT file yet |
-| 5.5 | **DPO/KTO/ORPO pair extractor** | ❌ | The signals are there and populated; the extractor is not |
+| 5.4b | **SFT export writer** | ✅ | `sft.py` + `odyssey sft` — one JSON line per trainable step (`{"messages": [...]}`), one combined `.jsonl` file (a training shard, not one-file-per-conversation like Trajectory JSON). Only `trainable_status == "trainable"` steps in a `trainable` (complete) journey are emitted |
+| 5.5 | **DPO pair extractor** | ✅ | `dpo.py` + `odyssey dpo` — walks `journey.steps` in order; a run of `superseded` steps immediately followed by a `trainable` one is a chain, and every rejected candidate in it pairs against the winner. Verified against the golden fixture's own regenerated→user_edit→thumbs_up chain (2 pairs). **KTO/ORPO not done** — those want unpaired single-response labels, a different data shape |
 | 5.6 | **soup-cli adapter** | ❌ | The reason for the `<3.13` Python pin |
 | 5.7 | `configs/{sft,dpo,grpo}` | ❌ | `.gitkeep` only |
 | 5.8 | `experiments/<exp_id>.yaml` | ❌ | config sha + corpus version + metrics ref |
@@ -505,7 +505,7 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 | # | Item | Status | Cost |
 |---|---|---|---|
 | 9.1 | `src/odyssey/__init__.py` public API | ✅ **done** — 131 LOC, 50 exports | — |
-| 9.2 | CI (`.github/workflows/ci-core.yml`) | ❌ still `.gitkeep` | small — 468 tests pass, nothing locks it in |
+| 9.2 | CI (`.github/workflows/ci-core.yml`) | ✅ **done** — fmt/lint/types/test + golden-fixture check, path-filtered | — |
 | 9.3 | `cli/` single entrypoint (Phase 2, ADR 0003) | ❌ | medium. Now also needs to expose `health` |
 | 9.4 | `NOTICE` copyright holder | ❌ | **blocks public release** — see [§10](#10-known-gaps) |
 | 9.5 | Stale `src/odyssey/build/` path in `NOTICE` + `pyproject` | ❌ | trivial |
@@ -519,25 +519,23 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 
 ### Recommended order
 
-The dependency graph, not the wish list. Step 0 is done, so:
+The dependency graph, not the wish list. Steps 0, 1.5/1.6, 1.8, and 5.4/5.5
+are done — record → spool → `HttpSink` → `services/collector` → durable file
+→ `odyssey sft`/`odyssey dpo` is now a real, verified, end-to-end path. What's
+next:
 
 ```
-9.2 CI  (half a day — 468 tests pass, lock them in before anything else lands)
-   ↓
-1.5 HttpSink  +  1.6 auth        ← "one place" starts being real
-   ↓
-1.8 services/collector           ← the destination itself
-   ↓
-5.4 + 5.5 SFT writer + DPO pair extractor   ← the payoff: an actual training file
-   ↓
 3.3 normalization stage (thin wrapper over fold)   ← cheapest pipeline win
    ↓
 0′.1 OpenAI wrapper · 9.3 cli/ · 9.9 ADR
+   ↓
+4.3 curated_watermark definition   ← blocks the datasets/ registry (Step 4)
 ```
 
-Everything in Steps 4, 6, 7, 8 can still wait. The shortest path from "an agent
-runs" to "a model trains" is now: **a real sink, a real destination.** The export
-writer landed — `export.py`, item 5.4a.
+Everything in Steps 4, 6, 7, 8 can still wait on the above. Live gaps in the
+Step 1 destination itself: project scoping (multi-tenant auth beyond one
+shared key) and object-store backing (`services/collector` still writes local
+disk) — see its README's "Not done here".
 
 ---
 
@@ -670,8 +668,10 @@ skipped one is merely a hole. The discrepancy is counted and shows in `health()`
 | `builders/reward.py` | 42 | Scalar → `Reward` |
 | `hashing.py` | 43 | Canonical JSON → SHA-256 |
 | `cli.py` | 202 | `push` · `export` · `status` · `show` · `health` |
-| `sinks.py` | 50 | `FileSink` — moved out of `cli.py` so the library never imports the CLI. Any object with `send(journey_id, events, header)` is a sink, so a deployment that wants no wire copy at all passes one that keeps nothing |
-| `export.py` | 353 | The artifact: `Journey` → `{conversation_id}.json`, `--last-step` trimming, `_odyssey` diagnostics, atomic write, filename sanitisation |
+| `sinks.py` | 142 | `FileSink` (moved out of `cli.py` so the library never imports the CLI) and `HttpSink` — the network destination, stdlib `urllib` only. Any object with `send(journey_id, events, header)` is a sink |
+| `export.py` | 374 | The artifact: `Journey` → `{conversation_id}.json`, `--last-step` trimming, `_odyssey` diagnostics, atomic write, filename sanitisation. `_gather_from_dir`/`_gather_from_spool` are shared by `sft.py`/`dpo.py` too |
+| `sft.py` | 133 | SFT export — one JSON line per `trainable` step, one combined `.jsonl` shard |
+| `dpo.py` | 144 | DPO pair extraction — walks `journey.steps`, pairs every `superseded` run against the `trainable` step that resolved it |
 
 > ⚠️ `builders/messages.py` **parses payloads you already captured**. It does not
 > intercept calls. Auto-capture is `integrations/`. Two different jobs — the
@@ -990,6 +990,8 @@ to understand what the layer actually does.
 python -m odyssey.cli --spool .odyssey status
 python -m odyssey.cli --spool .odyssey push   --out ./out [--journey <id>]
 python -m odyssey.cli --spool .odyssey export --out ./artifacts [--journey <id>] [--events ./out] [--last-step]
+python -m odyssey.cli --spool .odyssey sft    --out ./train.jsonl [--journey <id>] [--events ./out]
+python -m odyssey.cli --spool .odyssey dpo    --out ./prefs.jsonl [--journey <id>] [--events ./out]
 python -m odyssey.cli --spool .odyssey show [<journey_id>]
 python -m odyssey.cli --spool .odyssey health [--journey <id>] [--json]
 ```
