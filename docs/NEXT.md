@@ -99,14 +99,47 @@ just unit-tested: `collect → normalize → clean → validate → split` and
 `queue → apply-reviews`, `augment`, all exercised against real files on
 disk with real exit codes checked (including `validate`'s exit 3).
 
+**Update — 5.6 (soup-cli adapter) shipped since the above was written:**
+
+New `training/` workspace member (`odyssey-training`), `soup-cli>=0.73,<1`
+as a real dependency (light install — no `[train]` extra, no torch in this
+member). Researched Unsloth first (it isn't a separate thing to integrate —
+it's one of soup-cli's own `backend` choices, alongside `transformers`/
+`mlx`, nothing extra to build), then verified the real, installed soup-cli
+0.73.3 source (`soup_cli/config/schema.py`, `soup_cli/data/formats.py`)
+rather than trusting scraped docs, which turned out to matter: the docs
+implied DPO wants flat strings; the actual code (`_convert_dpo`) accepts
+conversational message lists straight through to `trl.DPOTrainer`.
+
+- `training/src/odyssey_training/soup_adapter.py` — `write_sft_config`
+  (`odyssey sft`'s `{"messages": [...]}` is already soup-cli's `chatml`
+  format verbatim, zero translation), `translate_dpo_shard` +
+  `write_dpo_config` (`odyssey dpo`'s `chosen`/`rejected` are a single
+  message; soup-cli/TRL want a message *list* — the one real gap, now
+  closed). Every config is validated against the real, installed
+  `soup_cli.config.schema.SoupConfig` before being written.
+- `odyssey train sft-config` / `odyssey train dpo-config`, verified
+  end-to-end against a real spool → `odyssey sft`/`odyssey dpo` → generated
+  `soup.yaml`, then round-tripped through soup-cli's own real
+  `load_config()` and `soup_cli.data.formats._convert_chatml`/`_convert_dpo`
+  — not just our own schema import.
+- 7 new tests in `training/tests/`. `ci-training.yml` added; `ci-cli.yml`
+  now also triggers on `training/**` (a new dependency there changes what
+  `odyssey doctor` discovers and how long cold `--help` takes).
+- **Side effect worth watching**: cold `--help` went from 172ms to 346ms
+  once soup-cli's own dependencies (httpx, pydantic, huggingface-hub) landed
+  in the shared venv. Still comfortably under the 400ms budget (see 9.3),
+  but the margin is real now, not enormous — a good reason to be
+  deliberate about which future members get a comparably heavy light-install
+  dependency.
+
 **What's next, in dependency order:**
 
 1. **9.4** — `NOTICE` copyright holder. The only remaining hard blocker
    (public distribution), and it needs a human, not more engineering.
-2. **5.6 soup-cli adapter** — the next genuinely unblocked item: 3 + 4 now
-   produce a real corpus with a real version string for training to
-   consume. `5.7`/`5.8` (`configs/{sft,dpo,grpo}`, `experiments/<exp_id>.yaml`)
-   are the natural companions.
+2. **5.7 / 5.8** — `configs/{sft,dpo,grpo}` and `experiments/<exp_id>.yaml`
+   (config sha + corpus version + metrics ref) — natural companions to 5.6,
+   no new dependency needed.
 3. **`services/api`** (8.1–8.3) — bigger scope (`odyssey-schemas` +
    FastAPI + OpenAPI), still the next major unbuilt piece per
    `docs/STRUCTURE.md`.
@@ -116,29 +149,14 @@ disk with real exit codes checked (including `validate`'s exit 3).
 `collection`'s third source), 1.12/2.14 (retention/TTL), 2.15
 (content-level PII scrub — would unblock `cleaning`'s deferred PII stage).
 
-**What's next, in dependency order:**
-
-1. **9.4** — `NOTICE` copyright holder. The only remaining hard blocker
-   (public distribution), and it needs a human, not more engineering — see
-   the note above.
-2. **3.2 / 3.6 / 3.7** — `cleaning`, `validation` (must exit 3 on breach,
-   per ADR 0003), `splitting` (by group key, never by row — a test must
-   enforce this). Any one of these is now a self-contained next unit; there
-   is no code dependency between them.
-3. **`services/api`** — bigger scope (`odyssey-schemas` + FastAPI +
-   OpenAPI), the next major unbuilt piece per `docs/STRUCTURE.md`, and the
-   one thing every SDK/dashboard item downstream is blocked on.
-
-**Other legitimate directions:** `3.5` (`augmentation`) and `3.8` (`flows`,
-Prefect orchestration — needs at least two real stages to sequence before
-it means anything) are still `.gitkeep`s too.
-
 ---
 
 # Detailed log — what shipped, item by item
 
 Verified against code on 2026-08-27 (`task test` → core 553 passed/1 skipped,
-collector 17 passed, dataprep 13 passed, cli 16 passed).
+collector 17 passed, dataprep 77 passed, cli 16 passed; all four CI
+workflows green on `main`, including `ci-cli`'s `doctor` cold-start check
+after its 200ms→400ms/best-of-3 fix).
 Ordered by dependency, not by section number.
 
 ## 1. Lock in what already works

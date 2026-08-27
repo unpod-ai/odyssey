@@ -418,7 +418,7 @@ wrong, not just "runs without crashing").
 
 ### Step 5 — Training
 
-`training/` — nine `.gitkeep`s, no `pyproject.toml`.
+`training/` — new workspace member (`odyssey-training`).
 
 | # | Item | Status | Note |
 |---|---|---|---|
@@ -428,10 +428,16 @@ wrong, not just "runs without crashing").
 | 5.4a | **Trajectory JSON export writer** | ✅ | `export.py` + `odyssey export` — one `{conversation_id}.json` per conversation, the shape `tj.save()` produces and the platform consumes. `--last-step` / `last_step_only=True` writes the final step alone: every step is a prefix of the next, so all N cost O(N**2) bytes and the last one already holds the whole conversation |
 | 5.4b | **SFT export writer** | ✅ | `sft.py` + `odyssey sft` — one JSON line per trainable step (`{"messages": [...]}`), one combined `.jsonl` file (a training shard, not one-file-per-conversation like Trajectory JSON). Only `trainable_status == "trainable"` steps in a `trainable` (complete) journey are emitted |
 | 5.5 | **DPO pair extractor** | ✅ | `dpo.py` + `odyssey dpo` — walks `journey.steps` in order; a run of `superseded` steps immediately followed by a `trainable` one is a chain, and every rejected candidate in it pairs against the winner. Verified against the golden fixture's own regenerated→user_edit→thumbs_up chain (2 pairs). **KTO/ORPO not done** — those want unpaired single-response labels, a different data shape |
-| 5.6 | **soup-cli adapter** | ❌ | The reason for the `<3.13` Python pin |
+| 5.6 | **soup-cli adapter** | ✅ | `training/src/odyssey_training/soup_adapter.py` — `write_sft_config`/`write_dpo_config`/`translate_dpo_shard`, reachable via `odyssey train sft-config`/`odyssey train dpo-config`. Checked against the *real, installed* `soup-cli` 0.73.3 (`soup_cli.config.schema.SoupConfig`, `soup_cli.data.formats`), not guessed from docs: `odyssey sft` already writes soup-cli's `chatml` format verbatim (`_convert_chatml` is a literal passthrough); `odyssey dpo`'s `chosen`/`rejected` are a single message, soup-cli's `dpo` format wants a message *list* (matching `trl.DPOTrainer`'s conversational contract) — `translate_dpo_shard` does that one wrap. Every generated config round-trips through soup-cli's own real `load_config`, not just our own schema import. `soup-cli` installed light-only (no `[train]` extra — no torch in this member) |
 | 5.7 | `configs/{sft,dpo,grpo}` | ❌ | `.gitkeep` only |
 | 5.8 | `experiments/<exp_id>.yaml` | ❌ | config sha + corpus version + metrics ref |
 | 5.9 | Checkpoint → object store | ❌ | ADR 0002 contract, no code |
+
+**On Unsloth** (researched while building 5.6): it is not a separate framework
+to integrate — it patches Transformers/PEFT/TRL for faster training and is
+one of soup-cli's own three `backend` choices (`transformers` default,
+`unsloth`, `mlx`), selected by a config field our adapter already exposes.
+Nothing to build here beyond what 5.6 already does.
 
 **L10 lives here, and it is now the second-biggest gap.** The schema was designed
 for DPO from day one — that is why `Signal` carries an *ordering* rather than
@@ -501,10 +507,7 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 |---|---|---|---|
 | 9.1 | `src/odyssey/__init__.py` public API | ✅ **done** — 131 LOC, 50 exports | — |
 | 9.2 | CI (`.github/workflows/ci-core.yml`) | ✅ **done** — fmt/lint/types/test + golden-fixture check, path-filtered | — |
-| 9.3 | `cli/` single entrypoint (Phase 2, ADR 0003) | ✅ | New `typer`+`rich` workspace member; lazy plugin registry via `odyssey.commands` entry points. All 7 `odyssey-core` subcommands (`push`/`export`/`sft`/`dpo`/`status`/`show`/`health`) mounted under `odyssey spool`, plus `odyssey data normalize` from `odyssey-dataprep`. Deprecated `odyssey push`/`odyssey status` top-level aliases warn to stderr. Cold `--help` measured at 172ms, comfortably under the 400ms budget
-(`odyssey doctor`, best-of-3 — raised from 200ms after CI showed 201-278ms
-runs on ordinary pushes; the honest floor for "spawn Python, import typer"
-alone left 200ms no real margin). Core drops `[project.scripts]`; `python -m odyssey.cli` unaffected |
+| 9.3 | `cli/` single entrypoint (Phase 2, ADR 0003) | ✅ | New `typer`+`rich` workspace member; lazy plugin registry via `odyssey.commands` entry points. All 7 `odyssey-core` subcommands (`push`/`export`/`sft`/`dpo`/`status`/`show`/`health`) mounted under `odyssey spool`, plus `odyssey data normalize` from `odyssey-dataprep`. Deprecated `odyssey push`/`odyssey status` top-level aliases warn to stderr. Cold `--help` (`odyssey doctor`, best-of-3; budget raised 200ms→400ms after CI showed 201-278ms runs on ordinary pushes — "spawn Python, import typer" alone left 200ms no real margin) measured 346ms after `training/`'s `soup-cli` dependency landed — real margin left, but the tightest any member has made it; worth watching if another member adds a comparably heavy light-install dependency. Core drops `[project.scripts]`; `python -m odyssey.cli` unaffected |
 | 9.4 | `NOTICE` copyright holder | ❌ | **blocks public release** — see [§10](#10-known-gaps) |
 | 9.5 | Stale `src/odyssey/build/` path in `NOTICE` + `pyproject` | ✅ | Fixed to `src/odyssey/builders/`, the directory that actually exists |
 | 9.6 | `openspec/.../design.md` (cited by code, absent) | ✅ | Written — Decisions 1/4/8 reconstructed from what the shipped code already establishes, Decision 9 (new) defines `curated_watermark`, closing 4.3 |
@@ -528,7 +531,10 @@ seven stages plus recipes) and Step 4's whole `recipe → recipe_hash`,
 `datasets/registry.yaml` + manifests + cards chain (3.1–3.9, 4.3–4.8) are
 now real, reachable via `odyssey data <cmd>` end to end: `collect` →
 `normalize` → `clean` → `validate` → `split` → `build-corpus` → `card`,
-or the whole thing sequenced by `run_recipe` (3.8). What's next:
+or the whole thing sequenced by `run_recipe` (3.8). 5.6 (the soup-cli
+adapter, `training/`) closes the loop — `odyssey sft`/`odyssey dpo` →
+`odyssey train sft-config`/`dpo-config` → `soup train --config soup.yaml`,
+verified against the real installed `soup-cli`. What's next:
 
 ```
 9.4 NOTICE copyright holder   ← blocks public release, needs a human
@@ -536,8 +542,9 @@ or the whole thing sequenced by `run_recipe` (3.8). What's next:
 
 0′.1 (OpenAI drop-in) is done too — see Step 0′ below.
 
-Everything in Steps 5–8 can still wait on the above (5's soup-cli adapter is
-the next real unblocked one — 3/4 already feed it a corpus). Live gaps in the
+Everything else in Steps 5–8 can still wait on the above (5.7/5.8 —
+`configs/{sft,dpo,grpo}`, `experiments/<exp_id>.yaml` — are the natural
+next companions to 5.6, no new dependency needed). Live gaps in the
 Step 1 destination itself: project scoping (multi-tenant auth beyond one
 shared key) and object-store backing (`services/collector` still writes local
 disk) — see its README's "Not done here".
