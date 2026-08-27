@@ -505,7 +505,7 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 | 9.5 | Stale `src/odyssey/build/` path in `NOTICE` + `pyproject` | ✅ | Fixed to `src/odyssey/builders/`, the directory that actually exists |
 | 9.6 | `openspec/.../design.md` (cited by code, absent) | ✅ | Written — Decisions 1/4/8 reconstructed from what the shipped code already establishes, Decision 9 (new) defines `curated_watermark`, closing 4.3 |
 | 9.7 | `.pre-commit-config.yaml`, `CHANGELOG.md`, `SECURITY.md`, `CODEOWNERS` | ✅ | All four written — `.pre-commit-config.yaml` mirrors the isort/black/flake8 versions and args every member's own `Taskfile.yml` already runs; `CODEOWNERS` lives at `.github/CODEOWNERS`, GitHub's own convention |
-| 9.8 | Two no-op contract tests | 🟡 | trivial — see [§10](#10-known-gaps) |
+| 9.8 | Two no-op contract tests | ✅ | `packages/odyssey-core/docs/README.md` written — the 60-second quickstart both tests were checking against but that never existed. Verified live: breaking a backticked symbol in it now fails `test_docs_reference_only_symbols_that_exist` |
 | 9.9 | **ADR for the capture layer** | ✅ | [`adr/0004-capture-layer.md`](adr/0004-capture-layer.md) — the design in §1 (event-sourced core, ambient context, single-writer contract with detection, never-raise boundary, local-only recording), and the deliberate exception it carries to ADR 0001 rule 1 (`packages/` = no side effects) |
 | 9.10 | 77 pyrefly errors in `tests/` | ❌ | **Not re-verified in the 2026-08-25 pass** — `pyrefly check` now stops at *“No `pyrefly.toml` found”* and asks for `pyrefly init`, so the count below is the last one actually measured. Latent: `task types` uses pyrefly's auto-config, which checks `src` + `scripts` only. Adding any `[tool.pyrefly]` key switches to explicit config and surfaces them |
 
@@ -1403,16 +1403,9 @@ or schedule a rewrite of `primitives.py`.
   `src/odyssey/builders/`, the directory that exists (item 9.5).
 - ~~`.pre-commit-config.yaml`, `CHANGELOG.md`, `SECURITY.md`, `CODEOWNERS`
   missing.~~ All four written (item 9.7).
-
-### Tests that are currently no-ops
-
-Both in `test_contract.py`, passing trivially:
-
-- `test_docs_reference_only_symbols_that_exist` globs
-  `packages/odyssey-core/docs/*.md`. That directory does not exist, so the loop
-  never runs. (Root `docs/` — including this file — is a different tree.)
-- `test_docs_quickstart_still_works` documents itself as a mirror of
-  `docs/README.md`. No such file exists.
+- ~~Two no-op contract tests.~~ `packages/odyssey-core/docs/README.md`
+  written — both `test_docs_reference_only_symbols_that_exist` and
+  `test_docs_quickstart_still_works` now check real content (item 9.8).
 
 ### Limitations in what *is* built
 
