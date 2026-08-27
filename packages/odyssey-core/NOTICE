@@ -45,6 +45,8 @@ Before this project is distributed publicly, the holder's name must be obtained
 from the upstream author or repository and substituted above, or the derived
 code must be rewritten. Internal use is unaffected.
 
+Picked up later.
+
 Derived files: src/odyssey/primitives.py, src/odyssey/build/*.
 
 MIT License text, to be completed with the holder above:
