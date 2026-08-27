@@ -10,10 +10,14 @@ drain re-sends the same events. A returned boolean would be ignored.
 
 from __future__ import annotations
 
+import os
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import List, Optional
 
-from odyssey.jsonl import write_events
+from odyssey.jsonl import encode_event, header_line, write_events
 from odyssey.primitives import JourneyEvent, JourneyHeader
 
 
@@ -48,3 +52,91 @@ class FileSink:
         write_events(
             self.out_dir / f"{journey_id}.jsonl", events, append=True, header=header
         )
+
+
+# Env fallback, self-contained on the sink rather than routed through
+# `config.py`/`Client` — this needs no new abstraction (WORKING.md item 1.5):
+# a caller builds `HttpSink()` and hands it to `init(sink=...)` exactly like any
+# other sink. `explicit beats environment` still holds, just locally.
+ENV_ENDPOINT = "ODYSSEY_ENDPOINT"
+ENV_API_KEY = "ODYSSEY_API_KEY"
+DEFAULT_TIMEOUT = 10.0
+
+
+class HttpSinkError(RuntimeError):
+    """A batch could not be delivered. Always retryable — see the module docstring."""
+
+
+class HttpSink:
+    """Ships drained events to a network endpoint over plain stdlib HTTP.
+
+    ``odyssey-core`` declares ``dependencies = []``; this uses ``urllib`` rather
+    than ``requests``/``httpx`` so installing the SDK never pulls in an HTTP
+    client nobody asked for.
+
+    One POST per journey batch, to ``{endpoint}/journeys/{journey_id}/events``.
+    The body is the same JSONL bytes a shard on disk would hold — the header
+    line, then one event per line, produced by the same :func:`header_line` /
+    :func:`encode_event` :class:`FileSink` uses — so a collector need not
+    decode anything odyssey does not already write to disk.
+
+    Raises :class:`HttpSinkError` on any non-2xx response or transport
+    failure. ``drain()`` treats that as retryable: the shard and watermark are
+    left untouched, and the next drain resends the same batch. No retry or
+    backoff lives here — the spool already is the retry queue (see
+    ``spool.py``).
+    """
+
+    def __init__(
+        self,
+        endpoint: Optional[str] = None,
+        *,
+        api_key: Optional[str] = None,
+        timeout: float = DEFAULT_TIMEOUT,
+    ) -> None:
+        resolved = endpoint if endpoint is not None else os.environ.get(ENV_ENDPOINT)
+        if not resolved:
+            raise ValueError(
+                f"HttpSink needs an endpoint: pass endpoint=... or set {ENV_ENDPOINT}"
+            )
+        self.endpoint = resolved.rstrip("/")
+        self.api_key = api_key if api_key is not None else os.environ.get(ENV_API_KEY)
+        self.timeout = timeout
+
+    def send(
+        self,
+        journey_id: str,
+        events: List[JourneyEvent],
+        header: Optional[JourneyHeader] = None,
+    ) -> None:
+        body = header_line(header=header) + "\n"
+        body += "".join(encode_event(e) + "\n" for e in events)
+        url = (
+            f"{self.endpoint}/journeys/"
+            f"{urllib.parse.quote(journey_id, safe='')}/events"
+        )
+        request = urllib.request.Request(
+            url,
+            data=body.encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/x-ndjson; charset=utf-8"},
+        )
+        if self.api_key:
+            request.add_header("Authorization", f"Bearer {self.api_key}")
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                status = response.status
+        except urllib.error.HTTPError as exc:
+            raise HttpSinkError(
+                f"{journey_id}: HTTP {exc.code} from {self.endpoint}"
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise HttpSinkError(
+                f"{journey_id}: could not reach {self.endpoint}: {exc.reason}"
+            ) from exc
+        if status >= 300:
+            # Unreachable via urlopen for a plain 2xx/4xx/5xx server — HTTPError
+            # already covers >=400, and urlopen follows redirects itself — but a
+            # defensive check costs nothing against a server that returns an
+            # unusual 3xx without a Location header.
+            raise HttpSinkError(f"{journey_id}: unexpected HTTP status {status}")
