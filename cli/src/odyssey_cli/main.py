@@ -84,7 +84,7 @@ def status_alias(spool: str = typer.Option(".odyssey", help="spool root")) -> No
 
 
 _COLD_START_ATTEMPTS = 3
-_COLD_START_BUDGET_MS = 400
+_COLD_START_BUDGET_MS = 700
 
 
 @app.command("doctor", help="environment sanity: plugin discovery, cold-start speed")
@@ -92,24 +92,34 @@ def doctor() -> None:
     """Discovered command groups and a cold ``--help`` timing check.
 
     ADR 0003 asserts cold ``--help`` stays fast; this is that check, made
-    real rather than left as a comment. Two adjustments versus the ADR's
-    original 200ms, both made after this check started failing in CI on
-    ordinary runs, not on any actual regression:
+    real rather than left as a comment. The budget has moved twice now,
+    both times after this check failed in CI on an ordinary push with no
+    actual regression:
 
-    - **Best-of-``_COLD_START_ATTEMPTS``.** A single subprocess spawn on a
-      shared CI runner is noisy — scheduler contention or a GC pause can
-      push one sample well past budget with no change in what actually got
-      imported. Best-of-N answers "how fast can this run get," which is
-      what a budget on *avoidable* cost (an eager heavy import) is actually
-      about — a transient scheduling hiccup is not that.
-    - **400ms budget, not 200ms.** Measured directly (this same subprocess
-      invocation, no `uv run` wrapper): 180-220ms on an ordinary dev
-      machine, 201-278ms in CI — i.e. 200ms had roughly zero margin against
-      the honest floor for "spawn a Python interpreter and import typer,"
-      before this command does anything odyssey-specific at all. 400ms
-      keeps real headroom against that floor while still catching what the
-      budget exists to catch: an accidentally-eager heavy import (torch,
-      say) would blow past it by seconds, not tens of milliseconds.
+    - **Best-of-``_COLD_START_ATTEMPTS``** filters scheduler/GC noise from
+      a single subprocess spawn — it answers "how fast can this run get,"
+      which is what a budget on *avoidable* cost is about; a transient
+      scheduling hiccup is not that.
+    - **200ms → 400ms** (first pass): measured directly, 180-220ms on a dev
+      machine, 201-278ms in CI, just for "spawn Python, import typer" —
+      200ms had no real margin against that floor.
+    - **400ms → 700ms** (this pass): adding `training/`'s `soup-cli`
+      dependency — a real, light (no-torch) dependency, never imported by
+      a bare `--help` since plugin loading stays lazy — still raised the
+      floor to 346ms on a dev machine and 440ms in CI. Nothing here is a
+      code regression: entry-point discovery (`importlib.metadata.
+      entry_points()`) and Python's own import-path setup both scale with
+      how many distributions live in the *shared* venv (every workspace
+      member's dependencies land in one venv — one lockfile is the whole
+      point, see root `pyproject.toml`), not with what a bare `--help`
+      actually imports. That floor will keep rising as more members gain
+      real dependencies; 700ms leaves real margin against today's ~440ms
+      CI floor, but expect this number to move again, not because the
+      check is broken but because it is honestly measuring a shared cost
+      that grows with the workspace. What it still catches: an
+      accidentally-eager *heavy* import (torch, say) blows past even 700ms
+      by seconds, not by the double-digit percent this kind of shared-venv
+      drift produces.
     """
     groups = discover()
     typer.echo(f"discovered command groups ({GROUP}): {sorted(groups) or '(none)'}")
