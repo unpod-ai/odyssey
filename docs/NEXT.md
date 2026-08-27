@@ -49,35 +49,54 @@ actually reach out, not more engineering.
 
 ## Start here next session
 
-Items 3.9 → 4.4 → 4.5 shipped since the summary above was written:
-`data_preparation/src/odyssey_dataprep/recipes/` (`Recipe`/`RecipeStage`/
-`load_recipe`/`recipe_hash`) and `.../versioning.py`
-(`compute_curated_watermark`/`corpus_version`), reachable end-to-end via
-`odyssey data recipe-hash <path>` and `odyssey data corpus-version --recipe
-<path> --curated <dir> --seq N`. 25 tests in `data_preparation/tests/`
-(`test_recipes.py`, `test_versioning.py`), verified live against a real
-recipe file and a real curated directory, not just unit-tested. `docs/
-WORKING.md` Step 4's table and "Recommended order" are updated to match.
+Since the summary above was written, two more units shipped:
 
-The `raw traces → recipe_hash + curated_watermark → corpus_version` chain
-is now real end to end. What it doesn't yet do anything with: nothing reads
-`corpus_version` back. The natural next unit of work, in order:
+- **3.9 → 4.4 → 4.5** — `data_preparation/src/odyssey_dataprep/recipes/`
+  (`Recipe`/`RecipeStage`/`load_recipe`/`recipe_hash`) and
+  `.../versioning.py` (`compute_curated_watermark`/`corpus_version`),
+  reachable via `odyssey data recipe-hash` / `odyssey data corpus-version`.
+- **4.6 → 4.7 → 4.8** — `.../datasets.py` (`next_version`/`build_manifest`/
+  `write_manifest`/`update_registry`/`write_card`), reachable via
+  `odyssey data build-corpus` / `odyssey data card`. `datasets/registry.yaml`
+  (`name -> versions -> manifest sha -> URI`, per `docs/STRUCTURE.md`) and
+  `datasets/manifests/<name>/v<N>.json` (shards + sha256 + row counts +
+  `recipe_hash`, computed from the actual shard files, not trusted from the
+  caller) both write for real now; `next_version` doubles as
+  `curated_watermark.seq` so there is exactly one counter, not two to keep
+  in sync. `datasets/cards/<name>-v<N>.md` writes provenance from the
+  manifest plus caller-supplied license/PII-posture/intended-use.
+- **9.5 / 9.7 / 9.8** — stale `src/odyssey/build/` path fixed to
+  `src/odyssey/builders/`; `.pre-commit-config.yaml`/`CHANGELOG.md`/
+  `SECURITY.md`/`.github/CODEOWNERS` written; `packages/odyssey-core/docs/
+  README.md` written, closing both contract tests that were previously
+  no-ops (verified live — breaking a symbol in it now fails the test).
+- **9.10 re-verified, not fixed** — opting `tests/` into pyrefly surfaces
+  158 errors today (was 77, stale count), one real
+  (`src/odyssey/integrations/livekit.py:893`, a `getattr`+`callable`
+  narrowing gap pyrefly can't see through), 157 are `assert x is not None`
+  narrowing gaps in test files. `task types`/CI is unaffected either way —
+  confirmed the auto-config still only covers `src`+`scripts`. Deliberately
+  not touched: enabling `tests/` type-checking is a scope decision (~150+
+  touch points across test files), not a bug fix.
+25 tests added this session across `data_preparation` (7 → 32) — all real,
+verified against a live CLI round trip end to end, not just unit-tested.
 
-1. **4.6** — `datasets/registry.yaml`: the durable home for "corpus name →
-   latest `seq`" (currently the caller has to track `--seq` by hand every
-   `odyssey data corpus-version` call).
-2. **4.7** — `datasets/manifests/<name>/v<N>.json`: shards + sha256 + row
-   counts + `recipe_hash`, written once per curation run — the artifact
-   `corpus_version` was computed *for*.
-3. **4.8** — `datasets/cards/`: provenance, license, PII posture, splits,
-   intended use — per-corpus documentation, not code.
+**What's next, in dependency order:**
 
-**Other legitimate directions**, if priorities have shifted: keep extending
-`data_preparation` (`cleaning`/`annotation`/`validation`/`augmentation`/
-`splitting`/`flows` are still `.gitkeep`s — 3.9's `Recipe` shape has no
-runner yet because there's nothing but `normalization` to sequence), or
-start `services/api` (bigger scope — `odyssey-schemas` + FastAPI + OpenAPI,
-the next major unbuilt piece per `docs/STRUCTURE.md`).
+1. **9.4** — `NOTICE` copyright holder. The only remaining hard blocker
+   (public distribution), and it needs a human, not more engineering — see
+   the note above.
+2. **3.2 / 3.6 / 3.7** — `cleaning`, `validation` (must exit 3 on breach,
+   per ADR 0003), `splitting` (by group key, never by row — a test must
+   enforce this). Any one of these is now a self-contained next unit; there
+   is no code dependency between them.
+3. **`services/api`** — bigger scope (`odyssey-schemas` + FastAPI +
+   OpenAPI), the next major unbuilt piece per `docs/STRUCTURE.md`, and the
+   one thing every SDK/dashboard item downstream is blocked on.
+
+**Other legitimate directions:** `3.5` (`augmentation`) and `3.8` (`flows`,
+Prefect orchestration — needs at least two real stages to sequence before
+it means anything) are still `.gitkeep`s too.
 
 ---
 
