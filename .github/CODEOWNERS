@@ -1,0 +1,4 @@
+# Default owner for everything in the repo unless a later, more specific
+# pattern matches. Replace with real usernames/teams as the project grows
+# past one maintainer.
+* @unpod-ai

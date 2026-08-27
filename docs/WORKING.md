@@ -504,7 +504,7 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 | 9.4 | `NOTICE` copyright holder | ❌ | **blocks public release** — see [§10](#10-known-gaps) |
 | 9.5 | Stale `src/odyssey/build/` path in `NOTICE` + `pyproject` | ✅ | Fixed to `src/odyssey/builders/`, the directory that actually exists |
 | 9.6 | `openspec/.../design.md` (cited by code, absent) | ✅ | Written — Decisions 1/4/8 reconstructed from what the shipped code already establishes, Decision 9 (new) defines `curated_watermark`, closing 4.3 |
-| 9.7 | `.pre-commit-config.yaml`, `CHANGELOG.md`, `SECURITY.md`, `CODEOWNERS` | ❌ | trivial |
+| 9.7 | `.pre-commit-config.yaml`, `CHANGELOG.md`, `SECURITY.md`, `CODEOWNERS` | ✅ | All four written — `.pre-commit-config.yaml` mirrors the isort/black/flake8 versions and args every member's own `Taskfile.yml` already runs; `CODEOWNERS` lives at `.github/CODEOWNERS`, GitHub's own convention |
 | 9.8 | Two no-op contract tests | 🟡 | trivial — see [§10](#10-known-gaps) |
 | 9.9 | **ADR for the capture layer** | ✅ | [`adr/0004-capture-layer.md`](adr/0004-capture-layer.md) — the design in §1 (event-sourced core, ambient context, single-writer contract with detection, never-raise boundary, local-only recording), and the deliberate exception it carries to ADR 0001 rule 1 (`packages/` = no side effects) |
 | 9.10 | 77 pyrefly errors in `tests/` | ❌ | **Not re-verified in the 2026-08-25 pass** — `pyrefly check` now stops at *“No `pyrefly.toml` found”* and asks for `pyrefly init`, so the count below is the last one actually measured. Latent: `task types` uses pyrefly's auto-config, which checks `src` + `scripts` only. Adding any `[tool.pyrefly]` key switches to explicit config and surfaces them |
@@ -1386,9 +1386,6 @@ or schedule a rewrite of `primitives.py`.
   pipeline. Neither exists. Zero call sites. Wire it into Step 1 or delete it.
 - **`PiiPolicy` / `RedactionPreview`** — types with no implementation (2.15).
 - **`ConversationSummary`** — declared, unused.
-- `NOTICE` and `pyproject.toml` both point at `src/odyssey/build/*`. The
-  directory is `src/odyssey/builders/`. For `NOTICE` that is the attribution's
-  own "Derived files" line, so it should be exact.
 
 ### Formerly missing from Phase 1 (all three resolved)
 
@@ -1402,6 +1399,10 @@ or schedule a rewrite of `primitives.py`.
   Written (item 9.6) — Decisions 1/4/8 reconstructed from what `fold.py`/
   `primitives.py` already establish, Decision 9 (new) defines
   `curated_watermark`, closing item 4.3.
+- ~~`NOTICE`/`pyproject.toml` pointed at `src/odyssey/build/*`.~~ Fixed to
+  `src/odyssey/builders/`, the directory that exists (item 9.5).
+- ~~`.pre-commit-config.yaml`, `CHANGELOG.md`, `SECURITY.md`, `CODEOWNERS`
+  missing.~~ All four written (item 9.7).
 
 ### Tests that are currently no-ops
 
@@ -1457,13 +1458,16 @@ Both in `test_contract.py`, passing trivially:
 
 ```
 pnpm-workspace.yaml · package.json · pnpm-lock.yaml
-docker-compose.yml · .pre-commit-config.yaml
-CHANGELOG.md · SECURITY.md · .github/CODEOWNERS
+docker-compose.yml
 scripts/codegen.sh
 docs/architecture.md · docs/journey-schema.md
-datasets/registry.yaml · models/registry.yaml
+models/registry.yaml
 services/api/openapi.json
 ```
+
+`.pre-commit-config.yaml`, `CHANGELOG.md`, `SECURITY.md`, `.github/CODEOWNERS`
+(9.7) and `datasets/registry.yaml` (4.6) are now written — moved off this
+list.
 
 ### Toolchain
 
