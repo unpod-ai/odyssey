@@ -1,11 +1,84 @@
-# odyssey — next-up checklist
+# odyssey — session handoff
+
+## Session summary (2026-08-27)
+
+Started from a codebase where recording worked locally but nothing shipped
+data anywhere, no training file existed, and half the planned workspace
+members were still `.gitkeep`s. Ended with a real, tested, end-to-end path:
+an agent call gets recorded → shipped over the network → landed on a durable
+server, date-partitioned → turned into an actual SFT or DPO training file —
+all reachable through one real `odyssey` console script. Nine feature/infra
+commits plus three docs-only commits, all pushed to `main`. Full detail per
+item is in the checklist below; this is the two-minute version:
+
+- **CI** on all four workspace members (`ci-core`/`ci-collector`/
+  `ci-dataprep`/`ci-cli.yml`) — 468 tests that enforced nothing now do.
+- **`HttpSink`** (stdlib `urllib`, no new dependency) + **`services/collector`**
+  (new member, stdlib `http.server`) — the local-only spool now has a real
+  network destination, verified with a live SDK → spool → HTTP → collector →
+  readable-file round trip, not just unit tests.
+- **`odyssey sft` / `odyssey dpo`** — the actual training-file writers. The
+  DPO pair extractor's first design (prefix-hash grouping) was wrong and the
+  test suite caught it; the fix (walk `journey.steps` in order) is documented
+  in the module itself so it isn't silently reintroduced.
+- **Date-partitioned storage**, timezone-configurable (`ODYSSEY_TIMEZONE` /
+  `ODYSSEY_COLLECTOR_TIMEZONE`, UTC default) — both the local spool and the
+  collector, so neither a shard nor a stored file grows unbounded forever.
+- **`data_preparation/normalization`** — first real code in that member. Found
+  and fixed a genuine bug while building it (BYOD-parsed journeys had every
+  message stuck `not_trainable`, including assistant replies) by inspecting a
+  live smoke test's output before writing the regression test for it.
+- **OpenAI drop-in client** (+ every OpenAI-*compatible* provider for free —
+  same SDK, different `base_url`) — verified against the real installed
+  `openai` package, not just a fake.
+- **`cli/`**, the real `odyssey` console script (ADR 0003) — lazy plugin
+  discovery via entry points, verified `odyssey --help` never imports a
+  member's own code. Hit and documented two real, non-obvious typer 0.27
+  bugs along the way (see `cli/src/odyssey_cli/registry.py`'s docstring).
+- **ADR 0004** (the capture layer's design, never written down before) and
+  **`openspec/changes/add-journey-schema/design.md`** (cited by code since
+  the original port, never actually committed until now) — including a real
+  definition for `curated_watermark`, the one piece of the corpus-versioning
+  formula that had never been specified anywhere.
+
+**What's still open, deliberately not started:** `NOTICE`'s copyright-holder
+question (item 9.4) — researched this session (PyPI metadata is genuinely
+empty; there's a lead, parked, not written down here — see git history
+around the "picked up later" commit if you need it) but it needs a human to
+actually reach out, not more engineering.
+
+## Start here next session
+
+`curated_watermark` is now *defined* (`design.md` Decision 9) but not
+*implemented*. The natural next unit of work, in order:
+
+1. **3.9** — a minimal `data_preparation/recipes/*.yaml` format: declarative,
+   hashable, describing a cleaning/normalization/augmentation pipeline config.
+2. **4.4** — `recipe_hash`: hash that recipe with the already-existing
+   `odyssey.hashing.content_hash` (reuse, not a new primitive).
+3. **4.5** — the corpus version function itself:
+   `content_hash({"recipe": recipe_hash, "watermark": curated_watermark})`,
+   per `design.md`'s exact spec. This is genuinely unblocked now — the only
+   reason it wasn't started this session is running out of session, not a
+   design gap.
+
+That's a clean, self-contained unit: define the recipe shape, hash it, wire
+it to the already-written `curated_watermark` definition, and the whole
+`raw traces → corpus version` half of the lineage chain in `README.md`
+becomes real for the first time.
+
+**Other legitimate directions**, if priorities have shifted: keep extending
+`data_preparation` (`cleaning`/`annotation`/`validation` are still
+`.gitkeep`s), or start `services/api` (bigger scope — `odyssey-schemas` +
+FastAPI + OpenAPI, the next major unbuilt piece per `docs/STRUCTURE.md`).
+
+---
+
+# Detailed log — what shipped, item by item
 
 Verified against code on 2026-08-27 (`task test` → core 553 passed/1 skipped,
 collector 17 passed, dataprep 13 passed, cli 16 passed).
-Ordered by dependency, not by section number — do these top to bottom.
-Everything below is done except **9.4** at the bottom (`NOTICE` copyright
-holder), the one item left that needs input this session couldn't resolve
-on its own.
+Ordered by dependency, not by section number.
 
 ## 1. Lock in what already works
 - [x] **9.2** `.github/workflows/ci-core.yml` — path-filtered to `packages/odyssey-core/**`,
