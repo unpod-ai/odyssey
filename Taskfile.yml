@@ -17,6 +17,9 @@ includes:
   cli:
     taskfile: ./cli/Taskfile.yml
     dir: ./cli
+  training:
+    taskfile: ./training/Taskfile.yml
+    dir: ./training
 
 vars:
   UV:
@@ -40,6 +43,7 @@ tasks:
       - task: collector:check
       - task: dataprep:check
       - task: cli:check
+      - task: training:check
 
   test:
     desc: Run every member's test suite
@@ -48,3 +52,4 @@ tasks:
       - task: collector:test
       - task: dataprep:test
       - task: cli:test
+      - task: training:test
