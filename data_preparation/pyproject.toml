@@ -8,8 +8,10 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "Unpod", email = "parvinder@unpod.ai" }]
 
 # The engine already exists in odyssey-core (fold(), builders/messages.py);
-# this member is the stage wrapper over it, not new parsing logic.
-dependencies = ["odyssey"]
+# this member is the stage wrapper over it, not new parsing logic. pyyaml is
+# this member's own — recipes/*.yaml (item 3.9) has no reason to touch
+# odyssey-core, which stays dependency-free per ADR 0001.
+dependencies = ["odyssey", "pyyaml>=6"]
 
 [project.optional-dependencies]
 dev = [

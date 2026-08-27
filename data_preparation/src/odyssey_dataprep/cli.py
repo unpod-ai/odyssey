@@ -29,6 +29,9 @@ def register(app: Any) -> None:
         normalize_odyssey_dir,
         normalize_odyssey_spool,
     )
+    from odyssey_dataprep.recipes import load_recipe
+    from odyssey_dataprep.recipes import recipe_hash as _recipe_hash
+    from odyssey_dataprep.versioning import compute_curated_watermark, corpus_version
 
     def _report(result: NormalizeResult) -> None:
         print(f"normalized {result.count}")
@@ -83,6 +86,27 @@ def register(app: Any) -> None:
         else:
             _report(normalize_odyssey_spool(spool, out, journey_id=journey))
 
+    def recipe_hash(
+        recipe: str = typer.Argument(..., help="path to a recipes/*.yaml file"),
+    ) -> None:
+        """Print a recipe's hash (item 4.4) — 'processed which way'."""
+        print(_recipe_hash(load_recipe(recipe)))
+
+    def corpus_version_cmd(
+        recipe: str = typer.Option(
+            ..., "--recipe", help="path to a recipes/*.yaml file"
+        ),
+        curated: str = typer.Option(
+            ..., "--curated", help="directory of normalized *.json journeys"
+        ),
+        seq: int = typer.Option(
+            ..., "--seq", help="this curation run's sequence number"
+        ),
+    ) -> None:
+        """Print the corpus version (item 4.5): sha(recipe_hash + curated_watermark)."""
+        watermark = compute_curated_watermark(curated, seq=seq)
+        print(corpus_version(_recipe_hash(load_recipe(recipe)), watermark))
+
     # A no-op callback keeps `data` a named command group even with a single
     # subcommand today — without it typer collapses a one-command app so
     # `odyssey data --out ...` would work instead of `odyssey data normalize
@@ -92,3 +116,5 @@ def register(app: Any) -> None:
         """data_preparation stages."""
 
     app.command()(normalize)
+    app.command("recipe-hash")(recipe_hash)
+    app.command("corpus-version")(corpus_version_cmd)
