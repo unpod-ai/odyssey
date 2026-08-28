@@ -6,19 +6,43 @@ import hashlib
 
 import pytest
 
-from odyssey_training.checkpoints import upload_checkpoint
+from odyssey_training.checkpoints import (
+    download_checkpoint,
+    parse_s3_uri,
+    upload_checkpoint,
+)
 
 
 class FakeS3Client:
-    """A minimal boto3 S3 client double — just the one method
-    ``upload_checkpoint`` calls, mirroring `test_collection.py`'s own
-    `FakeS3Client` for `collect_from_object_store` (item 1.10)."""
+    """A minimal boto3 S3 client double covering both directions —
+    ``put_object`` for `upload_checkpoint`, ``list_objects_v2``/
+    ``get_object`` for `download_checkpoint` — mirroring
+    `test_collection.py`'s own `FakeS3Client` for `collect_from_object_store`
+    (item 1.10)."""
 
     def __init__(self):
         self.objects = {}
 
     def put_object(self, Bucket, Key, Body):
         self.objects[(Bucket, Key)] = Body.read()
+
+    def list_objects_v2(self, Bucket, Prefix, ContinuationToken=None):
+        keys = sorted(
+            k for (b, k) in self.objects if b == Bucket and k.startswith(Prefix)
+        )
+        return {"Contents": [{"Key": k} for k in keys], "IsTruncated": False}
+
+    def get_object(self, Bucket, Key):
+        body = self.objects[(Bucket, Key)]
+        return {"Body": _FakeBody(body)}
+
+
+class _FakeBody:
+    def __init__(self, data):
+        self._data = data
+
+    def read(self):
+        return self._data
 
 
 def _make_checkpoint(tmp_path):
@@ -95,3 +119,41 @@ def test_upload_checkpoint_handles_an_empty_prefix(tmp_path):
 
     assert ("bucket", "config.json") in client.objects
     assert result.uri == "s3://bucket/"
+
+
+def test_parse_s3_uri_splits_bucket_and_prefix():
+    assert parse_s3_uri("s3://bucket/checkpoints/exp1/") == (
+        "bucket",
+        "checkpoints/exp1",
+    )
+
+
+def test_parse_s3_uri_handles_no_prefix():
+    assert parse_s3_uri("s3://bucket/") == ("bucket", "")
+
+
+def test_parse_s3_uri_rejects_a_non_s3_uri():
+    with pytest.raises(ValueError):
+        parse_s3_uri("https://example.com/x")
+
+
+def test_download_checkpoint_is_the_inverse_of_upload(tmp_path):
+    ckpt = _make_checkpoint(tmp_path)
+    client = FakeS3Client()
+    uploaded = upload_checkpoint(ckpt, "bucket", "checkpoints/exp1", client=client)
+
+    out = tmp_path / "downloaded"
+    downloaded = download_checkpoint(uploaded.uri, out, client=client)
+
+    assert (out / "config.json").read_text() == '{"base": "x"}'
+    assert (out / "adapter" / "weights.bin").read_bytes() == (
+        b"\x00\x01\x02fake-weights"
+    )
+    assert downloaded.manifest_sha256 == uploaded.manifest_sha256
+
+
+def test_download_checkpoint_rejects_a_uri_with_nothing_under_it(tmp_path):
+    with pytest.raises(ValueError):
+        download_checkpoint(
+            "s3://bucket/nothing-here/", tmp_path / "out", client=FakeS3Client()
+        )

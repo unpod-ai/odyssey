@@ -233,10 +233,18 @@ top-level `odyssey model register` CLI group, its own entry-point group
 name distinct from `train` even though both are currently backed by
 `odyssey_training`).
 
+Also closed: 6.2 (model cards — `models_registry.write_model_card()`, mirrors
+`datasets.write_card`'s shape) and 6.4 (promote/export — `promote_model()`
+points a named alias at a registered version; `export_model()` downloads a
+version's checkpoint bytes back via `checkpoints.download_checkpoint()`, the
+inverse of 5.9's upload, verified against the registry's own recorded
+sha256 — deliberately does not convert to a serving format like GGUF/ONNX,
+same documented scope-cut treatment as 0.11/3.5 before those had a named
+consumer). **Step 6 is now fully closed.**
+
 **Still open:** LlamaIndex hooks (a genuinely different, non-LangChain-compatible
 instrumentation API — **deliberately deferred, bundled with item 9.4**, not
-started here). Step 6's 6.2 (model cards) and 6.4 (promote/export commands)
-are also still open.
+started here).
 
 ---
 

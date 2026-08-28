@@ -21,7 +21,12 @@ from typing import Any, Dict, List, Optional
 
 from odyssey.hashing import content_hash
 
-__all__ = ["CheckpointUploadResult", "upload_checkpoint"]
+__all__ = [
+    "CheckpointUploadResult",
+    "upload_checkpoint",
+    "parse_s3_uri",
+    "download_checkpoint",
+]
 
 
 def _sha256_file(path: Path) -> str:
@@ -90,4 +95,72 @@ def upload_checkpoint(
 
     manifest_sha256 = content_hash(sorted((f["key"], f["sha256"]) for f in files))
     uri = f"s3://{bucket}/{stripped_prefix}/" if stripped_prefix else f"s3://{bucket}/"
+    return CheckpointUploadResult(uri=uri, files=files, manifest_sha256=manifest_sha256)
+
+
+def parse_s3_uri(uri: str) -> tuple[str, str]:
+    """Split ``upload_checkpoint``'s own ``s3://bucket/prefix/`` output back
+    into ``(bucket, prefix)`` — the one place that URI shape gets parsed,
+    so `models_registry.export_model` (item 6.4) doesn't hand-roll it."""
+    if not uri.startswith("s3://"):
+        raise ValueError(f"not an s3:// uri: {uri!r}")
+    rest = uri[len("s3://") :]
+    bucket, _, prefix = rest.partition("/")
+    if not bucket:
+        raise ValueError(f"not an s3:// uri: {uri!r}")
+    return bucket, prefix.strip("/")
+
+
+def download_checkpoint(
+    uri: str,
+    out_dir: Path | str,
+    *,
+    endpoint_url: Optional[str] = None,
+    client: Optional[Any] = None,
+) -> CheckpointUploadResult:
+    """The inverse of `upload_checkpoint`: download every object under
+    ``uri`` (an ``s3://bucket/prefix/`` string, as `upload_checkpoint`
+    itself returns) into ``out_dir``, preserving the same relative-path
+    layout it was uploaded from.
+
+    Returns the same `CheckpointUploadResult` shape as `upload_checkpoint`
+    — including a freshly recomputed ``manifest_sha256`` from the bytes
+    actually received, not copied from any caller claim — so a caller (e.g.
+    `models_registry.export_model`, item 6.4) can verify it against a
+    previously recorded hash rather than trusting the download succeeded.
+    """
+    if client is None:
+        # pyrefly: ignore[missing-import]  — optional extra, odyssey-training[s3].
+        import boto3  # noqa: PLC0415 - opt-in only when no client is injected
+
+        client = boto3.client("s3", endpoint_url=endpoint_url)
+
+    bucket, prefix = parse_s3_uri(uri)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    keys: List[str] = []
+    continuation: Optional[str] = None
+    while True:
+        kwargs: Dict[str, Any] = {"Bucket": bucket, "Prefix": prefix}
+        if continuation:
+            kwargs["ContinuationToken"] = continuation
+        page = client.list_objects_v2(**kwargs)
+        keys.extend(obj["Key"] for obj in page.get("Contents", []) or [])
+        if not page.get("IsTruncated"):
+            break
+        continuation = page.get("NextContinuationToken")
+    if not keys:
+        raise ValueError(f"no objects found under {uri}")
+
+    files: List[Dict[str, Any]] = []
+    for key in sorted(keys):
+        rel = key[len(prefix) :].lstrip("/") if prefix else key
+        dest = out / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+        dest.write_bytes(body)
+        files.append({"key": key, "sha256": _sha256_file(dest), "bytes": len(body)})
+
+    manifest_sha256 = content_hash(sorted((f["key"], f["sha256"]) for f in files))
     return CheckpointUploadResult(uri=uri, files=files, manifest_sha256=manifest_sha256)

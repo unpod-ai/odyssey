@@ -126,6 +126,18 @@ project has not yet made a versioned release, so entries accumulate under
   duplicating, mirroring `data_preparation`'s `datasets.update_registry`.
   `sha256`/`uri` are meant to be `checkpoints.upload_checkpoint`'s own
   output (item 5.9). New top-level `odyssey model register` CLI group.
+- `models_registry.write_model_card()` (item 6.2) — `models/cards/<name>
+  -v<version>.md`, mirroring `datasets.write_card`'s provenance + policy
+  shape; `promote_model()`/`resolve_model()`/`export_model()` (item 6.4)
+  — a named alias (default `"production"`) points at a registered
+  version, kept separate from registering it in the first place;
+  `export_model()` downloads that version's checkpoint bytes via a new
+  `checkpoints.download_checkpoint()` (the inverse of `upload_checkpoint`)
+  and verifies the result against the registry's own recorded `sha256`.
+  Deliberately does not convert to a serving format (GGUF/ONNX/
+  safetensors) — real, format-specific tooling with no named consumer
+  yet, the same scope cut 0.11/3.5 got before either had one. New
+  `odyssey model card`/`promote`/`export` commands. Closes Step 6.
 
 ### Removed
 

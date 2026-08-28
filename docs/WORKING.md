@@ -453,15 +453,16 @@ turns them into a training file.
 | # | Item | Status | Note |
 |---|---|---|---|
 | 6.1 | **`models/registry.yaml`** | ✅ | `odyssey_training.models_registry.register_model(registry_path, name, *, sha256, uri, base_model, corpus_version, version=None)` — `name -> version -> sha256 -> URI -> base model -> corpus version`, per `docs/STRUCTURE.md`'s own schema. `version` defaults to `next_version(...)` (highest existing + 1, mirroring `odyssey_dataprep.datasets.next_version`'s rule for corpus versions); passing one explicitly is idempotent on `(name, version)` — replaces in place rather than duplicating, the same discipline `datasets.update_registry` already applies. `sha256`/`uri` are meant to be `checkpoints.upload_checkpoint`'s own `manifest_sha256`/`uri` (item 5.9) — this module does not re-verify them, the same caller-trust boundary `datasets.write_card`'s license/PII fields already accept. New top-level CLI group: `odyssey model register` |
-| 6.2 | `models/cards/<model>-v1.md` | ❌ | |
+| 6.2 | **`models/cards/<model>-v1.md`** | ✅ | `models_registry.write_model_card(entry, name, cards_root, *, license, intended_use, limitations, eval_summary=None)` — mirrors `datasets.write_card`'s own shape: provenance pulled from the registry entry itself, license/intended-use/limitations as the caller's own policy claims (no code can infer them). `eval_summary` defaults to "not yet evaluated" since `evaluation/` (Step 7) doesn't exist yet — the same honesty `write_card`'s `splits` default already used before item 3.7 existed. `odyssey model card` |
 | 6.3 | Weights stay out of git | ✅ | `.gitignore` + `.gitkeep`, ADR 0002 |
-| 6.4 | Promote / export commands | ❌ | |
+| 6.4 | **Promote / export commands** | ✅ | `models_registry.promote_model(registry_path, name, version, *, alias="production")` points a named alias at an already-registered version — kept as a separate, deliberate act from `register_model` (minting a version and deciding it's the one to serve are different decisions). `resolve_model(registry_path, name, *, version=None, alias=None)` looks either up (exactly one required, `KeyError` on an unknown name/version/alias). `export_model(registry_path, name, out_dir, *, version=None, alias=None, ...)` resolves the entry, then `checkpoints.download_checkpoint()`s it (the inverse of item 5.9's upload) and verifies the freshly downloaded `manifest_sha256` against the registry's own recorded `sha256`, raising on mismatch. Downloads the checkpoint's original files as uploaded — **does not** convert to a serving format (GGUF/ONNX/safetensors, `models/exported/`'s own stated purpose); that's real, format-specific ML tooling with no consumer named yet, an explicit scope cut in the same spirit as 0.11's OTel bridge and 3.5's LLM augmentation extra before those had a named consumer. `odyssey model promote` / `odyssey model export` |
 
 `model_id` is tracked **per event** and the Anthropic wrapper now populates it
 from the provider response, so `fold()` sets a journey-level `model_id` only when
-the journey never switched models. Provenance is correct at the source, and the
-registry that consumes it now exists (6.1) — promotion is still manual, and
-export/promote commands (6.4) and the model card (6.2) are not built.
+the journey never switched models. Provenance is correct at the source, and
+**Step 6 is now fully closed**: the registry (6.1) that consumes it exists,
+along with model cards (6.2) and promote/export (6.4). Weight-format
+conversion for serving remains a documented, deliberate scope cut.
 
 ---
 
