@@ -205,11 +205,12 @@ roster of `{slug, name, api_key}` in `services/collector`, structural storage
 isolation per project, `GET /projects`), 0.11/0′.3 (OTel bridge —
 `integrations/otel.py`'s `OdysseySpanProcessor()`, one journey per trace,
 `gen_ai.*` content only — a documented scope cut against other
-instrumentation vocabularies, not silent data loss), 1.7's cross-journey
-overhead (`HttpSink` reuses its connection across `send()` calls via
-HTTP/1.1 keep-alive — merged payloads were still ruled out, same
-partial-batch-failure reasoning as before, but the actual per-journey
-overhead this item was chasing is now addressed without that redesign), 3.5
+instrumentation vocabularies, not silent data loss), 1.7 (connection reuse
+across `send()`/`send_batch()` calls via HTTP/1.1 keep-alive, **plus**
+cross-journey *payload* batching itself — `HttpSink.send_batch()` /
+`POST /batch/events`, opt-in via `batch_size=N`, every journey's outcome
+independent so the earlier "needs a redesign of `drain()`'s per-journey
+semantics" concern is resolved rather than avoided), 3.5
 (`paraphrase_journey`/`generate_synthetic_negative`, optional
 `odyssey-dataprep[llm]` extra, both opt-in and off by default — the
 synthetic-negative chain's `superseded`-then-`trainable` step order was

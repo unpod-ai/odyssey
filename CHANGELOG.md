@@ -18,13 +18,11 @@ project has not yet made a versioned release, so entries accumulate under
   migration tool ships with this change — a schema-1.x `*.jsonl` shard on
   disk simply stops parsing under this reader.
 - `HttpSink` (item 1.7) now reuses one `http.client.HTTPConnection` across
-  `send()` calls instead of opening a fresh connection per journey —
-  `services/collector`'s `_Handler.protocol_version = "HTTP/1.1"` opts in
-  server-side. Draining N journeys in one process now costs one TCP/TLS
-  handshake, not N; a dropped keep-alive connection is retried once
-  transparently. Cross-journey *payload* batching (one POST for many
-  journeys) remains out of scope — this addresses the same overhead without
-  the partial-batch-failure redesign that would require.
+  `send()`/`send_batch()` calls instead of opening a fresh connection per
+  journey — `services/collector`'s `_Handler.protocol_version = "HTTP/1.1"`
+  opts in server-side. Draining N journeys in one process now costs one
+  TCP/TLS handshake, not N; a dropped keep-alive connection is retried once
+  transparently.
 - `packages/odyssey-core`'s `pyrefly` config now permanently checks `tests/`
   as well as `src`/`scripts` (item 9.10). Turning this on surfaced 200
   errors, not the ~157 previously estimated: 4 were real type-safety bugs in
@@ -95,6 +93,19 @@ project has not yet made a versioned release, so entries accumulate under
   `generate_synthetic_negative` emits a `superseded`-then-`trainable` step
   chain — the shape `odyssey.dpo.dpo_pairs` looks for. Wired into
   `odyssey data augment --paraphrase N --synthetic-negatives`.
+- Cross-journey payload batching (item 1.7) — `HttpSink.send_batch()` posts
+  several journeys' events in one `POST /batch/events` request instead of
+  one POST per journey; `services/collector` validates and stores each
+  journey independently through the same path a single-journey POST uses
+  and reports a per-journey `{"ok": true|false, ...}` result. `drain()`
+  gains `batch_size` (`Spool.push(..., batch_size=N)`,
+  `odyssey.init(drain_batch_size=N)` / `ODYSSEY_DRAIN_BATCH_SIZE`), opt-in
+  and defaulting to `1` (today's per-journey behavior, unchanged for a sink
+  without `send_batch`). Every journey's watermark still advances or
+  retries off *that journey's own* reported outcome, never off other
+  journeys in the same batch — resolves the earlier "needs a redesign of
+  `drain()`'s per-journey semantics for partial-batch failure" concern
+  rather than working around it.
 
 ### Removed
 

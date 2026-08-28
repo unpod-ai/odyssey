@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import gzip
 import http.server
+import json
 import threading
 import time
 
@@ -70,6 +71,13 @@ class _CapturingHandler(http.server.BaseHTTPRequestHandler):
         retry_after = getattr(self.server, "retry_after", None)
         if retry_after is not None:
             self.send_header("Retry-After", retry_after)
+        response_body = getattr(self.server, "batch_response", None)
+        if response_body is not None:
+            data = response_body
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -98,6 +106,7 @@ def server():
     srv.requests = []  # type: ignore[attr-defined]
     srv.status_to_return = 200  # type: ignore[attr-defined]
     srv.retry_after = None  # type: ignore[attr-defined]
+    srv.batch_response = None  # type: ignore[attr-defined]
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
     try:
@@ -310,8 +319,7 @@ def test_drain_leaves_the_watermark_untouched_on_a_failed_post(tmp_path, server)
 
 
 # --------------------------------------------------------------------------
-# Connection reuse across journeys (item 1.7's "cross-journey overhead" fix
-# — see HttpSink's docstring for why this replaces payload batching)
+# Connection reuse across journeys (item 1.7's overhead fix)
 # --------------------------------------------------------------------------
 
 
@@ -357,3 +365,195 @@ def test_a_dropped_keep_alive_connection_is_retried_transparently(server):
 
     sink.send("j_b", evs())  # must transparently reconnect, not raise
     assert len(server.requests) == 2
+
+
+# --------------------------------------------------------------------------
+# send_batch() — cross-journey payload batching (item 1.7)
+# --------------------------------------------------------------------------
+
+
+def test_send_batch_posts_one_request_to_the_batch_path(server):
+    server.batch_response = json.dumps(
+        {"results": {"j_a": {"ok": True}, "j_b": {"ok": True}}}
+    ).encode()
+
+    sink = HttpSink(endpoint(server))
+    result = sink.send_batch([("j_a", evs(), HEADER), ("j_b", evs(), HEADER)])
+
+    assert len(server.requests) == 1
+    assert server.requests[0]["path"] == "/batch/events"
+    assert result == {"j_a": None, "j_b": None}
+
+
+def test_send_batch_body_carries_every_journeys_own_header_and_events(server):
+    server.batch_response = json.dumps(
+        {"results": {"j_a": {"ok": True}, "j_b": {"ok": True}}}
+    ).encode()
+    sink = HttpSink(endpoint(server), compress=False)
+    sink.send_batch([("j_a", evs(), HEADER), ("j_b", evs()[:1], None)])
+
+    body = json.loads(server.requests[0]["body"])
+    journeys = body["journeys"]
+    assert set(journeys) == {"j_a", "j_b"}
+
+    # Each journey's blob is byte-identical to what a lone send() would post.
+    lines_a = journeys["j_a"].strip("\n").split("\n")
+    assert json.loads(lines_a[0])["journey_id"] == HEADER.journey_id
+    assert len(lines_a) == 1 + len(evs())
+
+    lines_b = journeys["j_b"].strip("\n").split("\n")
+    assert "journey_id" not in json.loads(lines_b[0])  # no header -> bare v1.0 line
+    assert len(lines_b) == 1 + 1
+
+
+def test_send_batch_reports_a_per_journey_rejection(server):
+    server.batch_response = json.dumps(
+        {
+            "results": {
+                "j_a": {"ok": True},
+                "j_b": {"ok": False, "error": "malformed batch: 1 rejected line(s)"},
+            }
+        }
+    ).encode()
+
+    result = HttpSink(endpoint(server)).send_batch(
+        [("j_a", evs(), HEADER), ("j_b", evs(), HEADER)]
+    )
+    assert result["j_a"] is None
+    assert result["j_b"] == "malformed batch: 1 rejected line(s)"
+
+
+def test_send_batch_raises_when_the_whole_request_fails():
+    with pytest.raises(HttpSinkError, match="batch of 1"):
+        HttpSink("http://127.0.0.1:1").send_batch([("j_a", evs(), HEADER)])
+
+
+def test_send_batch_raises_on_a_non_200_status(server):
+    server.status_to_return = 500
+    with pytest.raises(HttpSinkError, match="HTTP 500"):
+        HttpSink(endpoint(server)).send_batch([("j_a", evs(), HEADER)])
+
+
+def test_send_batch_raises_on_a_malformed_response_body(server):
+    server.batch_response = b"not json at all"
+    with pytest.raises(HttpSinkError, match="malformed response"):
+        HttpSink(endpoint(server)).send_batch([("j_a", evs(), HEADER)])
+
+
+def test_send_batch_treats_a_missing_journey_result_as_a_failure(server):
+    server.batch_response = json.dumps({"results": {"j_a": {"ok": True}}}).encode()
+    result = HttpSink(endpoint(server)).send_batch(
+        [("j_a", evs(), HEADER), ("j_b", evs(), HEADER)]
+    )
+    assert result["j_a"] is None
+    assert "no result" in (result["j_b"] or "")
+
+
+def test_send_batch_honours_the_429_backoff_window_like_send(server):
+    server.status_to_return = 429
+    server.retry_after = "60"
+    sink = HttpSink(endpoint(server))
+    with pytest.raises(HttpSinkError):
+        sink.send_batch([("j_a", evs(), HEADER)])
+
+    server.status_to_return = 200
+    server.batch_response = json.dumps({"results": {"j_a": {"ok": True}}}).encode()
+    with pytest.raises(HttpSinkError, match="backing off"):
+        sink.send_batch([("j_a", evs(), HEADER)])
+
+
+# --------------------------------------------------------------------------
+# drain()'s batch_size path, against HttpSink.send_batch
+# --------------------------------------------------------------------------
+
+
+def test_drain_with_batch_size_sends_one_request_for_multiple_journeys(
+    server, tmp_path
+):
+    server.batch_response = json.dumps(
+        {"results": {"j_a": {"ok": True}, "j_b": {"ok": True}}}
+    ).encode()
+    spool = Spool(SpoolConfig(root=tmp_path / "spool"))
+    spool.record_all(
+        [
+            JourneyEvent(
+                journey_id="j_a",
+                seq=0,
+                kind="terminal",
+                event_id="ea",
+                terminal=Terminal(termination_reason="ENV_DONE"),
+            )
+        ]
+    )
+    spool.record_all(
+        [
+            JourneyEvent(
+                journey_id="j_b",
+                seq=0,
+                kind="terminal",
+                event_id="eb",
+                terminal=Terminal(termination_reason="ENV_DONE"),
+            )
+        ]
+    )
+
+    result = spool.push(HttpSink(endpoint(server)), batch_size=10)
+    assert result.ok
+    assert len(server.requests) == 1
+    assert spool.watermark("j_a") == 0
+    assert spool.watermark("j_b") == 0
+
+
+def test_drain_with_batch_size_advances_only_the_journeys_the_server_accepted(
+    server, tmp_path
+):
+    server.batch_response = json.dumps(
+        {
+            "results": {
+                "j_a": {"ok": True},
+                "j_b": {"ok": False, "error": "boom"},
+            }
+        }
+    ).encode()
+    spool = Spool(SpoolConfig(root=tmp_path / "spool"))
+    spool.record_all(
+        [
+            JourneyEvent(
+                journey_id="j_a",
+                seq=0,
+                kind="terminal",
+                event_id="ea",
+                terminal=Terminal(termination_reason="ENV_DONE"),
+            )
+        ]
+    )
+    spool.record_all(
+        [
+            JourneyEvent(
+                journey_id="j_b",
+                seq=0,
+                kind="terminal",
+                event_id="eb",
+                terminal=Terminal(termination_reason="ENV_DONE"),
+            )
+        ]
+    )
+
+    result = spool.push(HttpSink(endpoint(server)), batch_size=10)
+    assert not result.ok
+    assert spool.watermark("j_a") == 0
+    assert spool.watermark("j_b") is None
+
+
+def test_drain_batch_size_1_never_calls_send_batch(server, tmp_path):
+    """Default behaviour (batch_size=1) is byte-for-byte the pre-1.7-batching
+    path -- send_batch must never be invoked."""
+
+    class TrackingSink(HttpSink):
+        def send_batch(self, items):  # type: ignore[override]
+            raise AssertionError("send_batch must not be called at batch_size=1")
+
+    spool = Spool(SpoolConfig(root=tmp_path / "spool"))
+    spool.record_all(evs(), header=HEADER)
+    result = spool.push(TrackingSink(endpoint(server)))
+    assert result.ok

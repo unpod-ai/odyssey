@@ -15,7 +15,7 @@ import urllib.request
 
 import pytest
 from odyssey import HttpSink
-from odyssey.jsonl import read_events
+from odyssey.jsonl import encode_event, header_line, read_events
 from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
 from odyssey.sinks import HttpSinkError
 
@@ -505,6 +505,106 @@ def test_get_projects_requires_a_registered_key(scoped):
 def test_get_projects_is_404_outside_project_scoped_mode(running):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         _get_json(f"{endpoint(running)}/projects")
+    assert exc_info.value.code == 404
+
+
+# --------------------------------------------------------------------------
+# Cross-journey batching (item 1.7) — POST /batch/events
+# --------------------------------------------------------------------------
+
+
+def test_a_batch_of_two_journeys_lands_in_two_files(running):
+    sent_a, sent_b = evs(), evs()
+    result = HttpSink(endpoint(running)).send_batch(
+        [("j_a", sent_a, HEADER), ("j_b", sent_b, None)]
+    )
+    assert result == {"j_a": None, "j_b": None}
+    assert read_events(stored_path(running, "j_a")).events == sent_a
+    assert read_events(stored_path(running, "j_b")).events == sent_b
+
+
+def test_a_batch_of_several_journeys_all_land_correctly(running):
+    items = [(f"j_{i}", evs(), None) for i in range(5)]
+    HttpSink(endpoint(running)).send_batch(items)
+    for jid, sent, _header in items:
+        assert read_events(stored_path(running, jid)).events == sent
+
+
+def test_one_malformed_journey_in_a_batch_does_not_block_the_others(running):
+    """Hand-built envelope, not HttpSink -- the client can only ever encode
+    valid events, so a genuinely malformed per-journey blob has to be
+    crafted directly, the same way test_a_malformed_body_is_rejected_with_400
+    below builds a raw request rather than going through the client."""
+    good = evs()[0]
+    good_blob = header_line() + "\n" + encode_event(good) + "\n"
+    envelope = json.dumps(
+        {"journeys": {"j_good": good_blob, "j_bad": "not an odyssey header at all\n"}}
+    ).encode()
+    request = urllib.request.Request(
+        f"{endpoint(running)}/batch/events", data=envelope, method="POST"
+    )
+    with urllib.request.urlopen(request) as resp:
+        body = json.loads(resp.read())
+
+    assert body["results"]["j_good"]["ok"] is True
+    assert body["results"]["j_bad"]["ok"] is False
+    assert read_events(stored_path(running, "j_good")).events == [good]
+    assert not stored_path(running, "j_bad").exists()
+
+
+def test_a_batch_journey_id_cannot_traverse_out_of_data_dir(running):
+    result = HttpSink(endpoint(running)).send_batch(
+        [("../../../etc/passwd", evs(), None)]
+    )
+    assert result["../../../etc/passwd"] is None
+    escaped = (running.config.data_dir / ".." / ".." / ".." / "etc").resolve()
+    assert not escaped.exists()
+    written = list((running.config.data_dir / FIXED_DATE).glob("*.jsonl"))
+    assert any("etc_passwd" in p.name for p in written)
+
+
+def test_a_retried_batch_does_not_double_write_any_journey(running):
+    sink = HttpSink(endpoint(running))
+    sent_a, sent_b = evs(), evs()
+    items = [("j_a", sent_a, HEADER), ("j_b", sent_b, HEADER)]
+    sink.send_batch(items)
+    sink.send_batch(items)  # the "retry"
+
+    for jid, sent in (("j_a", sent_a), ("j_b", sent_b)):
+        assert read_events(stored_path(running, jid)).events == sent
+        raw = stored_path(running, jid).read_text()
+        assert raw.count("odyssey_schema_version") == 1
+
+
+def test_a_batch_requires_authorization_in_guarded_mode(guarded):
+    with pytest.raises(HttpSinkError):
+        HttpSink(endpoint(guarded)).send_batch([("j_a", evs(), None)])
+    assert not stored_path(guarded, "j_a").exists()
+
+
+def test_a_batch_is_project_scoped_like_single_sends(scoped):
+    sent_a, sent_b = evs(), evs()
+    HttpSink(endpoint(scoped), api_key="sk-acme").send_batch(
+        [("j_a", sent_a, None), ("j_b", sent_b, None)]
+    )
+    assert read_events(project_path(scoped, "proj_acme", "j_a")).events == sent_a
+    assert read_events(project_path(scoped, "proj_acme", "j_b")).events == sent_b
+
+
+def test_a_malformed_batch_envelope_is_rejected_with_400(running):
+    request = urllib.request.Request(
+        f"{endpoint(running)}/batch/events",
+        data=b"not a json object at all",
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(request)
+    assert exc_info.value.code == 400
+
+
+def test_batch_events_path_rejects_get(running):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(f"{endpoint(running)}/batch/events")
     assert exc_info.value.code == 404
 
 

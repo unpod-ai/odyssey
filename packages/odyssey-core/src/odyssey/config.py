@@ -24,12 +24,17 @@ ENV_DRAIN_INTERVAL = "ODYSSEY_DRAIN_INTERVAL"
 ENV_DEBUG = "ODYSSEY_DEBUG"
 ENV_MAX_OPEN_SHARDS = "ODYSSEY_MAX_OPEN_SHARDS"
 ENV_SAMPLE_RATE = "ODYSSEY_SAMPLE_RATE"
+ENV_DRAIN_BATCH_SIZE = "ODYSSEY_DRAIN_BATCH_SIZE"
 
 DEFAULT_SPOOL_DIR = ".odyssey"
 DEFAULT_OUT_DIR = "odyssey-out"
 DEFAULT_DRAIN_INTERVAL = 30.0
 DEFAULT_MAX_OPEN_SHARDS = 256
 DEFAULT_SAMPLE_RATE = 1.0
+# 1 = today's behaviour, one sink.send() per journey. Item 1.7's cross-journey
+# batching (sink.send_batch()) is opt-in, not a default -- a plain Sink with
+# no send_batch is unaffected by this value regardless.
+DEFAULT_DRAIN_BATCH_SIZE = 1
 
 _FALSEY = {"", "0", "false", "no", "off", "none"}
 
@@ -65,6 +70,7 @@ class Config:
     spool_dir: Path
     out_dir: Path
     drain_interval: Optional[float]
+    drain_batch_size: int
     enabled: bool
     flush_on_exit: bool
     handle_sigterm: bool
@@ -87,6 +93,7 @@ def resolve(
     out_dir: Optional[Path | str] = None,
     drain_interval: Optional[float] = DEFAULT_DRAIN_INTERVAL,
     drain_interval_set: bool = True,
+    drain_batch_size: Optional[int] = None,
     enabled: Optional[bool] = None,
     flush_on_exit: bool = True,
     handle_sigterm: bool = False,
@@ -119,6 +126,10 @@ def resolve(
             out_dir if out_dir is not None else os.environ.get(ENV_OUT, DEFAULT_OUT_DIR)
         ),
         drain_interval=interval,
+        drain_batch_size=_count(
+            str(drain_batch_size) if drain_batch_size is not None else None,
+            _count(os.environ.get(ENV_DRAIN_BATCH_SIZE), DEFAULT_DRAIN_BATCH_SIZE),
+        ),
         enabled=(
             enabled if enabled is not None else _flag(os.environ.get(ENV_ENABLED), True)
         ),

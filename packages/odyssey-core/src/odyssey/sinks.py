@@ -13,6 +13,7 @@ from __future__ import annotations
 import email.utils
 import gzip
 import http.client
+import json
 import os
 import threading
 import time
@@ -23,6 +24,7 @@ from urllib.parse import urlsplit
 
 from odyssey.jsonl import encode_event, header_line, write_events
 from odyssey.primitives import JourneyEvent, JourneyHeader
+from odyssey.spool import BatchItem
 
 
 class FileSink:
@@ -74,15 +76,18 @@ class HttpSinkError(RuntimeError):
 class HttpSink:
     """Ships drained events to a network endpoint over plain stdlib HTTP.
 
-    ``odyssey-core`` declares ``dependencies = []``; this uses ``urllib`` rather
-    than ``requests``/``httpx`` so installing the SDK never pulls in an HTTP
-    client nobody asked for.
+    ``odyssey-core`` declares ``dependencies = []``; this uses ``http.client``
+    rather than ``requests``/``httpx`` so installing the SDK never pulls in an
+    HTTP client nobody asked for.
 
-    One POST per journey batch, to ``{endpoint}/journeys/{journey_id}/events``.
-    The body is the same JSONL bytes a shard on disk would hold — the header
-    line, then one event per line, produced by the same :func:`header_line` /
-    :func:`encode_event` :class:`FileSink` uses — so a collector need not
-    decode anything odyssey does not already write to disk.
+    ``send()`` posts one journey's undrained batch to
+    ``{endpoint}/journeys/{journey_id}/events``; ``send_batch()`` posts
+    several at once to ``{endpoint}/batch/events`` (item 1.7, below). Either
+    way the body is the same JSONL bytes a shard on disk would hold — the
+    header line, then one event per line, produced by the same
+    :func:`header_line` / :func:`encode_event` :class:`FileSink` uses — so a
+    collector need not decode anything odyssey does not already write to
+    disk.
 
     Raises :class:`HttpSinkError` on any non-2xx response or transport
     failure. ``drain()`` treats that as retryable: the shard and watermark are
@@ -101,23 +106,30 @@ class HttpSink:
     immediately rather than making a network call the server already asked
     it not to make. This is not a queueing system.
 
-    **Cross-journey overhead** (item 1.7): still one POST per journey, not
-    one POST for many — merging payloads was ruled out because it would
-    need a real redesign of ``drain()``'s per-journey watermark/retry
-    semantics to stay correct across a partial failure (see
-    ``docs/WORKING.md`` item 1.7). Instead, the connection itself is reused
-    across ``send()`` calls (``http.client.HTTPConnection`` with HTTP/1.1
-    keep-alive, ``services/collector`` opts in on its side) — draining N
-    journeys in one process pays for one TCP/TLS handshake, not N, without
-    touching the watermark-per-request correctness guarantee at all: every
-    journey's POST and response stay independent, so a failure on journey 3
-    still leaves journeys 1/2's already-advanced watermarks untouched and
-    journey 3 retried on the next drain, exactly as before. Not safe to call
-    ``send()`` concurrently from two threads at once (the connection is
-    shared, mutable state) — guarded by an internal lock, so a manual
-    ``push()`` racing the background ``IntervalDrainer`` serializes rather
-    than corrupting the connection, matching `drain()`'s own already-serial
-    per-journey loop.
+    **Connection reuse** (item 1.7): the connection itself is reused across
+    ``send()``/``send_batch()`` calls (``http.client.HTTPConnection`` with
+    HTTP/1.1 keep-alive, ``services/collector`` opts in on its side) —
+    draining N journeys in one process pays for one TCP/TLS handshake, not
+    N. Not safe to call ``send()``/``send_batch()`` concurrently from two
+    threads at once (the connection is shared, mutable state) — guarded by
+    an internal lock, so a manual ``push()`` racing the background
+    ``IntervalDrainer`` serializes rather than corrupting the connection.
+
+    **Cross-journey payload batching** (item 1.7, :meth:`send_batch`): one
+    POST for several journeys at once, to ``{endpoint}/batch/events``, for
+    when connection reuse alone isn't enough (many small journeys, a
+    higher-latency link). Each journey's body inside the batch is the exact
+    same blob a lone ``send()`` would have posted, so ``services/collector``
+    validates and writes each one through the identical per-journey path —
+    the batch envelope is purely a transport optimisation, not a new
+    write-side contract. Every journey's outcome is independent: `drain()`
+    advances or retries each journey's watermark off *that journey's own*
+    reported result, never off whether other journeys in the same batch
+    succeeded — a failure on journey 3 leaves journeys 1/2's watermarks
+    exactly as advanced as if all three had been sent as separate requests.
+    Opt-in via ``drain(..., batch_size=N)`` / ``Spool.push(..., batch_size=
+    N)`` — the default ``batch_size=1`` never calls ``send_batch`` at all,
+    so nothing changes unless a caller asks for it.
     """
 
     def __init__(
@@ -200,7 +212,7 @@ class HttpSink:
         )
 
         with self._lock:
-            status, retry_after, error = self._request(path, payload, headers)
+            status, retry_after, _body, error = self._request(path, payload, headers)
 
         if error is not None:
             raise HttpSinkError(
@@ -211,9 +223,83 @@ class HttpSink:
         if status is None or status >= 300:
             raise HttpSinkError(f"{journey_id}: HTTP {status} from {self.endpoint}")
 
+    def send_batch(self, items: List[BatchItem]) -> Dict[str, Optional[str]]:
+        """Cross-journey batching (item 1.7): one POST for every journey in
+        ``items`` instead of one per journey. Each journey's body is the
+        exact same ``header_line() + encode_event()`` blob a lone
+        :meth:`send` would post — the batch envelope just carries several of
+        them keyed by ``journey_id`` — so ``services/collector`` writes each
+        journey through the identical validating path it already uses for a
+        single-journey POST, just looped once per journey inside one
+        request instead of once per request.
+
+        Returns a per-journey result: ``None`` for an accepted journey, an
+        error string for a rejected one. Raises :class:`HttpSinkError` only
+        when the whole batch could not be attempted (backoff window, a
+        malformed response, a transport failure) — `drain()` treats that as
+        every journey in ``items`` having failed, same as a single
+        ``send()`` raising.
+        """
+        if time.monotonic() < self._retry_after_until:
+            wait = self._retry_after_until - time.monotonic()
+            raise HttpSinkError(
+                f"batch of {len(items)}: backing off {wait:.0f}s more per the "
+                f"server's last Retry-After"
+            )
+
+        blobs = {}
+        for journey_id, events, header in items:
+            body = header_line(header=header) + "\n"
+            body += "".join(encode_event(e) + "\n" for e in events)
+            blobs[journey_id] = body
+        payload = json.dumps({"journeys": blobs}).encode("utf-8")
+        headers = {"Content-Type": "application/json; charset=utf-8"}
+        if self.compress:
+            payload = gzip.compress(payload)
+            headers["Content-Encoding"] = "gzip"
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        path = f"{self._base_path}/batch/events"
+        with self._lock:
+            status, retry_after, body, error = self._request(path, payload, headers)
+
+        if error is not None:
+            raise HttpSinkError(
+                f"batch of {len(items)}: could not reach {self.endpoint}: {error}"
+            )
+        if status == 429:
+            self._retry_after_until = time.monotonic() + _parse_retry_after(retry_after)
+        if status != 200:
+            raise HttpSinkError(
+                f"batch of {len(items)}: HTTP {status} from {self.endpoint}"
+            )
+        try:
+            parsed = json.loads(body or b"{}")
+            results = parsed["results"]
+            if not isinstance(results, dict):
+                raise TypeError("'results' must be an object")
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise HttpSinkError(
+                f"batch of {len(items)}: malformed response from {self.endpoint}: {exc}"
+            ) from exc
+
+        out: Dict[str, Optional[str]] = {}
+        for journey_id, _events, _header in items:
+            entry = results.get(journey_id)
+            if entry is None:
+                out[journey_id] = "server reported no result for this journey"
+            elif isinstance(entry, dict) and entry.get("ok"):
+                out[journey_id] = None
+            elif isinstance(entry, dict):
+                out[journey_id] = str(entry.get("error") or "rejected")
+            else:
+                out[journey_id] = "malformed per-journey result"
+        return out
+
     def _request(
         self, path: str, payload: bytes, headers: Dict[str, str]
-    ) -> Tuple[Optional[int], Optional[str], Optional[str]]:
+    ) -> Tuple[Optional[int], Optional[str], Optional[bytes], Optional[str]]:
         """One POST, reusing ``self._conn`` when a prior request left it open.
 
         A kept-alive connection the server (or an idle intermediary) closed
@@ -227,15 +313,15 @@ class HttpSink:
             try:
                 self._conn.request("POST", path, body=payload, headers=headers)
                 response = self._conn.getresponse()
-                response.read()  # must drain the body to reuse the connection
-                return response.status, response.getheader("Retry-After"), None
+                body = response.read()  # must drain the body to reuse the connection
+                return response.status, response.getheader("Retry-After"), body, None
             except (http.client.HTTPException, OSError) as exc:
                 if self._conn is not None:
                     self._conn.close()
                 self._conn = None
                 if attempt == 1:
-                    return None, None, str(exc)
-        return None, None, "unreachable"  # pragma: no cover - loop always returns
+                    return None, None, None, str(exc)
+        return None, None, None, "unreachable"  # pragma: no cover - loop always returns
 
 
 # A missing/malformed Retry-After still has to back off *something* -- a

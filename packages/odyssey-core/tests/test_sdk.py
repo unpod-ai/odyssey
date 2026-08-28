@@ -88,6 +88,37 @@ def test_a_broken_interval_in_the_environment_does_not_fail_startup(monkeypatch)
     assert resolve(drain_interval_set=False).drain_interval == DEFAULT_DRAIN_INTERVAL
 
 
+def test_drain_batch_size_defaults_to_one(tmp_path):
+    client = start(tmp_path)
+    assert client.config.drain_batch_size == 1
+
+
+def test_drain_batch_size_can_be_set_explicitly(tmp_path):
+    client = start(tmp_path, drain_batch_size=25)
+    assert client.config.drain_batch_size == 25
+
+
+def test_drain_batch_size_env_var_is_used_when_nothing_is_passed(monkeypatch):
+    monkeypatch.setenv("ODYSSEY_DRAIN_BATCH_SIZE", "10")
+    from odyssey.config import resolve
+
+    assert resolve().drain_batch_size == 10
+
+
+def test_a_malformed_drain_batch_size_env_var_falls_back_to_the_default(monkeypatch):
+    monkeypatch.setenv("ODYSSEY_DRAIN_BATCH_SIZE", "not-a-number")
+    from odyssey.config import DEFAULT_DRAIN_BATCH_SIZE, resolve
+
+    assert resolve().drain_batch_size == DEFAULT_DRAIN_BATCH_SIZE
+
+
+def test_explicit_drain_batch_size_beats_the_environment(monkeypatch):
+    monkeypatch.setenv("ODYSSEY_DRAIN_BATCH_SIZE", "10")
+    from odyssey.config import resolve
+
+    assert resolve(drain_batch_size=3).drain_batch_size == 3
+
+
 def test_unknown_instrumentation_target_is_counted_not_raised(tmp_path):
     client = start(tmp_path, instrument=["nosuchprovider"])
     assert client.stats.capture_errors == 1

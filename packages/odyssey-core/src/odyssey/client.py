@@ -103,7 +103,12 @@ class Client:
 
         self.drainer: Optional[IntervalDrainer] = None
         if config.drain_interval is not None:
-            self.drainer = IntervalDrainer(self.spool, self.sink, config.drain_interval)
+            self.drainer = IntervalDrainer(
+                self.spool,
+                self.sink,
+                config.drain_interval,
+                batch_size=config.drain_batch_size,
+            )
             self.drainer.start()
 
         # Recorders holding an open journey. Weak on purpose: the session keeps
@@ -252,6 +257,7 @@ class Client:
             "spool_dir": str(self.config.spool_dir),
             "out_dir": str(self.config.out_dir),
             "drain_interval": self.config.drain_interval,
+            "drain_batch_size": self.config.drain_batch_size,
             "drainer_running": self.drainer is not None,
             "debug": self.config.debug,
             "closed": self._closed,
@@ -291,6 +297,7 @@ def init(
     out_dir: Optional[Path | str] = None,
     sink: Optional[Sink] = None,
     drain_interval: Optional[float] = 30.0,
+    drain_batch_size: Optional[int] = None,
     instrument: Sequence[str] = (),
     enabled: Optional[bool] = None,
     flush_on_exit: bool = True,
@@ -308,6 +315,12 @@ def init(
     Every argument has an ``ODYSSEY_*`` environment equivalent; explicit
     arguments win. ``drain_interval=None`` disables the background drain, in
     which case nothing leaves the spool until :func:`flush` or the CLI runs.
+
+    ``drain_batch_size`` (``ODYSSEY_DRAIN_BATCH_SIZE``, default ``1``) groups
+    up to that many journeys into one ``sink.send_batch()`` call per
+    background drain instead of one ``sink.send()`` per journey (item 1.7)
+    — only takes effect for a sink that implements ``send_batch``
+    (``HttpSink`` does); a plain :class:`~odyssey.spool.Sink` ignores it.
 
     ``sample_rate`` (``ODYSSEY_SAMPLE_RATE``, default ``1.0``) is the
     fraction of *journeys* recorded, decided once per journey at open time
@@ -345,6 +358,7 @@ def init(
             spool_dir=spool_dir,
             out_dir=out_dir,
             drain_interval=drain_interval,
+            drain_batch_size=drain_batch_size,
             enabled=enabled,
             flush_on_exit=flush_on_exit,
             handle_sigterm=handle_sigterm,

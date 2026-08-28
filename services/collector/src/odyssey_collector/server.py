@@ -40,6 +40,27 @@ Wire contract (matches ``odyssey.sinks.HttpSink`` exactly)::
     401 missing/incorrect Authorization, when the server requires one
     500 storage failure
 
+**Cross-journey batching** (item 1.7, ``HttpSink.send_batch()``)::
+
+    POST /batch/events
+    Content-Type: application/json; charset=utf-8
+    Content-Encoding: gzip                   # optional, covers the whole envelope
+    Authorization: Bearer <api_key>          # one key covers every journey in the batch
+
+    {"journeys": {"<journey_id>": "<header line>\n<event line>...", ...}}
+
+    200 {"results": {"<journey_id>": {"ok": true, "events_received": N}
+                      | {"ok": false, "error": "..."}, ...}}
+    400 malformed envelope — not a JSON object of {journey_id: blob} strings
+    401 missing/incorrect Authorization
+
+Always ``200`` once the envelope itself parses: each journey inside is
+validated and stored independently through the same path a lone
+``/journeys/<id>/events`` POST uses, so one journey's malformed blob or
+storage failure reports as that journey's own ``{"ok": false, ...}`` entry
+rather than failing the whole request — the same "every journey's own
+outcome" guarantee draining one journey at a time already had.
+
 No rate-limiting/backpressure lives here — ``HttpSink`` honours a 429's
 ``Retry-After`` if this server (or something in front of it) ever sends one,
 but nothing here emits 429 itself; that is a deliberate scope cut (item 1.7),
@@ -355,9 +376,19 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib method name
+        if self.path.strip("/") == "batch/events":
+            self._do_batch_post()
+            return
+
         parts = self.path.strip("/").split("/")
         if len(parts) != 3 or parts[0] != "journeys" or parts[2] != "events":
-            self._respond(404, {"error": "expected POST /journeys/<journey_id>/events"})
+            self._respond(
+                404,
+                {
+                    "error": "expected POST /journeys/<journey_id>/events "
+                    "or POST /batch/events"
+                },
+            )
             return
         journey_id = unquote(parts[1])
         if not journey_id:
@@ -369,14 +400,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._respond(401, {"error": "missing or invalid Authorization"})
             return
 
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length)
-        if self.headers.get("Content-Encoding", "").strip().lower() == "gzip":
-            try:
-                body = gzip.decompress(body)
-            except OSError as exc:
-                self._respond(400, {"error": f"bad gzip body: {exc}"})
-                return
+        body, error = self._read_body()
+        if error is not None:
+            self._respond(400, {"error": error})
+            return
 
         try:
             count = self._store(journey_id, body, project_slug)
@@ -388,6 +415,67 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         self._respond(200, {"journey_id": journey_id, "events_received": count})
+
+    def _do_batch_post(self) -> None:
+        """``POST /batch/events`` (item 1.7) — several journeys in one
+        request. Every journey is attempted independently through the exact
+        same :meth:`_store` a lone ``/journeys/<id>/events`` POST uses, so
+        one journey's malformed batch or storage failure never blocks the
+        others in the same request — the envelope is a transport
+        optimisation, not a new all-or-nothing write.
+        """
+        authorized, project_slug = self._authenticate()
+        if not authorized:
+            self._respond(401, {"error": "missing or invalid Authorization"})
+            return
+
+        body, error = self._read_body()
+        if error is not None:
+            self._respond(400, {"error": error})
+            return
+
+        try:
+            envelope = json.loads(body)
+            journeys = envelope["journeys"]
+            if not isinstance(journeys, dict) or not all(
+                isinstance(k, str) and isinstance(v, str) for k, v in journeys.items()
+            ):
+                raise TypeError("'journeys' must be an object of {journey_id: blob}")
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            self._respond(400, {"error": f"malformed batch envelope: {exc}"})
+            return
+
+        results: dict[str, Any] = {}
+        for journey_id, blob in journeys.items():
+            if not journey_id:
+                results[journey_id] = {
+                    "ok": False,
+                    "error": "journey_id must not be empty",
+                }
+                continue
+            try:
+                count = self._store(journey_id, blob.encode("utf-8"), project_slug)
+            except (MalformedHeaderError, SchemaVersionError, BatchRejected) as exc:
+                results[journey_id] = {"ok": False, "error": str(exc)}
+                continue
+            except OSError as exc:
+                results[journey_id] = {"ok": False, "error": f"storage failed: {exc}"}
+                continue
+            results[journey_id] = {"ok": True, "events_received": count}
+
+        self._respond(200, {"results": results})
+
+    def _read_body(self) -> Tuple[bytes, Optional[str]]:
+        """The request body, gzip-decompressed if ``Content-Encoding`` says
+        so. Returns ``(body, None)`` or ``(b"", error)``."""
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length)
+        if self.headers.get("Content-Encoding", "").strip().lower() == "gzip":
+            try:
+                body = gzip.decompress(body)
+            except OSError as exc:
+                return b"", f"bad gzip body: {exc}"
+        return body, None
 
     def _authenticate(self) -> Tuple[bool, Optional[str]]:
         """Returns ``(authorized, project_slug)``. ``project_slug`` is

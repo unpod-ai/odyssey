@@ -94,6 +94,32 @@ Authorization: Bearer <api_key>          # only when the server requires one
 `200 {"projects": [{"slug": ..., "name": ...}, ...]}`; `404` outside
 project-scoped mode, `401` without a valid key.
 
+### Cross-journey batching (item 1.7)
+
+`HttpSink.send_batch()` posts several journeys in one request instead of
+one `POST /journeys/<id>/events` per journey:
+
+```
+POST /batch/events
+Content-Type: application/json; charset=utf-8
+Content-Encoding: gzip                   # optional, covers the whole envelope
+Authorization: Bearer <api_key>          # one key covers every journey in the batch
+
+{"journeys": {"<journey_id>": "<header line>\n<event line>...", ...}}
+
+200 {"results": {"<journey_id>": {"ok": true, "events_received": N}
+                  | {"ok": false, "error": "..."}, ...}}
+400 malformed envelope
+401 missing/incorrect Authorization
+```
+
+Always `200` once the envelope itself parses — each journey inside is
+validated and stored independently through the same path a single-journey
+POST uses, so one journey's malformed blob never blocks the others in the
+same request. `odyssey`'s own `drain(..., batch_size=N)` /
+`odyssey.init(drain_batch_size=N)` opt into sending batches this size;
+default `batch_size=1` never calls `send_batch` at all.
+
 ## Storage
 
 Today: a local directory, partitioned by the date a batch was received (UTC

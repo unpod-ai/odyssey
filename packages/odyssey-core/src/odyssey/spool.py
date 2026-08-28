@@ -50,6 +50,7 @@ from typing import (
     Optional,
     Protocol,
     TextIO,
+    Tuple,
     runtime_checkable,
 )
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -151,6 +152,33 @@ class Sink(Protocol):
         writing its own file can reproduce it rather than emitting an anonymous
         one. Optional because a drain over a v1.0 spool has none to pass, and a
         sink that does not care may ignore it.
+        """
+        ...
+
+
+# One journey's undrained batch, as handed to a `BatchSink`.
+BatchItem = Tuple[str, List[JourneyEvent], Optional[JourneyHeader]]
+
+
+@runtime_checkable
+class BatchSink(Sink, Protocol):
+    """A :class:`Sink` that can also deliver several journeys in one call
+    (item 1.7's cross-journey batching). Optional: `drain()` only uses this
+    when both the caller asks for it (`batch_size > 1`) and the sink
+    implements it — a plain :class:`Sink` keeps working unchanged either way.
+    """
+
+    def send_batch(self, items: List[BatchItem]) -> Dict[str, Optional[str]]:
+        """Deliver every journey in ``items``, independently.
+
+        Returns ``{journey_id: None}`` for a journey that was accepted, or
+        ``{journey_id: "<error message>"}`` for one that was not — every
+        journey in ``items`` must have an entry, so `drain()` can advance or
+        retry each one on its own, exactly as if it had been sent alone.
+        Raising instead of returning means the whole batch could not be
+        attempted at all (e.g. the connection itself failed): `drain()`
+        treats that as every journey in the batch having failed, the same
+        "any sink failure is retryable" rule a single `send()` follows.
         """
         ...
 
@@ -602,9 +630,33 @@ class Spool:
 
     # -- drain ------------------------------------------------------------
 
-    def push(self, sink: Sink, *, journey_id: Optional[str] = None) -> DrainResult:
+    def push(
+        self,
+        sink: Sink,
+        *,
+        journey_id: Optional[str] = None,
+        batch_size: int = 1,
+    ) -> DrainResult:
         """Drain now. The explicit trigger; identical path to interval and CLI."""
-        return drain(self, sink, journey_id=journey_id)
+        return drain(self, sink, journey_id=journey_id, batch_size=batch_size)
+
+
+def _drain_one(
+    spool: Spool, sink: Sink, jid: str, events: List[JourneyEvent]
+) -> Optional[str]:
+    """Send one journey's undrained events. ``None`` on success, an error
+    message on failure — the same shape :class:`BatchSink`'s per-journey
+    result carries, so the batched and unbatched paths share one outcome
+    format."""
+    try:
+        # The header travels with the events. Without it a FileSink writes an
+        # anonymous file even though the shard it drained named itself, and
+        # the identity would be lost at exactly the hop that produces the
+        # artifact a trainer actually consumes.
+        sink.send(jid, events, spool.header(jid))
+    except Exception as exc:  # noqa: BLE001 - any sink failure is retryable
+        return f"{type(exc).__name__}: {exc}"
+    return None
 
 
 def drain(
@@ -612,18 +664,30 @@ def drain(
     sink: Sink,
     *,
     journey_id: Optional[str] = None,
+    batch_size: int = 1,
 ) -> DrainResult:
     """Send undrained events to ``sink``, advancing watermarks only on success.
 
     One implementation, three callers: ``Spool.push()``, the CLI, and the interval
     drainer. A failure leaves the shard and the watermark untouched, so the next
     drain retries the same events.
+
+    ``batch_size`` (item 1.7) groups up to that many journeys into one
+    :meth:`BatchSink.send_batch` call instead of one ``sink.send()`` per
+    journey — fewer round trips when many journeys are waiting, without
+    changing the per-journey correctness guarantee above: every journey's
+    watermark still advances or not based on *that journey's own* reported
+    outcome, never on whether other journeys in the same batch succeeded.
+    Default ``1`` is the original, always-available per-journey path — a
+    plain :class:`Sink` (no ``send_batch``) is never affected by this
+    parameter at all.
     """
     targets = [journey_id] if journey_id else spool.journey_ids()
     pushed = skipped = failed = 0
     errors: List[str] = []
     gaps: Dict[str, List[int]] = {}
     touched: List[str] = []
+    pending: Dict[str, List[JourneyEvent]] = {}
 
     for jid in targets:
         events = spool.undrained(jid)
@@ -635,18 +699,42 @@ def drain(
         if missing:
             gaps[jid] = missing
 
-        try:
-            # The header travels with the events. Without it a FileSink writes an
-            # anonymous file even though the shard it drained named itself, and
-            # the identity would be lost at exactly the hop that produces the
-            # artifact a trainer actually consumes.
-            sink.send(jid, events, spool.header(jid))
-        except Exception as exc:  # noqa: BLE001 - any sink failure is retryable
-            failed += len(events)
-            errors.append(f"{jid}: {type(exc).__name__}: {exc}")
-            continue
-        spool._set_watermark(jid, max(e.seq for e in events))
-        pushed += len(events)
+        pending[jid] = events
+
+    use_batch = batch_size > 1 and isinstance(sink, BatchSink)
+
+    if not use_batch:
+        for jid, events in pending.items():
+            error = _drain_one(spool, sink, jid, events)
+            if error is not None:
+                failed += len(events)
+                errors.append(f"{jid}: {error}")
+                continue
+            spool._set_watermark(jid, max(e.seq for e in events))
+            pushed += len(events)
+    else:
+        jids = list(pending)
+        for start in range(0, len(jids), batch_size):
+            chunk = jids[start : start + batch_size]
+            items: List[BatchItem] = [
+                (jid, pending[jid], spool.header(jid)) for jid in chunk
+            ]
+            try:
+                results = sink.send_batch(items)
+            except Exception as exc:  # noqa: BLE001 - any sink failure is retryable
+                for jid in chunk:
+                    failed += len(pending[jid])
+                    errors.append(f"{jid}: {type(exc).__name__}: {exc}")
+                continue
+            for jid in chunk:
+                events = pending[jid]
+                error = results.get(jid, "sink reported no result for this journey")
+                if error is not None:
+                    failed += len(events)
+                    errors.append(f"{jid}: {error}")
+                    continue
+                spool._set_watermark(jid, max(e.seq for e in events))
+                pushed += len(events)
 
     return DrainResult(
         pushed=pushed,
@@ -743,10 +831,18 @@ class IntervalDrainer:
     other trigger uses, so there is exactly one code path to reason about.
     """
 
-    def __init__(self, spool: Spool, sink: Sink, interval_seconds: float) -> None:
+    def __init__(
+        self,
+        spool: Spool,
+        sink: Sink,
+        interval_seconds: float,
+        *,
+        batch_size: int = 1,
+    ) -> None:
         self._spool = spool
         self._sink = sink
         self._interval = validate_interval(interval_seconds)
+        self._batch_size = batch_size
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.last_result: Optional[DrainResult] = None
@@ -765,4 +861,6 @@ class IntervalDrainer:
 
     def _loop(self) -> None:
         while not self._stop.wait(self._interval):
-            self.last_result = drain(self._spool, self._sink)
+            self.last_result = drain(
+                self._spool, self._sink, batch_size=self._batch_size
+            )
