@@ -275,10 +275,20 @@ class PiiPolicy:
 # a `message.trainable_status` still at the writer default is no longer encoded.
 # A 1.0 reader still parses a 1.1 file: the extra header keys are ignored and the
 # absent label decodes back to its default. Hence MINOR, not MAJOR.
-SCHEMA_VERSION = "1.1"
+#
+# 2.0 — breaking (item 0'.4): a new "voice" `EventKind` with its own payload
+# field. A 1.x reader's `_PAYLOAD_FIELD`/kind-dispatch has no branch for
+# "voice" at all, so it cannot merely ignore an unrecognized event the way a
+# 1.0 reader ignored 1.1's new header keys — it would either drop real turns
+# or raise. That is what makes this MAJOR rather than another additive MINOR,
+# and why the reader in jsonl.py refuses to parse a 1.x shard's major version
+# against a 2.x reader (or vice versa) instead of guessing. No migration tool
+# ships with this bump; a 1.x shard on disk simply stops parsing.
+SCHEMA_VERSION = "2.0"
 
-EventKind = Literal["message", "signal", "reward", "terminal"]
+EventKind = Literal["message", "signal", "reward", "terminal", "voice"]
 SignalKind = Literal["thumbs_up", "thumbs_down", "regenerated", "user_edit"]
+VoiceKind = Literal["stt_transcript", "tts_output", "barge_in", "latency"]
 
 # Writer identity lives in ``JourneyEvent.metadata`` under this key rather than
 # in a field of its own. That is what keeps ``SCHEMA_VERSION`` at 1.0 while still
@@ -352,11 +362,32 @@ class Terminal:
     error: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class VoiceEvent:
+    """A voice-modality signal alongside a turn's `Message` (item 0'.4).
+
+    Deliberately narrow: this records what a voice integration (e.g.
+    `integrations/livekit.py`) already observes about its own STT/TTS
+    pipeline -- transcript confidence, barge-in, latency -- not a general
+    audio/telephony schema. It carries no `trainable` notion of its own and
+    is folded separately from `Journey.messages`/`Step[]` (see fold.py's
+    `FoldResult.voice_events`), since an SFT/DPO export has nothing to do
+    with a barge-in flag.
+    """
+
+    voice_kind: VoiceKind
+    text: Optional[str] = None
+    confidence: Optional[float] = None
+    latency_ms: Optional[float] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
 _PAYLOAD_FIELD: Dict[str, str] = {
     "message": "message",
     "signal": "signal",
     "reward": "reward",
     "terminal": "terminal",
+    "voice": "voice",
 }
 
 
@@ -382,6 +413,7 @@ class JourneyEvent:
     signal: Optional[Signal] = None
     reward: Optional[Reward] = None
     terminal: Optional[Terminal] = None
+    voice: Optional[VoiceEvent] = None
     model_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 

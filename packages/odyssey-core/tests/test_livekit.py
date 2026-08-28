@@ -421,12 +421,16 @@ def test_an_interrupted_agent_turn_is_not_a_training_target(tmp_path):
     result = odyssey.fold(events(), data_source="livekit")
     from odyssey.fold import derive_trainable_status
 
-    statuses = derive_trainable_status(
-        {e.seq: e.message for e in events() if e.kind == "message" and e.message},
-        result.signals,
-    )
-    assert statuses[1] == "not_trainable", "a cut-off agent turn must not be a target"
-    assert statuses[2] == "trainable"
+    msgs = [e for e in events() if e.kind == "message" and e.message]
+    statuses = derive_trainable_status({e.seq: e.message for e in msgs}, result.signals)
+    # Keyed by content, not a literal seq: a barge_in voice event (item 0'.4)
+    # now shares the seq space with messages, so message seqs are no longer
+    # contiguous small ints.
+    by_content = {e.message.content: statuses[e.seq] for e in msgs}
+    assert (
+        by_content["Let me just check the—"] == "not_trainable"
+    ), "a cut-off agent turn must not be a target"
+    assert by_content["Booked for Tuesday 3pm."] == "trainable"
 
 
 def test_an_interrupted_user_turn_stays_normal(tmp_path):
@@ -445,12 +449,12 @@ def test_an_interrupted_user_turn_stays_normal(tmp_path):
     from odyssey.fold import derive_trainable_status
 
     result = odyssey.fold(events(), data_source="livekit")
-    statuses = derive_trainable_status(
-        {e.seq: e.message for e in events() if e.kind == "message" and e.message},
-        result.signals,
-    )
-    assert statuses[0] == "not_trainable"  # role default, as any user turn
-    assert statuses[1] == "trainable"
+    msgs = [e for e in events() if e.kind == "message" and e.message]
+    statuses = derive_trainable_status({e.seq: e.message for e in msgs}, result.signals)
+    by_content = {e.message.content: statuses[e.seq] for e in msgs}
+    # role default, as any user turn
+    assert by_content["I wanted to ask about—"] == "not_trainable"
+    assert by_content["Go ahead."] == "trainable"
 
 
 # --------------------------------------------------------------------------

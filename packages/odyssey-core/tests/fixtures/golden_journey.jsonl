@@ -1,4 +1,4 @@
-{"data_source":"golden","journey_id":"j_golden_0001","journey_metadata":{"channel":"voice","tenant":"acme"},"odyssey_schema_version":"1.1","started_at":"2026-01-01T09:00:00+00:00","trace_id":"trace_golden_0001"}
+{"data_source":"golden","journey_id":"j_golden_0001","journey_metadata":{"channel":"voice","tenant":"acme"},"odyssey_schema_version":"2.0","started_at":"2026-01-01T09:00:00+00:00","trace_id":"trace_golden_0001"}
 {"event_id":"golden-e00","journey_id":"j_golden_0001","kind":"message","message":{"content":"You book appointments.","role":"system"},"seq":0,"ts":"2026-01-01T09:00:00+00:00"}
 {"event_id":"golden-e01","journey_id":"j_golden_0001","kind":"message","message":{"content":"Book me for Tuesday at 3.","role":"user"},"seq":1,"ts":"2026-01-01T09:00:01+00:00"}
 {"event_id":"golden-e02","journey_id":"j_golden_0001","kind":"message","message":{"finish_reason":"tool_calls","role":"assistant","tool_calls":[{"arguments":{"day":"tuesday","hour":15},"id":"call_slot_1","name":"check_slot"}],"usage":{"completion_tokens":18,"prompt_tokens":42}},"model_id":"openai/gpt-4.1-mini","seq":2,"ts":"2026-01-01T09:00:02+00:00"}
@@ -10,4 +10,5 @@
 {"event_id":"golden-e08","journey_id":"j_golden_0001","kind":"message","message":{"content":"You're all set for Tuesday at 3pm.","role":"assistant"},"model_id":"openai/gpt-4.1-mini","seq":8,"ts":"2026-01-01T09:00:08+00:00"}
 {"event_id":"golden-e09","journey_id":"j_golden_0001","kind":"signal","seq":9,"signal":{"signal":"thumbs_up","target_seq":8},"ts":"2026-01-01T09:00:09+00:00"}
 {"event_id":"golden-e10","journey_id":"j_golden_0001","kind":"reward","reward":{"aggregated_value":0.92,"aggregation_method":"weighted","components":[{"name":"task_success","range":[0.0,1.0],"scaled_value":1.0,"value":1.0,"weight":2.0},{"name":"efficiency","range":[0.0,1.0],"scaled_value":0.76,"value":0.76,"weight":1.0}]},"seq":10,"ts":"2026-01-01T09:00:10+00:00"}
-{"event_id":"golden-e11","journey_id":"j_golden_0001","kind":"terminal","seq":11,"terminal":{"termination_reason":"ENV_DONE"},"ts":"2026-01-01T09:00:11+00:00"}
+{"event_id":"golden-e11","journey_id":"j_golden_0001","kind":"voice","seq":11,"ts":"2026-01-01T09:00:11+00:00","voice":{"confidence":0.94,"text":"Book me for Tuesday at 3.","voice_kind":"stt_transcript"}}
+{"event_id":"golden-e12","journey_id":"j_golden_0001","kind":"terminal","seq":12,"terminal":{"termination_reason":"ENV_DONE"},"ts":"2026-01-01T09:00:12+00:00"}

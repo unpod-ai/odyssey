@@ -7,7 +7,7 @@ an unknown MAJOR version refuses to parse rather than guessing.
 
 File layout — a header line, then one event per line::
 
-    {"odyssey_schema_version": "1.1", "journey_id": "j_1", "data_source": "livekit",
+    {"odyssey_schema_version": "2.0", "journey_id": "j_1", "data_source": "livekit",
      "trace_id": "t_9", "started_at": "...", "journey_metadata": {"tenant": "acme"}}
     {"journey_id": "j_1", "seq": 0, "kind": "message", ...}
     {"journey_id": "j_1", "seq": 1, "kind": "message", ...}
@@ -45,6 +45,7 @@ from odyssey.primitives import (
     ToolCall,
     ToolDefinition,
     ToolResponse,
+    VoiceEvent,
 )
 
 HEADER_KEY = "odyssey_schema_version"
@@ -290,6 +291,7 @@ def decode_event(d: Dict[str, Any]) -> JourneyEvent:
     term = d.get("terminal")
     rew = d.get("reward")
     msg = d.get("message")
+    voice = d.get("voice")
     return JourneyEvent(
         journey_id=d["journey_id"],
         seq=int(d["seq"]),
@@ -314,6 +316,17 @@ def decode_event(d: Dict[str, Any]) -> JourneyEvent:
                 error=term.get("error"),
             )
             if term
+            else None
+        ),
+        voice=(
+            VoiceEvent(
+                voice_kind=voice["voice_kind"],
+                text=voice.get("text"),
+                confidence=voice.get("confidence"),
+                latency_ms=voice.get("latency_ms"),
+                metadata=voice.get("metadata"),
+            )
+            if voice
             else None
         ),
         model_id=d.get("model_id"),

@@ -419,9 +419,21 @@ class LiveKitRecorder:
         if turn is None or turn.is_empty():
             return
         with bind(self._ctx):
-            self._handle().message(
+            handle = self._handle()
+            handle.message(
                 Message(role=turn.role, content=turn.content, metadata=turn.metadata()),
             )
+            # Voice events (item 0'.4): the same signals `metadata()` already
+            # folds into the message's `metadata` dict, recorded a second time
+            # as their own `voice` event so a consumer that only wants voice
+            # telemetry (not full transcripts) doesn't have to parse message
+            # metadata to find it. No new STT/TTS instrumentation beyond what
+            # this integration already computes above.
+            confidence = turn._confidence()
+            if confidence is not None:
+                handle.voice("stt_transcript", text=turn.content, confidence=confidence)
+            if turn.interrupted:
+                handle.voice("barge_in", text=turn.content)
 
     def detach(self) -> None:
         """Stop recording this session. Does not close the journey."""
@@ -890,6 +902,10 @@ def _tool_pairs(event: Any) -> Optional[List[Tuple[Any, Any]]]:
     """
     zipped = getattr(event, "zipped", None)
     if callable(zipped):
+        # pyrefly: ignore[bad-argument-type]  -- `zipped` is `Any` narrowed
+        # via `callable()`; pyrefly can't see through the getattr+callable
+        # narrowing to know the call result is iterable, but it is (a real
+        # livekit-agents `zipped()` always returns an iterable of pairs).
         return list(zipped())
     calls = getattr(event, "function_calls", None)
     if calls is None:

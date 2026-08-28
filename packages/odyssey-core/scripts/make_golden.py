@@ -32,6 +32,7 @@ from odyssey.primitives import (  # noqa: E402
     Terminal,
     ToolCall,
     ToolResponse,
+    VoiceEvent,
 )
 
 FIXTURE = Path(__file__).resolve().parent.parent / "tests/fixtures/golden_journey.jsonl"
@@ -65,6 +66,17 @@ def _sig(seq: int, signal: Signal) -> JourneyEvent:
         event_id=f"golden-e{seq:02d}",
         ts=_ts(seq),
         signal=signal,
+    )
+
+
+def _voice(seq: int, voice: VoiceEvent) -> JourneyEvent:
+    return JourneyEvent(
+        journey_id=JID,
+        seq=seq,
+        kind="voice",
+        event_id=f"golden-e{seq:02d}",
+        ts=_ts(seq),
+        voice=voice,
     )
 
 
@@ -154,19 +166,31 @@ def golden_events() -> list[JourneyEvent]:
                 ],
             ),
         ),
+        # A voice-modality signal (item 0'.4): the transcript confidence a
+        # `livekit`-shaped session would have recorded for the user's turn
+        # above, kept in this same chain to exercise a real preference case
+        # alongside a voice event, not a bare isolated fixture.
+        _voice(
+            11,
+            VoiceEvent(
+                voice_kind="stt_transcript",
+                text="Book me for Tuesday at 3.",
+                confidence=0.94,
+            ),
+        ),
         JourneyEvent(
             journey_id=JID,
-            seq=11,
+            seq=12,
             kind="terminal",
-            event_id="golden-e11",
-            ts=_ts(11),
+            event_id="golden-e12",
+            ts=_ts(12),
             terminal=Terminal(termination_reason="ENV_DONE"),
         ),
     ]
 
 
 def golden_header() -> JourneyHeader:
-    """The v1.1 header the fixture must carry.
+    """The v2.0 header the fixture must carry.
 
     Part of the contract, not decoration: a producer that writes only the version
     key leaves the consumer to be told out-of-band what the file records, which

@@ -50,6 +50,8 @@ from odyssey.primitives import (
     Terminal,
     TerminationReason,
     ToolResponse,
+    VoiceEvent,
+    VoiceKind,
 )
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -113,6 +115,7 @@ def _emit(
     signal: Optional[Signal] = None,
     reward: Optional[Reward] = None,
     terminal: Optional[Terminal] = None,
+    voice: Optional[VoiceEvent] = None,
     model_id: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Optional[int]:
@@ -165,6 +168,7 @@ def _emit(
                 signal=signal,
                 reward=reward,
                 terminal=terminal,
+                voice=voice,
                 model_id=model_id,
                 metadata=meta,
             ),
@@ -256,6 +260,33 @@ class JourneyHandle:
 
             reward = build_reward_from_scalar(float(reward))
         return _emit("reward", reward=reward)
+
+    def voice(
+        self,
+        voice_kind: VoiceKind,
+        *,
+        text: Optional[str] = None,
+        confidence: Optional[float] = None,
+        latency_ms: Optional[float] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[int]:
+        """Record a voice-modality signal alongside a turn (item 0'.4).
+
+        Narrow by design: this is for what a voice integration already
+        observes about its own STT/TTS pipeline (transcript confidence,
+        barge-in, latency), not a general audio schema. See
+        ``primitives.VoiceEvent``.
+        """
+        return _emit(
+            "voice",
+            voice=VoiceEvent(
+                voice_kind=voice_kind,
+                text=text,
+                confidence=confidence,
+                latency_ms=latency_ms,
+                metadata=metadata,
+            ),
+        )
 
     def close(
         self,
@@ -409,6 +440,12 @@ def reward(value: Reward | float) -> Optional[int]:
 def message(message: Message, **kw: Any) -> Optional[int]:
     ctx = current()
     return None if ctx is None else JourneyHandle(ctx).message(message, **kw)
+
+
+def voice(voice_kind: VoiceKind, **kw: Any) -> Optional[int]:
+    """Record a voice-modality signal on the ambient journey (item 0'.4)."""
+    ctx = current()
+    return None if ctx is None else JourneyHandle(ctx).voice(voice_kind, **kw)
 
 
 # ---------------------------------------------------------------------------

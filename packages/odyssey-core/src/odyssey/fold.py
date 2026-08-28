@@ -35,6 +35,7 @@ from odyssey.primitives import (
     Signal,
     Step,
     TrainableStatus,
+    VoiceEvent,
 )
 
 # Signals that mean "the targeted output was replaced by a later one".
@@ -75,6 +76,9 @@ class FoldResult:
     model_ids: List[str] = field(default_factory=list)
     terminated: bool = False
     writers: List[str] = field(default_factory=list)
+    # Kept separate from `journey.messages`/`Step[]` (item 0'.4): a voice event
+    # has no `trainable` notion, so it plays no part in the SFT/DPO export path.
+    voice_events: List[VoiceEvent] = field(default_factory=list)
 
     @property
     def trainable(self) -> bool:
@@ -227,6 +231,7 @@ def fold(
     error: Optional[str] = None
     model_ids: List[str] = []
     writers: List[str] = []
+    voice_events: List[VoiceEvent] = []
     for e in ordered:
         if e.model_id and e.model_id not in model_ids:
             model_ids.append(e.model_id)
@@ -242,6 +247,8 @@ def fold(
         elif e.kind == "terminal" and e.terminal is not None:
             termination_reason = e.terminal.termination_reason
             error = e.terminal.error
+        elif e.kind == "voice" and e.voice is not None:
+            voice_events.append(e.voice)
 
     # 5. Label, then rebuild the messages in seq order carrying their status.
     statuses = derive_trainable_status(messages_by_seq, signals)
@@ -293,6 +300,7 @@ def fold(
         model_ids=model_ids,
         terminated=terminal_seq is not None,
         writers=writers,
+        voice_events=voice_events,
     )
 
 

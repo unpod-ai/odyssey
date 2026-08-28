@@ -40,7 +40,7 @@ def test_golden_fixture_is_committed_and_readable():
     assert GOLDEN.exists(), "the shared contract artifact must be committed"
     result = read_events(GOLDEN)
     assert result.clean
-    assert len(result.events) == 12
+    assert len(result.events) == 13
     assert result.schema_version == SCHEMA_VERSION
 
 
@@ -61,6 +61,7 @@ def test_golden_fixture_covers_every_event_kind(golden_events):
         "signal",
         "reward",
         "terminal",
+        "voice",
     }
 
 
@@ -134,6 +135,7 @@ def test_full_round_trip_reserializes_to_events_only(tmp_path, golden_events):
             "signal",
             "reward",
             "terminal",
+            "voice",
             "model_id",
             "metadata",
         }
@@ -156,7 +158,7 @@ def test_spool_to_fold_is_lossless(tmp_path, golden_events):
     s = Spool(SpoolConfig(root=tmp_path / "spool"))
     s.record_all(golden_events)
     recovered = s.read("j_golden_0001")
-    assert [e.seq for e in recovered] == list(range(12))
+    assert [e.seq for e in recovered] == list(range(13))
     assert fold(recovered, data_source="golden").complete is True
 
 

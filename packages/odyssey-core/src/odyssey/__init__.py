@@ -29,7 +29,15 @@ standard library. ``odyssey-core`` declares ``dependencies = []``.
 
 from __future__ import annotations
 
-from odyssey.capture import JourneyHandle, journey, message, observe, reward, signal
+from odyssey.capture import (
+    JourneyHandle,
+    journey,
+    message,
+    observe,
+    reward,
+    signal,
+    voice,
+)
 from odyssey.client import (
     Client,
     Stats,
@@ -75,6 +83,7 @@ from odyssey.primitives import (
     ToolCall,
     ToolDefinition,
     ToolResponse,
+    VoiceEvent,
 )
 from odyssey.sft import (
     SftResult,
@@ -112,6 +121,7 @@ __all__ = [
     "signal",
     "reward",
     "message",
+    "voice",
     "JourneyHandle",
     # Ambient context
     "current",
@@ -129,6 +139,7 @@ __all__ = [
     "ToolCall",
     "ToolResponse",
     "ToolDefinition",
+    "VoiceEvent",
     "Journey",
     "Step",
     "SCHEMA_VERSION",

@@ -358,22 +358,24 @@ def test_read_header_rejects_a_major_it_cannot_parse(tmp_path):
         read_header(p)
 
 
-def test_a_v1_0_file_still_reads_with_an_empty_header(tmp_path):
-    """Back-compat, and the signal a caller needs.
+def test_a_v1_x_file_no_longer_reads_after_the_2_0_major_bump(tmp_path):
+    """The documented consequence of item 0'.4's major bump (1.1 -> 2.0).
 
-    Every identity field None is exactly the condition that tells a caller it
-    must supply `data_source` itself.
+    Before 2.0, a 1.0 file (empty header, no journey identity) still parsed --
+    a 1.x reader had no `voice` branch to choke on, so an unrecognized-but-
+    absent kind was simply never encountered. A 2.0 reader cannot make that
+    same promise (see `SCHEMA_VERSION`'s comment), so the major-version gate
+    now refuses it outright rather than risk silently mis-parsing a shard that
+    might contain a `voice` event it cannot decode. No migration tool ships
+    with this bump -- a 1.x shard on disk simply stops parsing.
     """
     p = tmp_path / "j.jsonl"
     p.write_text(
         '{"odyssey_schema_version":"1.0"}\n'
         + "".join(encode_event(e) + "\n" for e in rich_stream())
     )
-    result = read_events(p)
-    assert result.clean and len(result.events) == 6
-    assert result.header.odyssey_schema_version == "1.0"
-    assert result.header.journey_id is None
-    assert result.header.data_source is None
+    with pytest.raises(SchemaVersionError, match="Refusing to parse"):
+        read_events(p)
 
 
 def test_unknown_header_keys_are_ignored_not_rejected(tmp_path):
