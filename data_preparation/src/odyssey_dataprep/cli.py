@@ -18,16 +18,30 @@ import sys
 from typing import Any, Optional
 
 
+def _parse_pii_rules(raw: Optional[str]) -> Optional[list]:
+    """``--pii-rules email,phone`` -> ``["EMAIL", "PHONE"]``, or ``None`` when
+    the flag was omitted -- the opt-in default for both `clean` and
+    `validate` (item 2.15)."""
+    if not raw:
+        return None
+    return [r.strip().upper() for r in raw.split(",") if r.strip()]
+
+
 def register(app: Any) -> None:
     # pyrefly: ignore[missing-import]  — belongs to cli/, the only member
     # that actually depends on it; see the module docstring.
     import typer  # noqa: PLC0415 - opt-in only when register() is called
+    from odyssey.primitives import PiiPolicy
 
     from odyssey_dataprep.annotation import apply_reviews as _apply_reviews
     from odyssey_dataprep.annotation import build_queue
     from odyssey_dataprep.augmentation import perturb_tool_calls
     from odyssey_dataprep.cleaning import clean_dir
-    from odyssey_dataprep.collection import collect_from_collector, collect_from_spool
+    from odyssey_dataprep.collection import (
+        collect_from_collector,
+        collect_from_object_store,
+        collect_from_spool,
+    )
     from odyssey_dataprep.datasets import (
         build_manifest,
         next_version,
@@ -200,17 +214,35 @@ def register(app: Any) -> None:
         collector: Optional[str] = typer.Option(
             None, "--collector", help="a services/collector data_dir"
         ),
+        bucket: Optional[str] = typer.Option(
+            None, "--bucket", help="an S3-compatible bucket (item 1.10)"
+        ),
+        prefix: str = typer.Option(
+            "", "--prefix", help="key prefix to list within --bucket"
+        ),
+        endpoint_url: Optional[str] = typer.Option(
+            None,
+            "--endpoint-url",
+            help="S3-compatible endpoint URL (e.g. for MinIO); omit for AWS S3",
+        ),
     ) -> None:
         """Pull raw traces into a flat raw layer (item 3.1): one *.jsonl per
         journey, reassembled from wherever it's rotated/date-partitioned."""
-        if bool(spool) == bool(collector):
-            print("exactly one of --spool or --collector is required", file=sys.stderr)
+        sources = [spool, collector, bucket]
+        if sum(bool(s) for s in sources) != 1:
+            print(
+                "exactly one of --spool, --collector, or --bucket is required",
+                file=sys.stderr,
+            )
             raise typer.Exit(code=2)
-        result = (
-            collect_from_spool(spool, out)
-            if spool
-            else collect_from_collector(collector, out)
-        )
+        if spool:
+            result = collect_from_spool(spool, out)
+        elif collector:
+            result = collect_from_collector(collector, out)
+        else:
+            result = collect_from_object_store(
+                bucket, prefix, out, endpoint_url=endpoint_url
+            )
         print(f"collected {result.count}")
         for err in result.errors:
             print(f"error   {err}", file=sys.stderr)
@@ -219,14 +251,23 @@ def register(app: Any) -> None:
     def clean(
         journeys: str = typer.Option(..., "--journeys", help="normalized *.json dir"),
         out: str = typer.Option(..., "--out", help="output directory"),
+        pii_rules: Optional[str] = typer.Option(
+            None,
+            "--pii-rules",
+            help="comma-separated content-level PII rules to scrub, e.g. "
+            "email,phone,credit_card,ssn (item 2.15) -- opt-in, off by default",
+        ),
     ) -> None:
         """Dedupe, drop dead turns, repair encoding (item 3.2)."""
-        result = clean_dir(journeys, out)
+        rules = _parse_pii_rules(pii_rules)
+        policy = PiiPolicy(name="cli", rules=rules) if rules else None
+        result = clean_dir(journeys, out, pii_policy=policy)
         print(
             f"cleaned {result.count} "
             f"(dropped {result.duplicates_dropped} duplicate(s), "
             f"{result.dead_turns_dropped} dead turn(s), "
-            f"repaired {result.encoding_repairs} string(s))"
+            f"repaired {result.encoding_repairs} string(s), "
+            f"scrubbed {result.pii_scrubs} PII match(es))"
         )
 
     def queue(
@@ -276,10 +317,17 @@ def register(app: Any) -> None:
 
     def validate(
         journeys: str = typer.Option(..., "--journeys", help="normalized *.json dir"),
+        pii_rules: Optional[str] = typer.Option(
+            None,
+            "--pii-rules",
+            help="comma-separated content-level PII rules to additionally scan "
+            "for, e.g. email,phone,credit_card,ssn (item 2.15) -- opt-in, off "
+            "by default; the key-based check always runs",
+        ),
     ) -> None:
         """Schema + PII-redaction checks (item 3.6). Exits 3 on breach — the
         lineage-violation code CI greps for (ADR 0003)."""
-        result = validate_dir(journeys)
+        result = validate_dir(journeys, content_pii_rules=_parse_pii_rules(pii_rules))
         for err in result.errors:
             print(err, file=sys.stderr)
         print(f"{'ok' if result.ok else 'FAILED'}: {len(result.errors)} error(s)")

@@ -21,6 +21,9 @@ dev = [
   "flake8>=7.3",
   "pyrefly>=0.1",
 ]
+# item 1.10 — collect_from_object_store imports boto3 lazily, only when no
+# `client` double is injected, so a light install never needs an S3 SDK.
+s3 = ["boto3>=1.34"]
 
 [project.entry-points."odyssey.commands"]
 data = "odyssey_dataprep.cli:register"
