@@ -5,3 +5,34 @@ project has not yet made a versioned release, so entries accumulate under
 `[Unreleased]`. Pre-changelog history lives in `git log`.
 
 ## [Unreleased]
+
+### Changed
+
+- **BREAKING**: `SCHEMA_VERSION` bumped `1.1` → `2.0` (item 0′.4). Added a new
+  `"voice"` `EventKind` and `VoiceEvent` payload (`voice_kind`, `text`,
+  `confidence`, `latency_ms`, `metadata`) for STT/TTS/barge-in/latency
+  signals, wired into `integrations/livekit.py`. A schema-1.x reader has no
+  branch for `"voice"` and cannot safely ignore an unrecognized kind the way
+  a 1.0 reader ignored 1.1's new header keys, so `jsonl.py`'s major-version
+  gate now refuses any file declaring a `1.x` (or earlier) schema version. No
+  migration tool ships with this change — a schema-1.x `*.jsonl` shard on
+  disk simply stops parsing under this reader.
+
+### Added
+
+- `integrations/langchain.py` — `OdysseyCallbackHandler()` for LangChain
+  (optional `odyssey[langchain]` extra), one flat journey per top-level
+  `run_id`.
+- `odyssey.pii` — regex-based `scan_pii`/`redact_pii` for content-level PII
+  (email/phone/credit card with Luhn check/SSN), wired into
+  `data_preparation`'s `clean_dir`/`validate_dir` as opt-in.
+- Sampling: `ODYSSEY_SAMPLE_RATE` / `Config.sample_rate`, one coin-flip per
+  journey at open time.
+- `HttpSink` gzip compression (default on) and client-side `Retry-After`
+  backoff on HTTP 429; `services/collector` decompresses accordingly.
+- `data_preparation`'s `collect_from_object_store()` — S3-compatible raw-layer
+  collection (optional `odyssey-dataprep[s3]` extra), wired into
+  `odyssey data collect --bucket`.
+- `spool.gc()` / `odyssey spool prune` and `services/collector`'s
+  `prune.py` / `python -m odyssey_collector.prune` — retention/TTL for
+  fully-drained shards and stale date partitions, operator-invoked only.

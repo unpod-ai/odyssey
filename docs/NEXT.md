@@ -1,5 +1,51 @@
 # odyssey — session handoff
 
+## Session summary (2026-08-28)
+
+Closed all 8 of the "smaller, still open" items the 2026-08-27 handoff listed,
+plus 5.7/5.8 (`configs/{sft,dpo,grpo}` and `experiments/<exp_id>.yaml`, done
+earlier the same session). One of the 8 was a deliberate breaking change,
+approved explicitly rather than deferred:
+
+- **0′.4 voice events — real `SCHEMA_VERSION` major bump, 1.1 → 2.0.** A new
+  `"voice"` `EventKind`, `VoiceEvent` dataclass, `JourneyEvent.voice`,
+  `FoldResult.voice_events` (kept out of the SFT/DPO export path — no
+  `trainable` notion). `integrations/livekit.py` now emits real
+  `stt_transcript`/`barge_in` events from data it already computed. Golden
+  fixture regenerated at 2.0 with a `voice` event; `test_contract.py` and
+  `test_livekit.py` updated for the new event mixed into the seq space. **No
+  migration tool** — a schema-1.x shard on disk no longer parses; this is the
+  documented, one-way consequence, not a bug.
+- **0.10 LangChain** — `integrations/langchain.py`, `OdysseyCallbackHandler()`
+  factory (lazy `langchain_core` import, `odyssey[langchain]` extra). One flat
+  journey per top-level `run_id`, following `livekit.py`'s explicit-context
+  pattern rather than `_base.py`'s wrapped-client one, since LangChain's
+  callback API is `run_id`/`parent_run_id`-tree-shaped. **0.11 OTel bridge
+  deferred, documented only** — no concrete consuming backend named.
+- **0′.6 sampling** — `ODYSSEY_SAMPLE_RATE`/`Config.sample_rate`, one coin-flip
+  per journey at open (inherited by nested joins via `JourneyContext.state`),
+  dropped before the spool is touched.
+- **1.7 wire batching/compression/backpressure** — `HttpSink` gzips by
+  default; a 429's `Retry-After` sets a client-side backoff window. Collector
+  decompresses. Cross-journey batching explicitly not attempted (documented
+  scope cut — would need a `drain()` redesign).
+- **1.10 object-store landing** — `collect_from_object_store()` (S3-compatible
+  via `boto3`, `odyssey-dataprep[s3]` extra), wired into `odyssey data collect
+  --bucket`.
+- **1.12/2.14 retention/TTL** — `spool.gc()` + `odyssey spool prune` CLI;
+  collector's `prune.py` + `python -m odyssey_collector.prune`. Both
+  operator-invoked, no auto-GC timer.
+- **2.15 content-level PII scrub** — `odyssey.pii` (regex `scan_pii`/
+  `redact_pii`, Luhn-checked credit cards), wired into `data_preparation`'s
+  `clean_dir`/`validate_dir` as opt-in (`--pii-rules`).
+- **9.10 pyrefly** — the one real error (`livekit.py`, a `getattr`+`callable`
+  narrowing gap) fixed with a documented suppression comment. The 157
+  `tests/` narrowing gaps are unchanged — a scope decision, not attempted.
+
+Full workspace `task test` green after the schema bump (737 tests across
+core/collector/dataprep/cli/training). See `docs/WORKING.md` for the
+per-item table updates.
+
 ## Session summary (2026-08-27)
 
 Started from a codebase where recording worked locally but nothing shipped
@@ -144,10 +190,14 @@ conversational message lists straight through to `trl.DPOTrainer`.
    FastAPI + OpenAPI), still the next major unbuilt piece per
    `docs/STRUCTURE.md`.
 
-**Smaller, still open:** 0.10/0.11 (LangChain/OTel hooks), 0′.6 (sampling),
-1.7 (batching/backpressure), 1.10 (object-store landing — would unblock
-`collection`'s third source), 1.12/2.14 (retention/TTL), 2.15
-(content-level PII scrub — would unblock `cleaning`'s deferred PII stage).
+**Smaller, closed this session (2026-08-28):** 0.10 (LangChain), 0′.4 (voice
+events — breaking `SCHEMA_VERSION` 1.1 → 2.0), 0′.6 (sampling), 1.7
+(batching/compression/backpressure), 1.10 (object-store landing), 1.12/2.14
+(retention/TTL), 2.15 (content-level PII scrub), 9.10 (the one real pyrefly
+error, suppressed). **Still open:** 0.11 (OTel bridge — deferred, documented
+only, no consuming backend named), LangGraph/LlamaIndex hooks, 1.7's
+cross-journey batching (explicit scope cut), 9.10's 157 `tests/` narrowing
+gaps (scope decision).
 
 ---
 

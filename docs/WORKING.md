@@ -284,11 +284,11 @@ Legend: ✅ done & tested · 🟡 partly there · ❌ not started
 | 0.7 | **`@observe` decorator** | ✅ | `capture.observe()` — sync and async |
 | 0.8 | **`with odyssey.journey(...)`** | ✅ | Nesting joins the parent; an exception closes with `ERROR` and re-raises |
 | 0.9 | **Drop-in provider client** | 🟡 | Anthropic and OpenAI (sync + async + patch) done — OpenAI's wrapper also covers OpenAI-*compatible* providers (Groq, Together, local vLLM/Ollama) for free, since they speak the same SDK with a different `base_url`. **Gemini not written** |
-| 0.10 | **Framework hooks** (LangChain/LangGraph, LlamaIndex) | ❌ | Not started |
-| 0.11 | **OTel bridge** | ❌ | Not started |
+| 0.10 | **Framework hooks** (LangChain/LangGraph, LlamaIndex) | 🟡 | `integrations/langchain.py` — `OdysseyCallbackHandler()`, lazy `langchain_core` import (`odyssey[langchain]` extra). One flat journey per top-level `run_id`; nested chain/agent graph structure is not modeled as separate journeys or sub-spans, an explicit scope cut. LangGraph/LlamaIndex hooks not written |
+| 0.11 | **OTel bridge** | ❌ | Not started — no concrete consuming backend named yet (Jaeger/Honeycomb/etc.), same explicit-not-faked treatment as KTO/ORPO |
 | 0.12 | **Flush on exit** | ✅ | `atexit` by default. SIGTERM is **opt-in** (`init(handle_sigterm=True)`) — `atexit` does not run on SIGTERM, and hijacking a signal from a library is rude |
 | 0.13 | Background drain thread | ✅ | `IntervalDrainer`, now started by `init()` |
-| 0.14 | Voice-agent turn capture | 🟡 | `integrations/livekit.py` — one `attach()` per `AgentSession`: streamed utterances coalesced into one turn, tool calls paired with outputs, the system prompt read off the live agent and followed through handoffs (or skipped with `record_instructions=False`), and `.tool()` for engines LiveKit does not drive. Voice-*specific* events (STT, TTS, barge-in, per-turn latency) still have no schema home — see Step 0′ |
+| 0.14 | Voice-agent turn capture | ✅ | `integrations/livekit.py` — one `attach()` per `AgentSession`: streamed utterances coalesced into one turn, tool calls paired with outputs, the system prompt read off the live agent and followed through handoffs (or skipped with `record_instructions=False`), and `.tool()` for engines LiveKit does not drive. STT confidence and barge-in now emit real `voice` events alongside the turn (item 0′.4) |
 | 0.15 | **Never crash the host** | ✅ | Capture failures counted, not raised. `ODYSSEY_DEBUG=1` re-raises for local dev |
 | 0.16 | **Diagnostics** | ✅ | `diagnostics.py`, `odyssey.health()`, `odyssey.cli health` |
 
@@ -319,11 +319,11 @@ Legend: ✅ done & tested · 🟡 partly there · ❌ not started
 | # | Item | Status | Note |
 |---|---|---|---|
 | 0′.1 | OpenAI drop-in + patch | ✅ | `integrations/openai.py` + `integrations/_openai_base.py`. Simpler than Anthropic's: OpenAI's system prompt is `messages[0]`, not a separate kwarg, so no special dedup case is needed — the existing "record only the unrecorded tail" logic already covers it. Verified against the real `openai` SDK (not just the fake), including `instrument()`'s default patch target. `stream=True` passes through unrecorded (open item, same as Anthropic's async streaming) |
-| 0′.2 | LangChain / LangGraph callback handler | ❌ | |
-| 0′.3 | OTel bridge | ❌ | Would make every OTel-instrumented app record for free |
-| 0′.4 | **Voice events** | ❌ | STT input, TTS output, barge-in, per-turn latency do not fit `Message`, which is LLM-turn shaped. Needs a decision: new `EventKind` (schema major bump) or `metadata` convention |
+| 0′.2 | LangChain / LangGraph callback handler | 🟡 | LangChain done (item 0.10, above). LangGraph not started |
+| 0′.3 | OTel bridge | ❌ | Would make every OTel-instrumented app record for free. Deferred, same as 0.11 above — no concrete consuming backend named yet |
+| 0′.4 | **Voice events** | ✅ | Real breaking change: `SCHEMA_VERSION` bumped `1.1` → `2.0`, a new `"voice"` `EventKind`, `VoiceEvent` (`voice_kind: stt_transcript\|tts_output\|barge_in\|latency`, `text`, `confidence`, `latency_ms`), `JourneyEvent.voice`. `fold()` accumulates them into `FoldResult.voice_events`, kept separate from `Journey.messages`/`Step[]` — a voice event has no `trainable` notion. `integrations/livekit.py` now emits `stt_transcript` (turn-level weighted transcript confidence) and `barge_in` (the existing `INTERRUPTED_FLAG`) events. Golden fixture regenerated at 2.0 with a `voice` event. **No migration tool**: a 1.x shard on disk no longer parses under this reader — one-way major bump, documented in CHANGELOG.md |
 | 0′.5 | Streaming coverage | 🟡 | Sync `messages.stream()` wrapped; the async streaming path is not |
-| 0′.6 | Sampling | ❌ | No way to record 10% of traffic. Matters once volume is real |
+| 0′.6 | Sampling | ✅ | `ODYSSEY_SAMPLE_RATE` / `Config.sample_rate` (default `1.0`, clamped `[0,1]`). The coin-flip happens once per journey at `journey()` open, stored on `JourneyContext.state["_sampled"]` so a nested join inherits the parent's decision rather than re-rolling; `_emit()` drops before touching the spool. `client.count_journey_sampled_out()` surfaced in `health()` |
 
 ---
 
@@ -341,12 +341,12 @@ place. **This is the top of the critical path.**
 | 1.4 | `FileSink` | ✅ | `sinks.py` (moved out of `cli.py` so the library never imports the CLI) |
 | 1.5 | **`HttpSink`** | ✅ | `sinks.py` — stdlib `urllib` only (core stays `dependencies = []`). One POST per journey batch to `{endpoint}/journeys/{journey_id}/events`, body is the same JSONL bytes a shard on disk holds. Raises `HttpSinkError` on failure, which `drain()` already treats as retryable — no new abstraction needed |
 | 1.6 | **Auth** (API key) | 🟡 | `HttpSink(api_key=...)` / `ODYSSEY_API_KEY` sends a `Bearer` token. Project scoping still needs a server to scope against — open until 1.8 |
-| 1.7 | **Batching / compression / backpressure on the wire** | ❌ | |
+| 1.7 | **Batching / compression / backpressure on the wire** | 🟡 | `HttpSink` gzips the JSONL body by default (`Content-Encoding: gzip`, `compress=False` to opt out); the collector decompresses. A 429 response's `Retry-After` (seconds or HTTP-date) sets a client-side backoff window — `send()` raises without a network call if called again before it elapses. **Cross-journey batching (one POST for N journeys) not attempted** — `drain()`'s per-journey watermark/retry semantics would need a real redesign for partial-batch failure, disproportionate scope next to compression/backpressure |
 | 1.8 | **Ingest endpoint** (`services/collector`) | ✅ | `services/collector` — stdlib `http.server`, not FastAPI (deliberately; see its README). Receives exactly what `HttpSink` posts, round-trips it through `odyssey.jsonl.read_events`/`write_events` (one codec, not two), writes `<journey_id>.jsonl` files identical in shape to `FileSink`'s output. `GET /health`, optional `Authorization: Bearer` gate. Verified end-to-end with a live smoke test (SDK → spool → HttpSink → collector → readable file) in addition to its own test suite |
 | 1.9 | **Server-side idempotency** | 🟡 | Keys exist and are now populated on every event: `event_id`, `WRITER_META_KEY`, `hashing.idempotency_key()`. No server consumes them |
-| 1.10 | **Object-store landing** (raw layer) | ❌ | ADR 0002 defines the contract; no code |
+| 1.10 | **Object-store landing** (raw layer) | ✅ | `data_preparation`'s `collection/collect_from_object_store()` — S3-compatible via `boto3` (`odyssey-dataprep[s3]` extra, lazily imported only when no `client=` double is injected). Paginates `list_objects_v2`, reads each `*.jsonl` key, merges by each event's own `journey_id` through the same `_write_merged()` helper `collect_from_collector` uses. Wired into `odyssey data collect --bucket/--prefix/--endpoint-url` |
 | 1.11 | `TelemetryEvent` → API | 🟡 | Still **dead code**: 2 grep hits, both its own definition, zero call sites. Targets a `POST /api/v1/telemetry/events` and a `push_events()` that do not exist |
-| 1.12 | **Retention / TTL** | ❌ | Nothing prunes a drained spool. `Spool.close()` releases handles; it does not delete shards |
+| 1.12 | **Retention / TTL** | ✅ | `spool.gc(spool, *, min_age_seconds, journey_id=None, dry_run=False)` — deletes shards for fully-drained journeys (`watermark(jid) == highest_seq(jid)`) older than the cutoff, skips journeys with an open handle. `odyssey spool prune --older-than-days N [--journey ID] [--dry-run]` CLI. Operator-invoked only — no auto-GC on a timer |
 
 `HttpSink` needed no new abstraction — it is one class with one `send()` method,
 and `Spool.push()` / `IntervalDrainer` / the CLI all drive it unchanged, exactly
@@ -360,7 +360,7 @@ as predicted. See [§11 Extension points](#11-extension-points).
 |---|---|---|---|
 | 2.1 | Append-only local layout | ✅ | `<root>/journeys/<jid>/NNN.jsonl` + `watermarks.json` |
 | 2.2 | Shard rotation | ✅ | Survives the handle cache — `test_rotation_still_happens_with_a_cached_handle` |
-| 2.3 | Versioned wire format | ✅ | `SCHEMA_VERSION = "1.0"`, unknown MAJOR refuses to parse |
+| 2.3 | Versioned wire format | ✅ | `SCHEMA_VERSION = "2.0"` (bumped from 1.1 for item 0′.4's voice events), unknown MAJOR refuses to parse |
 | 2.4 | Truncated-writer tolerance | ✅ | Killed mid-append → every complete event returned |
 | 2.5 | Per-line rejection | ✅ | One bad line → one `Rejection`, file still readable |
 | 2.6 | Path-traversal / symlink containment | ✅ | `safe_child()` → `SpoolPathError`, on the cold path where it belongs |
@@ -368,13 +368,13 @@ as predicted. See [§11 Extension points](#11-extension-points).
 | 2.8 | `trainable_status` labelling | ✅ | 5-rule precedence |
 | 2.9 | Cumulative step projection | ✅ | Never stored, computed at read time |
 | 2.10 | Content hash + idempotency key | ✅ | Canonical JSON, SHA-256 |
-| 2.11 | Cross-project contract test | ✅ | Golden fixture (12 events) + parsed-import gate |
+| 2.11 | Cross-project contract test | ✅ | Golden fixture (13 events, incl. one `voice` event) + parsed-import gate |
 | 2.12 | **Writer-conflict detection** | ✅ | `FoldResult.writers` / `.writer_conflict` / `.incomplete_reason`; CLI exits 3 |
 | 2.13 | **Bounded open file descriptors** | ✅ | `max_open_shards` (default 256), LRU eviction, closed on terminal |
-| 2.14 | Retention / TTL on the raw layer | ❌ | Disk grows forever — same gap as 1.12 |
-| 2.15 | **Content-level PII scrub** | 🟡 | Key-based masking works. `PiiPolicy` / `RedactionPreview` are still types with no implementation — email/phone/card **in prose** is not scrubbed |
+| 2.14 | Retention / TTL on the raw layer | ✅ | `services/collector/prune.py` — `prune_dir(data_dir, older_than_days, dry_run=False)` deletes whole date-partition directories older than the cutoff; `python -m odyssey_collector.prune` CLI. Same operator-invoked-only shape as 1.12 |
+| 2.15 | **Content-level PII scrub** | ✅ | `odyssey.pii` — regex `scan_pii`/`redact_pii` for EMAIL/PHONE/CREDIT_CARD (Luhn-checked)/SSN, matching the existing `PiiRule` Literal. `data_preparation`'s `clean_dir(..., pii_policy=...)` (opt-in, off by default) and `validate_dir(..., content_pii_rules=...)` wire it in; `odyssey data clean/validate --pii-rules email,phone,...` CLI. Regex-based pattern matching, not NER — documented as such |
 
-This step is the strongest part of the repo. 2.14–2.15 are real but not blocking.
+This step is the strongest part of the repo, and 2.14–2.15 are now closed.
 
 ---
 
@@ -384,8 +384,8 @@ All nine stages have real code now, reachable via `odyssey data <cmd>`.
 
 | # | Stage | Status | What it needs |
 |---|---|---|---|
-| 3.1 | `collection/` | ✅ | `collect_from_spool`/`collect_from_collector` — reassembles rotated (spool) or date-partitioned (collector) shards into one flat `*.jsonl` per journey, grouped by each event's own `journey_id`, not filename. Object-store source not wired (needs 1.10, which doesn't exist) |
-| 3.2 | `cleaning/` | ✅ | `dedupe_journeys` (by `content_hash`), `drop_dead_turns` (splices a dead delta out of every later step's cumulative history, not just a naive per-message filter), `repair_encoding` (NFC + strip C0 controls). **Content-level PII scrub not here** — still needs 2.15, which doesn't exist; wiring it in is one call once it does |
+| 3.1 | `collection/` | ✅ | `collect_from_spool`/`collect_from_collector`/`collect_from_object_store` (item 1.10) — reassembles rotated (spool), date-partitioned (collector), or S3-key-listed (object store) shards into one flat `*.jsonl` per journey, grouped by each event's own `journey_id`, not filename |
+| 3.2 | `cleaning/` | ✅ | `dedupe_journeys` (by `content_hash`), `drop_dead_turns` (splices a dead delta out of every later step's cumulative history, not just a naive per-message filter), `repair_encoding` (NFC + strip C0 controls), `scrub_pii_content` (item 2.15, opt-in via `pii_policy=`) |
 | 3.3 | `normalization/` | ✅ | `data_preparation/src/odyssey_dataprep/normalization/` — `normalize_odyssey_dir` (thin wrapper over `export_dir`) and `normalize_byod_dir` (parse via `builders/messages` + `build_journey_from_messages`, dispatched by format name). Also fixes a real gap found while building it: `build_journey_from_messages` runs no `fold()`, so BYOD messages kept the dataclass default `trainable_status="not_trainable"` including the assistant's own replies — useless to every later stage. Now reuses `fold.derive_trainable_status` directly (empty signal list) to label them, same rule an odyssey-recorded journey with no signals gets |
 | 3.4 | `annotation/` | ✅ | `build_queue` (one JSONL line per journey, with a preview) + `apply_reviews` (a decision's `score` becomes the journey's `Reward` via `build_reward_from_scalar`, reused not re-derived; `approved`/`notes` land under `telemetry.data.annotation`). No external queue system — a local JSONL file is the queue |
 | 3.5 | `augmentation/` | 🟡 | `perturb_tool_calls` — deterministic synthetic negatives via a dropped required argument. Paraphrase and general synthetic-negative generation need an LLM in the loop and are deliberately not implemented — a real dependency this stage has no justification to add speculatively |
@@ -410,7 +410,7 @@ wrong, not just "runs without crashing").
 | 4.3 | **`curated_watermark`** | ✅ | `openspec/changes/add-journey-schema/design.md` Decision 9 — `{seq, hash}`, `hash = content_hash` over the sorted `(journey_id, journey_content_hash)` set. Implemented: `data_preparation/src/odyssey_dataprep/versioning.compute_curated_watermark` |
 | 4.4 | **`recipe_hash`** | ✅ | `odyssey_dataprep.recipes.recipe_hash` — `content_hash` over the recipe's own dict, reused not reinvented |
 | 4.5 | **Corpus version function** | ✅ | `odyssey_dataprep.versioning.corpus_version` — `content_hash({"recipe": recipe_hash, "watermark": curated_watermark})` per Decision 9. Reachable via `odyssey data recipe-hash` / `odyssey data corpus-version`, verified end-to-end against a real recipe file and a curated directory |
-| 4.6 | `datasets/registry.yaml` | ✅ | `odyssey_dataprep.datasets.update_registry` — `name -> versions -> manifest sha -> URI`, per `docs/STRUCTURE.md`. `uri` falls back to the manifest's own git-tracked path; no object store exists yet (1.10) |
+| 4.6 | `datasets/registry.yaml` | ✅ | `odyssey_dataprep.datasets.update_registry` — `name -> versions -> manifest sha -> URI`, per `docs/STRUCTURE.md`. `uri` falls back to the manifest's own git-tracked path; the object store landed for raw-layer collection (1.10), not wired into this stage's URI resolution |
 | 4.7 | `datasets/manifests/<name>/v1.json` | ✅ | `odyssey_dataprep.datasets.build_manifest`/`write_manifest` — shards + sha256 + row counts + `recipe_hash`, computed from the actual shard files, not trusted from the caller. `next_version` doubles as `curated_watermark.seq` (design.md Decision 9: one curation run = one seq) |
 | 4.8 | `datasets/cards/` | ✅ | `odyssey_dataprep.datasets.write_card` — provenance (from the manifest) + license/PII posture/intended use (caller-supplied, policy calls no code can infer) + splits (defaults to "not yet split", 3.7 doesn't exist). Reachable via `odyssey data build-corpus` / `odyssey data card`, verified end-to-end |
 
@@ -514,7 +514,7 @@ OpenAPI client*. The capture layer that people will call "the SDK" now lives in
 | 9.7 | `.pre-commit-config.yaml`, `CHANGELOG.md`, `SECURITY.md`, `CODEOWNERS` | ✅ | All four written — `.pre-commit-config.yaml` mirrors the isort/black/flake8 versions and args every member's own `Taskfile.yml` already runs; `CODEOWNERS` lives at `.github/CODEOWNERS`, GitHub's own convention |
 | 9.8 | Two no-op contract tests | ✅ | `packages/odyssey-core/docs/README.md` written — the 60-second quickstart both tests were checking against but that never existed. Verified live: breaking a backticked symbol in it now fails `test_docs_reference_only_symbols_that_exist` |
 | 9.9 | **ADR for the capture layer** | ✅ | [`adr/0004-capture-layer.md`](adr/0004-capture-layer.md) — the design in §1 (event-sourced core, ambient context, single-writer contract with detection, never-raise boundary, local-only recording), and the deliberate exception it carries to ADR 0001 rule 1 (`packages/` = no side effects) |
-| 9.10 | 77 pyrefly errors in `tests/` | ❌ | **Re-verified 2026-08-27: now 158, not 77** — grown since last measured. The *"No `pyrefly.toml` found"* line is informational, not a stop: `pyrefly check` still runs and still reports `0 errors` today, because `task types`'s auto-config checks `src` + `scripts` only, confirmed unaffected. Adding `[tool.pyrefly] project-includes = ["src", "tests", "scripts"]` is what surfaces the 158 — one is real (`src/odyssey/integrations/livekit.py:893`, a `getattr`+`callable` narrowing gap pyrefly can't see through on an `Any`-typed value; not a runtime bug, the full suite passes), the other 157 are `tests/`, overwhelmingly "assert x is not None" on one line not narrowing `x.attr` on the next. Enabling `tests/` type-checking is a scope decision (more strict tests, ~150+ touch points), not a bug fix — left open, not attempted here for that reason |
+| 9.10 | 77 pyrefly errors in `tests/` | 🟡 | **Re-verified 2026-08-27: 158 total when `tests/` narrowing is enabled** — one was real (`src/odyssey/integrations/livekit.py`, a `getattr`+`callable` narrowing gap pyrefly can't see through on an `Any`-typed value; not a runtime bug) and is now fixed with a documented `# pyrefly: ignore` suppression. The other 157 are `tests/`, overwhelmingly "assert x is not None" on one line not narrowing `x.attr` on the next. `task types` still checks `src` + `scripts` only (`0 errors, 21 suppressed`); enabling `tests/` type-checking on top of that is a scope decision (more strict tests, ~150+ touch points), not a bug fix — left open, not attempted here for that reason |
 
 ---
 
@@ -1396,7 +1396,6 @@ or schedule a rewrite of `primitives.py`.
 - **`TelemetryEvent`** — a `to_api_dict()` targeting
   `POST /api/v1/telemetry/events` and a docstring citing a `push_events()`
   pipeline. Neither exists. Zero call sites. Wire it into Step 1 or delete it.
-- **`PiiPolicy` / `RedactionPreview`** — types with no implementation (2.15).
 - **`ConversationSummary`** — declared, unused.
 
 ### Formerly missing from Phase 1 (all three resolved)
@@ -1439,18 +1438,24 @@ or schedule a rewrite of `primitives.py`.
   `init(handle_sigterm=True)` in a container, or accept that a stopped pod leaves
   undrained events on disk for the next drain.
 - **Async streaming is not wrapped** (0′.5). Sync `messages.stream()` is.
-- **No sampling** (0′.6). Every call is recorded.
-- **No retention** (1.12 / 2.14). Nothing prunes a drained spool.
-- **Content-level PII is not scrubbed** (2.15). Only secret-looking *keys* are.
 - **`writer_id` detects a conflict, it does not prevent one.** Two processes
   recording one journey still corrupt it; the fold refuses the result rather than
   exporting it. Per-writer sequences would prevent it and cost a
-  `SCHEMA_VERSION` major bump.
-- **158 pyrefly errors, re-verified 2026-08-27, if `tests/` is opted into
-  type-checking** (9.10) — one real (`livekit.py:893`), 157 are `assert x is
-  not None` narrowing gaps in `tests/`. `task types` in CI is unaffected;
-  auto-config covers `src` + `scripts` only. Enabling `tests/` is a scope
-  decision, not attempted here — see item 9.10's own row for detail.
+  `SCHEMA_VERSION` major bump — the same kind of major bump item 0′.4 just used
+  for `voice` events.
+- **157 pyrefly narrowing gaps remain unaddressed in `tests/`** if opted into
+  type-checking (9.10) — the one real bug (`livekit.py`) is now suppressed with
+  a documented comment. `task types` in CI is unaffected; auto-config covers
+  `src` + `scripts` only. Enabling `tests/` is a scope decision, not attempted
+  here — see item 9.10's own row for detail.
+- **A schema-1.x `*.jsonl` shard no longer parses** (0′.4's `SCHEMA_VERSION`
+  1.1 → 2.0 major bump). No migration tool ships with this repo; a 1.x file on
+  disk is stuck unless something else rewrites it forward.
+- **LangGraph/LlamaIndex hooks and the OTel bridge are not started** (0′.2/0.11
+  /0′.3). LangChain itself is done (0.10).
+- **Cross-journey batching is not attempted** (1.7). One POST per journey only;
+  a redesign of `drain()`'s per-journey watermark/retry semantics would be
+  needed for partial-batch failure.
 - **The artifact is one training example per call, not per turn, by default in
   the LiveKit deployment.** `last_step_only=True` keeps the final step, which is
   the whole conversation; the per-turn steps that a curriculum wanting one example
@@ -1547,7 +1552,9 @@ an entry in `_PAYLOAD_FIELD` in `primitives.py`; add a decoder branch in
 `jsonl.decode_event`; handle it in the `fold()` payload partition. If the on-wire
 shape of an existing kind changes incompatibly, bump `SCHEMA_VERSION`'s MAJOR —
 old readers then refuse the file instead of mis-parsing it. **This is the path
-for voice events (item 0′.4) if `metadata` turns out not to be enough.**
+item 0′.4 actually took for voice events** (`"voice"`, `VoiceEvent`,
+`SCHEMA_VERSION` 1.1 → 2.0) — a worked example of this section now that it's
+shipped, not just a hypothetical.
 
 **A new CLI command group.** ADR 0003 is built — `cli/` owns the `odyssey`
 console script (item 9.3, done) and dispatches plugins lazily from the
