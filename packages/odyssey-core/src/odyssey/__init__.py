@@ -81,7 +81,15 @@ from odyssey.sft import (
     sft_examples,
 )
 from odyssey.sinks import FileSink, HttpSink, HttpSinkError
-from odyssey.spool import DrainResult, IntervalDrainer, Sink, Spool, SpoolConfig, drain
+from odyssey.spool import (
+    DrainResult,
+    IntervalDrainer,
+    Sink,
+    Spool,
+    SpoolConfig,
+    drain,
+    gc,
+)
 
 __version__ = "0.1.0"
 
@@ -155,4 +163,5 @@ __all__ = [
     "IntervalDrainer",
     "DrainResult",
     "drain",
+    "gc",
 ]

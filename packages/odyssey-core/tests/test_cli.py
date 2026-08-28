@@ -119,6 +119,61 @@ def test_status_on_an_empty_spool(tmp_path, capsys):
 
 
 # --------------------------------------------------------------------------
+# prune — retention/TTL (items 1.12/2.14)
+# --------------------------------------------------------------------------
+
+
+def test_prune_deletes_a_fully_drained_old_shard(tmp_path, capsys):
+    import os
+
+    root = tmp_path / "spool"
+    s = seed(root)
+    s.close(JID)
+    out = tmp_path / "out"
+    main(["--spool", str(root), "push", "--out", str(out)])
+    capsys.readouterr()
+
+    for shard in s.shards(JID):
+        when = shard.stat().st_mtime - 999_999
+        os.utime(shard, (when, when))
+
+    rc = main(["--spool", str(root), "prune", "--older-than-days", "1"])
+    assert rc == 0
+    assert "deleted" in capsys.readouterr().out
+    assert s.shards(JID) == []
+
+
+def test_prune_dry_run_deletes_nothing(tmp_path, capsys):
+    root = tmp_path / "spool"
+    s = seed(root)
+    s.close(JID)
+    main(["--spool", str(root), "push", "--out", str(tmp_path / "out")])
+    capsys.readouterr()
+
+    rc = main(
+        [
+            "--spool",
+            str(root),
+            "prune",
+            "--older-than-days",
+            "0",
+            "--dry-run",
+        ]
+    )
+    assert rc == 0
+    assert "would delete" in capsys.readouterr().out
+    assert s.shards(JID)
+
+
+def test_prune_reports_nothing_on_an_undrained_spool(tmp_path, capsys):
+    root = tmp_path / "spool"
+    seed(root)
+    rc = main(["--spool", str(root), "prune", "--older-than-days", "0"])
+    assert rc == 0
+    assert "deleted nothing" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
 # health — "is it actually recording?"
 #
 # Read-only against the spool, so it is safe to run while a process is writing.

@@ -36,6 +36,7 @@ import dataclasses
 import json
 import os
 import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -655,6 +656,67 @@ def drain(
         gaps=gaps,
         journeys=touched,
     )
+
+
+def gc(
+    spool: Spool,
+    *,
+    min_age_seconds: float,
+    journey_id: Optional[str] = None,
+    dry_run: bool = False,
+) -> List[Path]:
+    """Delete shards for fully-drained journeys older than ``min_age_seconds``
+    (items 1.12/2.14: nothing prunes the local spool today).
+
+    A journey's shards qualify only when every event they hold has already
+    been acknowledged by a sink — ``watermark(jid) == highest_seq(jid)``.
+    The shard *is* the retry queue (see the module docstring); deleting one
+    that still has undrained events would silently lose data no sink has
+    ever seen. Age is measured off each shard file's own mtime, not the
+    watermark, so a just-drained shard still gets a grace period.
+
+    Skips any journey with a currently-open handle — an operator-invoked
+    prune must never race a live writer. Not run on a timer: this is an
+    explicit, caller-invoked operation (``odyssey spool prune``), the same
+    "the shard is the retry queue" discipline that keeps drain itself
+    caller-triggered rather than automatic.
+
+    Returns the shard paths deleted (or that *would* be deleted, under
+    ``dry_run``) — never raises on a single bad shard, since one unreadable
+    or already-vanished file must not abort the rest of the sweep.
+    """
+    now = time.time()
+    targets = [journey_id] if journey_id else spool.journey_ids()
+    deleted: List[Path] = []
+
+    for jid in targets:
+        if jid in spool._open:
+            continue
+        mark = spool.watermark(jid)
+        highest = spool.highest_seq(jid)
+        if highest is None or mark is None or mark != highest:
+            continue  # not fully drained, or nothing recorded yet
+
+        for shard in spool.shards(jid):
+            try:
+                age = now - shard.stat().st_mtime
+            except OSError:
+                continue
+            if age < min_age_seconds:
+                continue
+            deleted.append(shard)
+            if not dry_run:
+                shard.unlink(missing_ok=True)
+
+        if not dry_run:
+            journey_dir = spool.root / "journeys" / jid
+            try:
+                if journey_dir.is_dir() and not any(journey_dir.iterdir()):
+                    journey_dir.rmdir()
+            except OSError:
+                pass
+
+    return deleted
 
 
 def _missing_seqs(events: List[JourneyEvent]) -> List[int]:

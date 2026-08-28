@@ -19,6 +19,7 @@ from odyssey.primitives import (
     ToolCall,
     ToolResponse,
 )
+from odyssey.sinks import FileSink
 from odyssey.spool import (
     REDACTED,
     DrainResult,
@@ -27,6 +28,7 @@ from odyssey.spool import (
     SpoolConfig,
     SpoolPathError,
     drain,
+    gc,
     redact_event,
     redact_header,
     safe_child,
@@ -874,3 +876,92 @@ def test_a_resumed_drain_does_not_write_a_second_header(tmp_path):
     text = (tmp_path / "out" / f"{JID}.jsonl").read_text()
     assert text.count("odyssey_schema_version") == 1
     assert len(read_events(tmp_path / "out" / f"{JID}.jsonl").events) == 2
+
+
+# --------------------------------------------------------------------------
+# gc() — retention/TTL (items 1.12/2.14)
+# --------------------------------------------------------------------------
+
+
+def _age_shard(s: Spool, journey_id: str, seconds: float) -> None:
+    """Back-date every shard file's mtime so it looks old enough to prune."""
+    import os as _os
+
+    for shard in s.shards(journey_id):
+        when = shard.stat().st_mtime - seconds
+        _os.utime(shard, (when, when))
+
+
+def test_gc_leaves_undrained_journeys_alone(tmp_path):
+    s = spool(tmp_path)
+    s.record(ev(0), header=HEADER)
+    _age_shard(s, JID, 999_999)
+    # Never drained -- watermark is None -- must never be deleted.
+    deleted = gc(s, min_age_seconds=0)
+    assert deleted == []
+    assert s.shards(JID)
+
+
+def test_gc_deletes_a_fully_drained_old_shard(tmp_path):
+    s = spool(tmp_path)
+    s.record(ev(0), header=HEADER)
+    s.close(JID)
+    s.push(FileSink(tmp_path / "out"))
+    assert s.watermark(JID) == s.highest_seq(JID)
+    _age_shard(s, JID, 999_999)
+
+    deleted = gc(s, min_age_seconds=1)
+    assert len(deleted) == 1
+    assert not deleted[0].exists()
+    assert s.shards(JID) == []
+
+
+def test_gc_respects_min_age(tmp_path):
+    s = spool(tmp_path)
+    s.record(ev(0), header=HEADER)
+    s.close(JID)
+    s.push(FileSink(tmp_path / "out"))
+
+    deleted = gc(s, min_age_seconds=999_999)
+    assert deleted == []
+    assert s.shards(JID)
+
+
+def test_gc_dry_run_reports_without_deleting(tmp_path):
+    s = spool(tmp_path)
+    s.record(ev(0), header=HEADER)
+    s.close(JID)
+    s.push(FileSink(tmp_path / "out"))
+    _age_shard(s, JID, 999_999)
+
+    deleted = gc(s, min_age_seconds=1, dry_run=True)
+    assert len(deleted) == 1
+    assert deleted[0].exists()  # nothing actually removed
+    assert s.shards(JID)
+
+
+def test_gc_skips_a_journey_with_an_open_handle(tmp_path):
+    s = spool(tmp_path)
+    s.record(ev(0), header=HEADER)  # leaves the shard handle open/cached
+    s.push(FileSink(tmp_path / "out"))
+    _age_shard(s, JID, 999_999)
+
+    deleted = gc(s, min_age_seconds=1)
+    assert deleted == []
+    assert s.shards(JID)
+
+
+def test_gc_scoped_to_one_journey_id(tmp_path):
+    s = spool(tmp_path)
+    other = dataclasses.replace(ev(0), journey_id="other")
+    s.record(ev(0), header=HEADER)
+    s.record(other, header=dataclasses.replace(HEADER, journey_id="other"))
+    s.close()
+    s.push(FileSink(tmp_path / "out"))
+    _age_shard(s, JID, 999_999)
+    _age_shard(s, "other", 999_999)
+
+    deleted = gc(s, min_age_seconds=1, journey_id=JID)
+    assert len(deleted) == 1
+    assert s.shards(JID) == []
+    assert s.shards("other")

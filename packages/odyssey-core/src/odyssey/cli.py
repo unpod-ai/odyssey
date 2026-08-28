@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from odyssey.sinks import FileSink
-from odyssey.spool import Spool, SpoolConfig, drain
+from odyssey.spool import Spool, SpoolConfig, drain, gc
 
 __all__ = ["FileSink", "build_parser", "main", "register"]
 
@@ -149,6 +149,25 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_prune(args: argparse.Namespace) -> int:
+    """Delete shards for fully-drained journeys older than ``--older-than-days``
+    (items 1.12/2.14). Never touches a journey with undrained events."""
+    spool = Spool(SpoolConfig(root=Path(args.spool)))
+    deleted = gc(
+        spool,
+        min_age_seconds=args.older_than_days * 86400,
+        journey_id=args.journey,
+        dry_run=args.dry_run,
+    )
+    verb = "would delete" if args.dry_run else "deleted"
+    if not deleted:
+        print(f"{verb} nothing")
+        return 0
+    for path in deleted:
+        print(f"{verb} {path}")
+    return 0
+
+
 def _cmd_health(args: argparse.Namespace) -> int:
     """Answer "is it actually recording?" — for a spool, and for this process.
 
@@ -262,6 +281,21 @@ def build_parser() -> argparse.ArgumentParser:
         "journey", nargs="?", default=None, help="journey_id (default: all)"
     )
     show.set_defaults(func=_cmd_show)
+
+    prune = sub.add_parser(
+        "prune", help="delete shards for fully-drained journeys older than N days"
+    )
+    prune.add_argument(
+        "--older-than-days",
+        type=float,
+        required=True,
+        help="minimum shard file age, in days",
+    )
+    prune.add_argument("--journey", default=None, help="prune only this journey_id")
+    prune.add_argument(
+        "--dry-run", action="store_true", help="list what would be deleted only"
+    )
+    prune.set_defaults(func=_cmd_prune)
 
     health = sub.add_parser(
         "health", help="is it recording? per-journey foldability and failures"
@@ -380,6 +414,24 @@ def register(app: Any) -> None:
             argv.append(journey)
         _run(argv)
 
+    def prune(
+        older_than_days: float = typer.Option(
+            ..., "--older-than-days", help="minimum shard file age, in days"
+        ),
+        journey: Optional[str] = typer.Option(None, help="prune only this journey_id"),
+        dry_run: bool = typer.Option(
+            False, "--dry-run", help="list what would be deleted only"
+        ),
+        spool: str = typer.Option(".odyssey", help="spool root"),
+    ) -> None:
+        """Delete shards for fully-drained journeys older than N days."""
+        argv = ["--spool", spool, "prune", "--older-than-days", str(older_than_days)]
+        if journey:
+            argv += ["--journey", journey]
+        if dry_run:
+            argv.append("--dry-run")
+        _run(argv)
+
     def health(
         journey: Optional[str] = typer.Option(
             None, help="inspect only this journey_id"
@@ -395,7 +447,7 @@ def register(app: Any) -> None:
             argv.append("--json")
         _run(argv)
 
-    for fn in (push, export, sft, dpo, status, show, health):
+    for fn in (push, export, sft, dpo, status, show, prune, health):
         app.command()(fn)
 
 
