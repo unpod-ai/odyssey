@@ -58,11 +58,11 @@ from typing import Any, Callable, Dict, Optional
 from odyssey.capture import JourneyHandle, _jsonable
 from odyssey.client import require_client
 from odyssey.context import JourneyContext, SeqAllocator, bind
-from odyssey.primitives import Message, ToolCall, ToolResponse
+from odyssey.primitives import Message, Role, TerminationReason, ToolCall, ToolResponse
 
 __all__ = ["OdysseyCallbackHandler"]
 
-_ROLE_BY_TYPE = {
+_ROLE_BY_TYPE: Dict[str, Role] = {
     "human": "user",
     "ai": "assistant",
     "system": "system",
@@ -91,9 +91,12 @@ class _Recorder:
         # run_id -> the top-level run_id it belongs to.
         self._roots: Dict[str, str] = {}
 
-    def _guard(self, label: str, fn: Callable[[], None]) -> None:
+    def _guard(self, label: str, fn: Callable[[], Any]) -> None:
         """Run a capture step from inside a LangChain callback. Never raises
-        — an exception here must not break the chain it is observing."""
+        — an exception here must not break the chain it is observing. `fn`'s
+        return value is always discarded, `Any` rather than `None` only so a
+        call site can hand this a lambda that happens to return something
+        (`self._ctx_for(root)`) without a needless `; return None`."""
         try:
             fn()
         except Exception as exc:  # noqa: BLE001 - capture is best-effort
@@ -132,7 +135,11 @@ class _Recorder:
         return JourneyHandle(self._ctx_for(root))
 
     def _end(
-        self, root: str, *, reason: str = "ENV_DONE", error: Optional[str] = None
+        self,
+        root: str,
+        *,
+        reason: TerminationReason = "ENV_DONE",
+        error: Optional[str] = None,
     ) -> None:
         ctx = self._journeys.pop(root, None)
         self._roots = {k: v for k, v in self._roots.items() if v != root}

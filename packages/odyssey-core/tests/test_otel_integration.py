@@ -165,11 +165,14 @@ def test_a_genai_span_with_input_output_message_attributes_is_recorded(tmp_path)
 
     recorded = events(TRACE)
     assert [e.kind for e in recorded] == ["message", "message", "terminal"]
+    assert recorded[0].message is not None
     assert recorded[0].message.role == "user"
     assert recorded[0].message.content == "book Tuesday"
     assert recorded[0].model_id == "gpt-4.1"
+    assert recorded[1].message is not None
     assert recorded[1].message.role == "assistant"
     assert recorded[1].message.content == "sure, when?"
+    assert recorded[2].terminal is not None
     assert recorded[2].terminal.termination_reason == "ENV_DONE"
 
 
@@ -295,9 +298,10 @@ def test_an_error_status_closes_the_journey_with_error_reason(tmp_path):
         description="boom",
     )
 
-    terminal = [e for e in events(TRACE) if e.kind == "terminal"][0]
-    assert terminal.terminal.termination_reason == "ERROR"
-    assert terminal.terminal.error == "boom"
+    terminal = [e for e in events(TRACE) if e.kind == "terminal"][0].terminal
+    assert terminal is not None
+    assert terminal.termination_reason == "ERROR"
+    assert terminal.error == "boom"
 
 
 def test_tool_calls_in_gen_ai_content_are_parsed(tmp_path):
@@ -333,9 +337,11 @@ def test_tool_calls_in_gen_ai_content_are_parsed(tmp_path):
     )
 
     msgs = [e.message for e in events(TRACE) if e.kind == "message" and e.message]
-    assert msgs[0].tool_calls[0].name == "book"
-    assert msgs[0].tool_calls[0].arguments == {"day": "mon"}
-    assert msgs[0].tool_calls[0].id == "c1"
+    tool_calls = msgs[0].tool_calls
+    assert tool_calls is not None
+    assert tool_calls[0].name == "book"
+    assert tool_calls[0].arguments == {"day": "mon"}
+    assert tool_calls[0].id == "c1"
 
 
 def test_malformed_gen_ai_content_is_reported_not_fatal(tmp_path):
@@ -445,8 +451,9 @@ def test_the_processor_translates_a_root_span_end_to_end(tmp_path):
 
     jid = format(0xABCDEF, "032x")
     assert roles(jid) == ["user", "assistant"]
-    terminal = [e for e in events(jid) if e.kind == "terminal"][0]
-    assert terminal.terminal.termination_reason == "ENV_DONE"
+    terminal = [e for e in events(jid) if e.kind == "terminal"][0].terminal
+    assert terminal is not None
+    assert terminal.termination_reason == "ENV_DONE"
 
 
 def test_the_processor_maps_error_status_to_the_error_reason(tmp_path):
@@ -464,9 +471,10 @@ def test_the_processor_maps_error_status_to_the_error_reason(tmp_path):
     processor.on_end(span)
 
     jid = format(0x1, "032x")
-    terminal = [e for e in events(jid) if e.kind == "terminal"][0]
-    assert terminal.terminal.termination_reason == "ERROR"
-    assert terminal.terminal.error == "provider timeout"
+    terminal = [e for e in events(jid) if e.kind == "terminal"][0].terminal
+    assert terminal is not None
+    assert terminal.termination_reason == "ERROR"
+    assert terminal.error == "provider timeout"
 
 
 def test_the_processor_treats_a_span_with_a_parent_as_non_root(tmp_path):

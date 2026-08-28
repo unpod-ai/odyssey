@@ -73,7 +73,7 @@ class _CapturingHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def log_message(self, *args: object) -> None:  # keep test output quiet
+    def log_message(self, format: str, *args: object) -> None:  # keep test output quiet
         pass
 
 

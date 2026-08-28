@@ -124,8 +124,10 @@ def test_openai_legacy_function_roundtrip_builds_journey():
         conversation_id="legacy_fn_conv",
         data_source="langsmith_legacy_function_call",
     )
-    assert journey.metrics.num_tool_calls == 1
-    assert journey.metrics.num_tool_failures == 0
+    metrics = journey.metrics
+    assert metrics is not None
+    assert metrics.num_tool_calls == 1
+    assert metrics.num_tool_failures == 0
     # One exchange -- ask, look up, answer -- so one cumulative step holding all
     # four messages.
     assert len(journey.steps) == 1
@@ -174,6 +176,8 @@ def test_openai_bad_arguments_string_raises():
 
 def test_openai_non_dict_entry_raises():
     with pytest.raises(TypeError, match="must be a dict"):
+        # pyrefly: ignore[bad-argument-type]  — deliberately the wrong shape,
+        # exactly what this test exists to prove is rejected.
         messages_from_openai_chat([{"role": "user", "content": "ok"}, "not a dict"])
 
 
@@ -285,6 +289,7 @@ def test_anthropic_tool_result_with_error_flag():
     ]
     msgs = messages_from_anthropic_messages(raw)
     assert msgs[0].role == "tool"
+    assert msgs[0].tool_response is not None
     assert msgs[0].tool_response.error == "tool_error"
 
 
@@ -311,8 +316,18 @@ def test_anthropic_parallel_tool_results_all_preserved():
     msgs = messages_from_anthropic_messages(raw)
     assert len(msgs) == 3
     assert all(m.role == "tool" for m in msgs)
-    assert [m.tool_response.id for m in msgs] == ["tu_1", "tu_2", "tu_3"]
-    assert [m.tool_response.response for m in msgs] == ["result 1", "result 2", "boom"]
+    assert all(m.tool_response is not None for m in msgs)
+    assert [m.tool_response.id for m in msgs if m.tool_response] == [
+        "tu_1",
+        "tu_2",
+        "tu_3",
+    ]
+    assert [m.tool_response.response for m in msgs if m.tool_response] == [
+        "result 1",
+        "result 2",
+        "boom",
+    ]
+    assert msgs[2].tool_response is not None
     assert msgs[2].tool_response.error == "tool_error"
 
 
@@ -451,6 +466,7 @@ def test_vercel_structured_dict_result_is_json_encoded():
     msgs = messages_from_vercel_ai_sdk(raw)
     assert msgs[0].role == "tool"
     # Full payload preserved as JSON; key order is sort_keys=True.
+    assert msgs[0].tool_response is not None
     assert msgs[0].tool_response.response == '{"temp": 72, "units": "F"}'
 
 
@@ -464,6 +480,7 @@ def test_vercel_numeric_result_is_stringified():
         }
     ]
     msgs = messages_from_vercel_ai_sdk(raw)
+    assert msgs[0].tool_response is not None
     assert msgs[0].tool_response.response == "42"
 
 
@@ -477,6 +494,7 @@ def test_vercel_list_result_is_json_encoded():
         }
     ]
     msgs = messages_from_vercel_ai_sdk(raw)
+    assert msgs[0].tool_response is not None
     assert msgs[0].tool_response.response == "[1, 2, 3]"
 
 
@@ -495,6 +513,7 @@ def test_anthropic_structured_dict_tool_result_is_json_encoded():
     ]
     msgs = messages_from_anthropic_messages(raw)
     assert msgs[0].role == "tool"
+    assert msgs[0].tool_response is not None
     assert msgs[0].tool_response.response == '{"temp": 72, "units": "F"}'
 
 
@@ -515,7 +534,9 @@ def test_vercel_parallel_tool_results_each_become_tool_message():
     ]
     msgs = messages_from_vercel_ai_sdk(raw)
     assert [m.role for m in msgs] == ["tool", "tool"]
-    assert [m.tool_response.id for m in msgs] == ["c1", "c2"]
+    assert all(m.tool_response is not None for m in msgs)
+    assert [m.tool_response.id for m in msgs if m.tool_response] == ["c1", "c2"]
+    assert msgs[1].tool_response is not None
     assert msgs[1].tool_response.error == "tool_error"
 
 

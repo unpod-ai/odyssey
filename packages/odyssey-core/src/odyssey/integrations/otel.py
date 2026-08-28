@@ -197,9 +197,12 @@ class _Recorder:
         self._metadata = metadata or {}
         self._journeys: Dict[str, JourneyContext] = {}
 
-    def _guard(self, label: str, fn: Callable[[], None]) -> None:
+    def _guard(self, label: str, fn: Callable[[], Any]) -> None:
         """Run a capture step from inside an OTel callback. Never raises —
-        an exception here must not break the app being observed."""
+        an exception here must not break the app being observed. `fn`'s
+        return value is always discarded, `Any` rather than `None` only so a
+        call site can hand this a lambda that happens to return something
+        (`self._ctx_for(trace_id)`) without a needless `; return None`."""
         try:
             fn()
         except Exception as exc:  # noqa: BLE001 - capture is best-effort

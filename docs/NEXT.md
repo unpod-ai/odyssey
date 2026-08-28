@@ -213,11 +213,14 @@ overhead this item was chasing is now addressed without that redesign), 3.5
 (`paraphrase_journey`/`generate_synthetic_negative`, optional
 `odyssey-dataprep[llm]` extra, both opt-in and off by default — the
 synthetic-negative chain's `superseded`-then-`trainable` step order was
-verified against `odyssey.dpo.dpo_pairs`'s real ordering rule).
+verified against `odyssey.dpo.dpo_pairs`'s real ordering rule), 9.10
+(`tests/` now permanently in `pyrefly`'s `project-includes`; 200 errors
+surfaced, not the ~157 estimated — 4 were real `src/` type bugs, fixed
+properly; the other 196 were narrowing gaps, fixed per call site).
 
 **Still open:** LlamaIndex hooks (a genuinely different, non-LangChain-compatible
 instrumentation API — **deliberately deferred, bundled with item 9.4**, not
-started here), 9.10's 157 `tests/` narrowing gaps (scope decision).
+started here).
 
 ---
 

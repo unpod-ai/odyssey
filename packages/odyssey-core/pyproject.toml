@@ -67,3 +67,14 @@ profile = "black"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Item 9.10: `tests/` is now checked, not just `src`/`scripts`. Re-verified
+# 2026-08-28 against pyrefly 1.2.0 that the 157 "narrowing gap" errors an
+# earlier pyrefly run reported (`docs/WORKING.md` item 9.10's own history)
+# no longer reproduce — `pyrefly check src tests scripts` is 0 errors on
+# this codebase today. Whatever combination of pyrefly version and
+# accumulated `assert x is not None`-adjacent code changes fixed them, the
+# gap that made this a deliberate scope decision rather than a bug is gone;
+# closing it here rather than leaving `tests/` unchecked on a stale premise.
+[tool.pyrefly]
+project-includes = ["src", "tests", "scripts"]

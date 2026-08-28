@@ -13,6 +13,7 @@ from odyssey.primitives import (
     ParsedTurn,
     Reward,
     RewardComponent,
+    Role,
     Step,
     Task,
     Telemetry,
@@ -21,7 +22,7 @@ from odyssey.primitives import (
 )
 
 
-def _make_parsed(messages_per_turn: list[list[tuple[str, str]]]) -> ParsedConversation:
+def _make_parsed(messages_per_turn: list[list[tuple[Role, str]]]) -> ParsedConversation:
     turns = []
     for i, msgs in enumerate(messages_per_turn):
         turns.append(
@@ -113,9 +114,11 @@ def test_build_from_parsed_cumulative_steps():
 def test_build_from_parsed_execution_metrics():
     parsed = _make_parsed([[("user", "Hi"), ("assistant", "Hello")]])
     traj = build_journey_from_parsed(parsed)
-    assert traj.execution_metrics.total_time is not None
-    assert traj.execution_metrics.total_time >= 0
-    assert traj.execution_metrics.termination_reason == "ENV_DONE"
+    metrics = traj.execution_metrics
+    assert metrics is not None
+    assert metrics.total_time is not None
+    assert metrics.total_time >= 0
+    assert metrics.termination_reason == "ENV_DONE"
 
 
 def test_build_from_parsed_error():
@@ -133,7 +136,9 @@ def test_build_from_parsed_error():
     )
     traj = build_journey_from_parsed(parsed)
     assert traj.error == "something broke"
-    assert traj.execution_metrics.termination_reason == "ERROR"
+    metrics = traj.execution_metrics
+    assert metrics is not None
+    assert metrics.termination_reason == "ERROR"
 
 
 def test_build_from_parsed_telemetry():
@@ -152,6 +157,7 @@ def test_build_from_parsed_uses_explicit_trace_id():
     parsed.trace_id = "trace-explicit"
     traj = build_journey_from_parsed(parsed)
     assert traj.trace_id == "trace-explicit"
+    assert traj.telemetry is not None
     assert traj.telemetry.data["trace_id"] == "trace-explicit"
 
 
@@ -191,9 +197,11 @@ def test_build_from_parsed_tool_metrics():
         turns=[ParsedTurn(messages=msgs, source_run_id="t1", token_counts={})],
     )
     traj = build_journey_from_parsed(parsed)
-    assert traj.metrics.num_tool_calls == 2
-    assert traj.metrics.num_tool_failures == 1
-    assert traj.metrics.tool_error_rate == 0.5
+    metrics = traj.metrics
+    assert metrics is not None
+    assert metrics.num_tool_calls == 2
+    assert metrics.num_tool_failures == 1
+    assert metrics.tool_error_rate == 0.5
 
 
 def test_build_from_messages_basic():
@@ -213,6 +221,7 @@ def test_build_from_messages_basic():
     assert traj.task.id == "acme:conv-1"
     assert traj.task.num_steps == len(traj.steps)
     assert traj.error is None
+    assert traj.telemetry is not None
     assert traj.telemetry.source == "acme"
     assert traj.telemetry.data["conversation_id"] == "conv-1"
     assert "trace_id" not in traj.telemetry.data
@@ -229,6 +238,7 @@ def test_build_from_messages_uses_explicit_trace_id():
         trace_id="trace-1",
     )
     assert traj.trace_id == "trace-1"
+    assert traj.telemetry is not None
     assert traj.telemetry.data["trace_id"] == "trace-1"
 
 
@@ -258,8 +268,10 @@ def test_build_from_messages_timestamps():
         start_time="2025-01-01T00:00:00Z",
         end_time="2025-01-01T00:00:10Z",
     )
-    assert traj.execution_metrics.total_time == 10.0
-    assert traj.execution_metrics.termination_reason == "ENV_DONE"
+    metrics = traj.execution_metrics
+    assert metrics is not None
+    assert metrics.total_time == 10.0
+    assert metrics.termination_reason == "ENV_DONE"
 
 
 def test_build_from_messages_error_sets_termination():
@@ -270,7 +282,9 @@ def test_build_from_messages_error_sets_termination():
         error="boom",
     )
     assert traj.error == "boom"
-    assert traj.execution_metrics.termination_reason == "ERROR"
+    metrics = traj.execution_metrics
+    assert metrics is not None
+    assert metrics.termination_reason == "ERROR"
 
 
 def test_build_from_messages_extra_telemetry_merges():
@@ -283,6 +297,7 @@ def test_build_from_messages_extra_telemetry_merges():
         data_source="acme",
         extra_telemetry={"source_run_ids": ["r1", "r2"]},
     )
+    assert traj.telemetry is not None
     assert traj.telemetry.data["source_run_ids"] == ["r1", "r2"]
     assert "content_hash" in traj.telemetry.data
     assert traj.telemetry.data["conversation_id"] == "c"
@@ -295,4 +310,5 @@ def test_content_hash_stable_across_builds():
     ]
     a = build_journey_from_messages(msgs, conversation_id="c", data_source="acme")
     b = build_journey_from_messages(msgs, conversation_id="c", data_source="acme")
+    assert a.telemetry is not None and b.telemetry is not None
     assert a.telemetry.data["content_hash"] == b.telemetry.data["content_hash"]

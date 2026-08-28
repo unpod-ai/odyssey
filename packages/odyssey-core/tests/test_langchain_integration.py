@@ -95,10 +95,13 @@ def test_a_plain_llm_call_is_recorded_as_one_journey(tmp_path):
     recorded = events(str(run_id))
     kinds = [e.kind for e in recorded]
     assert kinds == ["message", "message", "terminal"]
+    assert recorded[0].message is not None
     assert recorded[0].message.role == "user"
     assert recorded[0].message.content == "book me a slot"
+    assert recorded[1].message is not None
     assert recorded[1].message.role == "assistant"
     assert recorded[1].message.content == "sure, when?"
+    assert recorded[2].terminal is not None
     assert recorded[2].terminal.termination_reason == "ENV_DONE"
 
 
@@ -120,7 +123,7 @@ def test_chat_model_messages_map_roles_correctly(tmp_path):
     )
 
     recorded = events(str(run_id))
-    roles = [e.message.role for e in recorded if e.kind == "message"]
+    roles = [e.message.role for e in recorded if e.kind == "message" and e.message]
     assert roles == ["system", "user", "assistant"]
 
 
@@ -151,7 +154,14 @@ def test_a_chain_wrapping_an_llm_and_a_tool_is_one_journey(tmp_path):
     recorded = events(str(chain_id))
     kinds = [e.kind for e in recorded]
     assert kinds == ["message", "message", "message", "message", "terminal"]
+    assert (
+        recorded[2].message is not None and recorded[2].message.tool_calls is not None
+    )
     assert recorded[2].message.tool_calls[0].name == "book_slot"
+    assert (
+        recorded[3].message is not None
+        and recorded[3].message.tool_response is not None
+    )
     assert recorded[3].message.tool_response.response == "booked"
 
 
@@ -190,9 +200,10 @@ def test_a_chain_error_closes_the_journey_with_error_reason(tmp_path):
     handler.on_chain_error(RuntimeError("boom"), run_id=chain_id)
 
     recorded = events(str(chain_id))
-    terminal = [e for e in recorded if e.kind == "terminal"][0]
-    assert terminal.terminal.termination_reason == "ERROR"
-    assert "boom" in (terminal.terminal.error or "")
+    terminal = [e for e in recorded if e.kind == "terminal"][0].terminal
+    assert terminal is not None
+    assert terminal.termination_reason == "ERROR"
+    assert "boom" in (terminal.error or "")
 
 
 def test_a_second_top_level_run_is_a_separate_journey(tmp_path):
@@ -304,7 +315,7 @@ def test_a_chat_model_called_inside_a_langgraph_node_joins_the_graphs_journey(
     handler.on_chain_end({}, run_id=graph_id)
 
     recorded = events(str(graph_id))
-    roles = [e.message.role for e in recorded if e.kind == "message"]
+    roles = [e.message.role for e in recorded if e.kind == "message" and e.message]
     assert roles == ["user", "assistant"]
     assert recorded[-1].kind == "terminal"
 
@@ -343,6 +354,8 @@ def test_a_toolnode_inside_a_langgraph_run_records_the_tool_call(tmp_path):
         for e in recorded
         if e.kind == "message" and e.message and e.message.tool_response
     ]
+    assert tool_calls[0].tool_calls is not None
     assert tool_calls[0].tool_calls[0].name == "book"
+    assert tool_responses[0].tool_response is not None
     assert tool_responses[0].tool_response.response == "booked mon"
     assert recorded[-1].kind == "terminal"

@@ -5,8 +5,9 @@ NER; see the module docstring for exactly what that does and doesn't catch.
 from __future__ import annotations
 
 from odyssey.pii import redact_pii, scan_pii
+from odyssey.primitives import PiiRule
 
-ALL_RULES = ["EMAIL", "PHONE", "CREDIT_CARD", "SSN"]
+ALL_RULES: list[PiiRule] = ["EMAIL", "PHONE", "CREDIT_CARD", "SSN"]
 
 
 def test_scan_finds_an_email():

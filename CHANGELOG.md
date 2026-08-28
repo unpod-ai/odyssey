@@ -25,6 +25,16 @@ project has not yet made a versioned release, so entries accumulate under
   transparently. Cross-journey *payload* batching (one POST for many
   journeys) remains out of scope — this addresses the same overhead without
   the partial-batch-failure redesign that would require.
+- `packages/odyssey-core`'s `pyrefly` config now permanently checks `tests/`
+  as well as `src`/`scripts` (item 9.10). Turning this on surfaced 200
+  errors, not the ~157 previously estimated: 4 were real type-safety bugs in
+  `src/` (a too-narrow `_guard` callback signature and some loosely-`str`-typed
+  fields in `integrations/langchain.py` that should have been the real
+  `Role`/`TerminationReason` literals), fixed properly rather than
+  suppressed. The remaining 196 were `tests/` narrowing gaps — `Optional[...]`
+  fields accessed without narrowing first — fixed per call site with
+  `assert x is not None` / `(x or {})[...]` idioms, plus a couple of test
+  helper signatures widened to their real `Literal` types.
 
 ### Added
 

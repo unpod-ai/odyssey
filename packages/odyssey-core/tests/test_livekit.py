@@ -18,6 +18,8 @@ The shapes below are copied from livekit-agents 1.5.8:
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 import odyssey
@@ -30,6 +32,13 @@ from odyssey.integrations.livekit import attach as _attach
 
 class FakeSession:
     """An EventEmitter with the on/off surface AgentSession exposes."""
+
+    # Class-level type hint only, no assignment: several tests set this
+    # dynamically (`session.current_agent = FakeAgent(...)`), and
+    # `UnstartedSession` below overrides it as a `@property` -- an actual
+    # `self.current_agent = ...` assignment in `__init__` would collide with
+    # that property (no setter) on the subclass.
+    current_agent: Any
 
     def __init__(self) -> None:
         self.handlers: dict[str, list] = {}
@@ -122,6 +131,10 @@ class UnstartedSession(FakeSession):
     """``AgentSession.current_agent`` raises until ``start()`` is called."""
 
     @property
+    # pyrefly: ignore[bad-override]  — a plain `Any` attribute on the base
+    # overridden by a property here; a real variance mismatch pyrefly is
+    # right to flag, but exactly what this fake needs to model "not started
+    # yet raises" without also making every other subclass carry a property.
     def current_agent(self):
         raise RuntimeError("session not started")
 
@@ -361,7 +374,7 @@ def test_an_interrupted_turn_is_flagged(tmp_path):
     session = FakeSession()
     attach(session, journey_id=JID)
     say(session, "assistant", "Your appointment is on Tues—", interrupted=True)
-    assert messages()[0].metadata["interrupted"] is True
+    assert (messages()[0].metadata or {})["interrupted"] is True
 
 
 def test_a_clean_turn_carries_no_interrupted_key(tmp_path):
@@ -377,7 +390,7 @@ def test_stt_confidence_is_kept(tmp_path):
     session = FakeSession()
     attach(session, journey_id=JID)
     say(session, "user", "Tuesday", transcript_confidence=0.82)
-    assert messages()[0].metadata["transcript_confidence"] == 0.82
+    assert (messages()[0].metadata or {})["transcript_confidence"] == 0.82
 
 
 def test_non_text_content_is_named_but_not_inlined(tmp_path):
@@ -389,7 +402,7 @@ def test_non_text_content_is_named_but_not_inlined(tmp_path):
         "conversation_item_added",
         ItemAdded(ChatMessage("user", ["hello", AudioContent()])),
     )
-    assert messages()[0].metadata["non_text_content"] == ["AudioContent"]
+    assert (messages()[0].metadata or {})["non_text_content"] == ["AudioContent"]
     assert messages()[0].content == "hello"
 
 
@@ -422,11 +435,15 @@ def test_an_interrupted_agent_turn_is_not_a_training_target(tmp_path):
     from odyssey.fold import derive_trainable_status
 
     msgs = [e for e in events() if e.kind == "message" and e.message]
-    statuses = derive_trainable_status({e.seq: e.message for e in msgs}, result.signals)
+    statuses = derive_trainable_status(
+        {e.seq: e.message for e in msgs if e.message is not None}, result.signals
+    )
     # Keyed by content, not a literal seq: a barge_in voice event (item 0'.4)
     # now shares the seq space with messages, so message seqs are no longer
     # contiguous small ints.
-    by_content = {e.message.content: statuses[e.seq] for e in msgs}
+    by_content = {
+        e.message.content: statuses[e.seq] for e in msgs if e.message is not None
+    }
     assert (
         by_content["Let me just check the—"] == "not_trainable"
     ), "a cut-off agent turn must not be a target"
@@ -450,8 +467,12 @@ def test_an_interrupted_user_turn_stays_normal(tmp_path):
 
     result = odyssey.fold(events(), data_source="livekit")
     msgs = [e for e in events() if e.kind == "message" and e.message]
-    statuses = derive_trainable_status({e.seq: e.message for e in msgs}, result.signals)
-    by_content = {e.message.content: statuses[e.seq] for e in msgs}
+    statuses = derive_trainable_status(
+        {e.seq: e.message for e in msgs if e.message is not None}, result.signals
+    )
+    by_content = {
+        e.message.content: statuses[e.seq] for e in msgs if e.message is not None
+    }
     # role default, as any user turn
     assert by_content["I wanted to ask about—"] == "not_trainable"
     assert by_content["Go ahead."] == "trainable"
@@ -484,12 +505,15 @@ def test_tool_calls_and_outputs_are_paired(tmp_path):
     roles = [m.role for m in messages()]
     assert roles == ["user", "assistant", "tool", "assistant"]
 
-    call = messages()[1].tool_calls[0]
+    tool_calls = messages()[1].tool_calls
+    assert tool_calls is not None
+    call = tool_calls[0]
     assert call.id == "c1" and call.name == "book"
     # LiveKit sends arguments as a JSON string; the corpus wants a dict.
     assert call.arguments == {"day": "tue", "time": "15:00"}
 
     response = messages()[2].tool_response
+    assert response is not None
     assert response.id == "c1" and response.response == '{"ref": "BK-1"}'
     assert response.error is None
 
@@ -515,7 +539,7 @@ def test_parallel_tool_calls_share_one_assistant_turn(tmp_path):
     )
     msgs = messages()
     assert [m.role for m in msgs] == ["assistant", "tool", "tool"]
-    assert [c.id for c in msgs[0].tool_calls] == ["c1", "c2"]
+    assert [c.id for c in msgs[0].tool_calls or []] == ["c1", "c2"]
 
 
 def test_a_failed_tool_is_recorded_as_a_failure(tmp_path):
@@ -533,7 +557,9 @@ def test_a_failed_tool_is_recorded_as_a_failure(tmp_path):
             ]
         ),
     )
-    assert messages()[1].tool_response.error == "tool_error"
+    tool_response = messages()[1].tool_response
+    assert tool_response is not None
+    assert tool_response.error == "tool_error"
 
 
 def test_a_tool_that_never_returned_is_recorded_not_skipped(tmp_path):
@@ -546,6 +572,7 @@ def test_a_tool_that_never_returned_is_recorded_not_skipped(tmp_path):
         ToolsExecuted([(FunctionCall("c1", "book", "{}"), None)]),
     )
     response = messages()[1].tool_response
+    assert response is not None
     assert response.id == "c1" and response.response is None
 
 
@@ -567,7 +594,9 @@ def test_unparseable_tool_arguments_do_not_lose_the_turn(tmp_path):
         ),
     )
     assert [m.role for m in messages()] == ["assistant", "tool"]
-    args = messages()[0].tool_calls[0].arguments
+    tool_calls = messages()[0].tool_calls
+    assert tool_calls is not None
+    args = tool_calls[0].arguments
     assert args["_odyssey_unparsed_arguments"] == "not json"
     assert "not valid JSON" in args["_odyssey_parse_error"]
     assert client.stats.capture_errors == 0
@@ -601,6 +630,7 @@ def test_close_reasons_map_to_the_schema(tmp_path, livekit_reason, expected):
     session.emit("close", CloseEv(Reason(livekit_reason)))
     tail = events()[-1]
     assert tail.kind == "terminal"
+    assert tail.terminal is not None
     assert tail.terminal.termination_reason == expected
 
 
@@ -612,7 +642,9 @@ def test_a_worker_shutdown_is_truncation_not_a_clean_end(tmp_path):
     say(session, "assistant", "Your slot is on Tues")
     session.emit("close", CloseEv(Reason("job_shutdown")))
     result = odyssey.fold(events(), data_source="livekit")
-    assert result.journey.execution_metrics.termination_reason == "TRUNCATION"
+    metrics = result.journey.execution_metrics
+    assert metrics is not None
+    assert metrics.termination_reason == "TRUNCATION"
 
 
 def test_close_carries_the_error(tmp_path):
@@ -621,7 +653,9 @@ def test_close_carries_the_error(tmp_path):
     attach(session, journey_id=JID)
     say(session, "user", "hi")
     session.emit("close", CloseEv(Reason("error"), error=RuntimeError("llm down")))
-    err = events()[-1].terminal.error
+    terminal = events()[-1].terminal
+    assert terminal is not None
+    err = terminal.error
     assert err is not None and "llm down" in err
 
 
@@ -780,9 +814,13 @@ def test_tools_are_recorded_from_the_parallel_lists_without_zipped(tmp_path):
     )
 
     msgs = messages()
-    assert msgs[0].tool_calls[0].name == "check_slot"
-    assert msgs[0].tool_calls[0].arguments == {"day": "tue"}
-    assert msgs[1].tool_response.response == "ok"
+    tool_calls = msgs[0].tool_calls
+    assert tool_calls is not None
+    assert tool_calls[0].name == "check_slot"
+    assert tool_calls[0].arguments == {"day": "tue"}
+    tool_response = msgs[1].tool_response
+    assert tool_response is not None
+    assert tool_response.response == "ok"
 
 
 def test_a_short_outputs_list_still_records_every_call(tmp_path):
@@ -806,11 +844,16 @@ def test_a_short_outputs_list_still_records_every_call(tmp_path):
     )
 
     msgs = messages()
-    assert [c.name for c in msgs[0].tool_calls] == ["a", "b"]
+    assert [c.name for c in msgs[0].tool_calls or []] == ["a", "b"]
     # The call with no output is recorded as one — `num_tool_response_none`
     # counts it, and a silently missing second call would not be countable.
-    assert [m.tool_response.name for m in msgs[1:]] == ["a", "b"]
-    assert msgs[2].tool_response.response is None
+    assert [m.tool_response.name for m in msgs[1:] if m.tool_response is not None] == [
+        "a",
+        "b",
+    ]
+    tool_response = msgs[2].tool_response
+    assert tool_response is not None
+    assert tool_response.response is None
 
 
 def test_attach_without_init_records_nothing_and_does_not_raise(tmp_path):
@@ -851,7 +894,9 @@ def test_the_app_can_attach_feedback_after_the_turns(tmp_path):
     result = odyssey.fold(events(), data_source="livekit")
     assert result.trainable
     assert [s.trainable_status for s in result.journey.steps][-1] == "trainable"
-    assert result.journey.metrics.aggregated_reward == pytest.approx(0.9)
+    metrics = result.journey.metrics
+    assert metrics is not None
+    assert metrics.aggregated_reward == pytest.approx(0.9)
 
 
 # --------------------------------------------------------------------------
@@ -895,8 +940,10 @@ def test_a_full_call_folds_into_a_trainable_journey(tmp_path):
         "tool",
         "assistant",
     ]
-    assert result.journey.metrics.num_tool_calls == 1
-    assert result.journey.metrics.num_tool_failures == 0
+    metrics = result.journey.metrics
+    assert metrics is not None
+    assert metrics.num_tool_calls == 1
+    assert metrics.num_tool_failures == 0
     assert [s.trainable_status for s in result.journey.steps][-1] == "trainable"
 
 
@@ -977,11 +1024,11 @@ def test_an_agent_handoff_swaps_the_prompt(tmp_path):
 
     systems = [m for m in messages() if m.role == "system"]
     assert [m.content for m in systems] == ["greeter", "booking specialist"]
-    assert [m.metadata["instructions_origin"] for m in systems] == [
+    assert [(m.metadata or {})["instructions_origin"] for m in systems] == [
         "initial",
         "handoff",
     ]
-    assert systems[0].metadata["agent"] == "FakeAgent"
+    assert (systems[0].metadata or {})["agent"] == "FakeAgent"
 
 
 def test_a_session_that_cannot_report_its_agent_still_records_the_call(tmp_path):
@@ -1069,7 +1116,9 @@ def test_a_voice_call_folds_to_one_step_per_turn(tmp_path):
 
     # 3 turns, not 6 assistant utterances.
     assert len(journey.steps) == 3
-    assert journey.metrics.steps == 3
+    metrics = journey.metrics
+    assert metrics is not None
+    assert metrics.steps == 3
     # Every step is conditioned on the prompt, and every step ends on the
     # agent's completed turn, so every step is a usable target.
     for step in journey.steps:
@@ -1145,8 +1194,12 @@ def test_an_agent_turn_spoken_as_several_utterances_is_one_message(tmp_path):
         "Would you like to book this slot?"
     )
     # Nothing is lost: every utterance is still individually addressable.
-    assert msgs[1].metadata["utterances"] == 3
-    assert msgs[1].metadata["provider_item_ids"] == ["item_a", "item_b", "item_c"]
+    assert (msgs[1].metadata or {})["utterances"] == 3
+    assert (msgs[1].metadata or {})["provider_item_ids"] == [
+        "item_a",
+        "item_b",
+        "item_c",
+    ]
 
 
 def test_split_stt_finals_are_one_caller_turn(tmp_path):
@@ -1174,6 +1227,7 @@ def test_a_single_utterance_turn_reads_exactly_as_before(tmp_path):
     say(session, "assistant", "Hi.")
 
     meta = messages()[0].metadata
+    assert meta is not None
     assert meta["provider_item_ids"] == ["item_solo"]
     assert meta["transcript_confidence"] == 0.92
     assert "parts" not in meta and "utterances" not in meta
@@ -1195,6 +1249,7 @@ def test_merged_confidence_is_weighted_by_how_much_was_said(tmp_path):
     say(session, "assistant", "noted")
 
     meta = messages()[0].metadata
+    assert meta is not None
     assert meta["transcript_confidence"] == pytest.approx(90 / 92)
     # Per-utterance values survive for anything that wants them.
     assert [p["transcript_confidence"] for p in meta["parts"]] == [1.0, 0.0]
@@ -1219,8 +1274,8 @@ def test_an_interruption_ends_the_turn(tmp_path):
         "Let me just check the—",
         "Booked for Tuesday 3pm.",
     ]
-    assert msgs[1].metadata["interrupted"] is True
-    assert "interrupted" not in msgs[2].metadata
+    assert (msgs[1].metadata or {})["interrupted"] is True
+    assert "interrupted" not in (msgs[2].metadata or {})
 
 
 def test_a_turn_cut_off_mid_stream_is_flagged_whole(tmp_path):
@@ -1240,7 +1295,7 @@ def test_a_turn_cut_off_mid_stream_is_flagged_whole(tmp_path):
 
     msgs = messages()
     assert msgs[1].content == "I have found a slot. The price is five thou—"
-    assert msgs[1].metadata["interrupted"] is True
+    assert (msgs[1].metadata or {})["interrupted"] is True
     journey = odyssey.fold(events(), data_source="livekit").journey
     assert journey.steps[-1].trainable_status == "not_trainable"
 
@@ -1279,7 +1334,7 @@ def test_speech_before_a_tool_call_joins_the_call_message(tmp_path):
         ("tool", None),
         ("assistant", "Booked."),
     ]
-    assert [c.name for c in msgs[1].tool_calls] == ["book"]
+    assert [c.name for c in msgs[1].tool_calls or []] == ["book"]
     # No two messages in a row share a role, which is the property the chat
     # formats actually require.
     assert not any(a.role == b.role for a, b in zip(msgs, msgs[1:]))
@@ -1314,7 +1369,7 @@ def test_a_tool_call_with_no_speech_before_it_stands_alone(tmp_path):
         ("assistant", None),
         ("tool", None),
     ]
-    assert [c.name for c in msgs[1].tool_calls] == ["book"]
+    assert [c.name for c in msgs[1].tool_calls or []] == ["book"]
 
 
 def test_a_handoff_does_not_jump_ahead_of_the_turn_it_replaced(tmp_path):
@@ -1357,9 +1412,12 @@ def test_a_rating_lands_on_the_turn_the_caller_just_heard(tmp_path):
     rec.signal("thumbs_up")
 
     signal = next(e for e in events() if e.kind == "signal")
-    rated = {e.seq: e.message for e in events() if e.kind == "message"}[
-        signal.signal.target_seq
-    ]
+    assert signal.signal is not None
+    rated = {
+        e.seq: e.message
+        for e in events()
+        if e.kind == "message" and e.message is not None
+    }[signal.signal.target_seq]
     assert (rated.role, rated.content) == ("assistant", "Booked.")
 
 
@@ -1376,10 +1434,14 @@ def test_a_turn_is_not_written_until_the_speaker_is_done(tmp_path):
     say(session, "user", "Hello.")
     say(session, "assistant", "Hi there.")
     client = odyssey.get_client()
-    assert [e.message.role for e in client.spool.read(JID)] == ["user"]
+    assert client is not None
+    assert [e.message.role for e in client.spool.read(JID) if e.message] == ["user"]
 
     rec.flush()
-    assert [e.message.role for e in client.spool.read(JID)] == ["user", "assistant"]
+    assert [e.message.role for e in client.spool.read(JID) if e.message] == [
+        "user",
+        "assistant",
+    ]
     rec.flush()  # idempotent
     assert len(client.spool.read(JID)) == 2
 
@@ -1395,8 +1457,11 @@ def test_close_writes_the_agents_sign_off(tmp_path):
     rec.close(reason="ENV_DONE")
 
     client = odyssey.get_client()
+    assert client is not None
     assert [
-        e.message.content for e in client.spool.read(JID) if e.kind == "message"
+        e.message.content
+        for e in client.spool.read(JID)
+        if e.kind == "message" and e.message
     ] == ["Thanks.", "Have a great day!"]
 
 
@@ -1426,9 +1491,13 @@ def test_a_session_that_never_closes_is_terminated_at_shutdown(tmp_path):
     )
     assert folded.complete is True
     assert folded.trainable is True
-    assert folded.journey.execution_metrics.termination_reason == "STALE"
+    metrics = folded.journey.execution_metrics
+    assert metrics is not None
+    assert metrics.termination_reason == "STALE"
     # Labelled, not disguised: a corpus stage can drop these on sight.
-    assert "without the session closing its journey" in folded.journey.error
+    error = folded.journey.error
+    assert error is not None
+    assert "without the session closing its journey" in error
 
 
 def test_a_real_close_keeps_its_own_termination_reason(tmp_path):
@@ -1449,7 +1518,9 @@ def test_a_real_close_keeps_its_own_termination_reason(tmp_path):
         odyssey.read_events(tmp_path / "out" / f"{JID}.jsonl").events,
         data_source="livekit",
     )
-    assert folded.journey.execution_metrics.termination_reason == "ENV_DONE"
+    metrics = folded.journey.execution_metrics
+    assert metrics is not None
+    assert metrics.termination_reason == "ENV_DONE"
     assert folded.journey.error is None
 
 
@@ -1491,8 +1562,10 @@ def test_concurrent_calls_are_each_terminated(tmp_path):
     odyssey.shutdown()
     for i in range(3):
         events_i = odyssey.read_events(tmp_path / "out" / f"call_{i}.jsonl").events
+        terminal = events_i[-1].terminal
         assert events_i[-1].kind == "terminal"
-        assert events_i[-1].terminal.termination_reason == "STALE"
+        assert terminal is not None
+        assert terminal.termination_reason == "STALE"
 
 
 # --------------------------------------------------------------------------
@@ -1528,7 +1601,7 @@ def test_a_per_node_prompt_change_is_recorded_as_a_handoff(tmp_path):
 
     system = [m for m in messages() if m.role == "system"]
     assert [m.content for m in system] == ["Greeting node.", "Booking node."]
-    assert system[1].metadata["instructions_origin"] == "handoff"
+    assert (system[1].metadata or {})["instructions_origin"] == "handoff"
 
 
 def test_the_live_agent_still_wins_over_the_callable(tmp_path):
@@ -1577,6 +1650,8 @@ def test_recorder_tool_records_a_call_livekit_never_ran(tmp_path):
     msgs = messages()
     call = next(m for m in msgs if m.tool_calls)
     resp = next(m for m in msgs if m.tool_response)
+    assert call.tool_calls is not None
+    assert resp.tool_response is not None
     assert call.tool_calls[0].name == "check_availability"
     assert call.tool_calls[0].arguments == {"course": "Qutub", "players": 4}
     assert resp.tool_response.id == call.tool_calls[0].id == "c1"
@@ -1593,6 +1668,7 @@ def test_a_tool_recorded_by_hand_reaches_the_metrics(tmp_path):
     session.emit("close", CloseEv(Reason("user_initiated")))
 
     m = odyssey.fold(events(), data_source="livekit").journey.metrics
+    assert m is not None
     assert m.num_tool_calls == 1
     assert m.num_tool_failures == 1
     assert m.tool_error_rate == 1.0
@@ -1624,6 +1700,7 @@ def test_a_tool_that_never_returned_is_recorded_as_such(tmp_path):
     session.emit("close", CloseEv(Reason("user_initiated")))
 
     m = odyssey.fold(events(), data_source="livekit").journey.metrics
+    assert m is not None
     assert m.num_tool_response_none == 1
 
 
@@ -1637,6 +1714,8 @@ def test_a_hand_recorded_tool_gets_a_call_id_when_none_is_given(tmp_path):
     msgs = messages()
     call = next(m for m in msgs if m.tool_calls)
     resp = next(m for m in msgs if m.tool_response)
+    assert call.tool_calls is not None
+    assert resp.tool_response is not None
     assert call.tool_calls[0].id
     assert call.tool_calls[0].id == resp.tool_response.id
 
@@ -1655,6 +1734,7 @@ def test_unserializable_tool_arguments_do_not_lose_the_turn(tmp_path):
     rec.tool("check", {"obj": Weird()}, result=Weird())
 
     call = next(m for m in messages() if m.tool_calls)
+    assert call.tool_calls is not None
     assert call.tool_calls[0].arguments == {"obj": "<Weird>"}
 
 

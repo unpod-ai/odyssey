@@ -15,6 +15,7 @@ from odyssey.primitives import (
     JourneyEvent,
     JourneyHeader,
     Message,
+    Role,
     Terminal,
     ToolCall,
     ToolResponse,
@@ -38,7 +39,7 @@ from odyssey.spool import (
 JID = "j_spool"
 
 
-def ev(seq: int, role: str = "assistant", content: str = "x", **kw) -> JourneyEvent:
+def ev(seq: int, role: Role = "assistant", content: str = "x", **kw) -> JourneyEvent:
     return JourneyEvent(
         journey_id=JID,
         seq=seq,
@@ -142,6 +143,7 @@ time.sleep(30)
     proc = subprocess.Popen(
         [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True
     )
+    assert proc.stdout is not None
     assert proc.stdout.readline().strip() == "READY"
     proc.kill()
     proc.wait(timeout=10)
@@ -417,6 +419,7 @@ def test_message_content_is_never_redacted():
         message=Message(role="user", content="my password is hunter2"),
     )
     out = redact_event(e, frozenset({"password"}))
+    assert out.message is not None
     assert out.message.content == "my password is hunter2"
 
 
@@ -430,6 +433,7 @@ def test_nested_token_key_is_caught():
         message=Message(role="user", content="x"),
     )
     out = redact_event(e, frozenset({"token"}))
+    assert out.metadata is not None
     assert out.metadata["outer"]["refresh_token"] == REDACTED
 
 
@@ -819,6 +823,7 @@ def test_header_metadata_is_redacted(tmp_path):
     s.record(ev(0), header=leaky)
     s.close()
     meta = read_header(s.shards(JID)[0]).journey_metadata
+    assert meta is not None
     assert meta["api_key"] == REDACTED
     assert meta["tenant"] == "acme"
 

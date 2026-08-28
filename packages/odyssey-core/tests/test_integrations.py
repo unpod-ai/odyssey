@@ -280,7 +280,7 @@ def test_three_turns_record_each_message_exactly_once(tmp_path):
     )
 
     with odyssey.journey(id="j") as j:
-        msgs = [{"role": "user", "content": "Book me an appointment."}]
+        msgs: list[dict] = [{"role": "user", "content": "Book me an appointment."}]
         r1 = client.messages.create(
             model="claude-opus-5", system=SYSTEM, messages=msgs, tools=TOOLS
         )

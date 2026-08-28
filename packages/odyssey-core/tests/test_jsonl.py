@@ -129,6 +129,7 @@ def test_every_payload_kind_round_trips_exactly():
 def test_range_is_restored_as_a_tuple_not_a_list():
     ev = rich_stream()[4]
     back = decode_event(json.loads(encode_event(ev)))
+    assert back.reward is not None and back.reward.components is not None
     assert back.reward.components[0].range == (0.0, 1.0)
     assert isinstance(back.reward.components[0].range, tuple)
 

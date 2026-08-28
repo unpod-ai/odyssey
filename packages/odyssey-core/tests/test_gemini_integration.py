@@ -298,6 +298,7 @@ def test_tool_definitions_are_recorded_once_not_on_every_turn(tmp_path):
     msgs = [e.message for e in events("j") if e.kind == "message" and e.message]
     with_tools = [m for m in msgs if m.tool_definitions]
     assert len(with_tools) == 1
+    assert with_tools[0].tool_definitions is not None
     assert with_tools[0].tool_definitions[0].name == "book"
 
 
@@ -319,6 +320,7 @@ def test_a_function_call_becomes_a_tool_call(tmp_path):
 
     msgs = [e.message for e in events("j") if e.kind == "message" and e.message]
     assistant = [m for m in msgs if m.role == "assistant"][-1]
+    assert assistant.tool_calls is not None
     assert assistant.tool_calls[0].name == "book"
     assert assistant.tool_calls[0].arguments == {"day": "mon"}
     assert assistant.tool_calls[0].id == "c1"
@@ -356,6 +358,7 @@ def test_a_function_response_becomes_a_tool_message(tmp_path):
     msgs = [e.message for e in events("j") if e.kind == "message" and e.message]
     tool_msgs = [m for m in msgs if m.role == "tool"]
     assert len(tool_msgs) == 1
+    assert tool_msgs[0].tool_response is not None
     assert tool_msgs[0].tool_response.name == "book"
     assert tool_msgs[0].tool_response.id == "c1"
 

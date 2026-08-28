@@ -96,12 +96,17 @@ def test_golden_fixture_yields_a_usable_preference_chain(golden_events):
 
 def test_golden_fixture_reward_survives_the_wire(golden_events):
     r = fold(golden_events, data_source="golden")
-    assert r.journey.metrics.aggregated_reward == 0.92
-    assert [c.name for c in r.journey.reward.components] == [
+    metrics = r.journey.metrics
+    assert metrics is not None
+    assert metrics.aggregated_reward == 0.92
+    reward = r.journey.reward
+    assert reward is not None
+    assert reward.components is not None
+    assert [c.name for c in reward.components] == [
         "task_success",
         "efficiency",
     ]
-    assert r.journey.reward.components[0].range == (0.0, 1.0)
+    assert reward.components[0].range == (0.0, 1.0)
 
 
 # --------------------------------------------------------------------------
@@ -193,6 +198,7 @@ def test_the_header_is_what_labels_the_folded_journey():
     to call the reader, so two callers could fold one file into two differently-
     labelled journeys and neither was wrong. Now the file answers."""
     result = read_events(GOLDEN)
+    assert result.header.data_source is not None
     folded = fold(
         result.events,
         data_source=result.header.data_source,
@@ -246,6 +252,7 @@ def test_odyssey_source_never_imports_superdialog():
             elif isinstance(node, ast.ImportFrom):
                 names = [node.module or ""]
             if any(n.split(".")[0] == "superdialog" for n in names):
+                assert isinstance(node, (ast.Import, ast.ImportFrom))
                 offenders.append(f"{p.relative_to(REPO)}:{node.lineno}")
     assert offenders == [], f"import coupling introduced at {offenders}"
 

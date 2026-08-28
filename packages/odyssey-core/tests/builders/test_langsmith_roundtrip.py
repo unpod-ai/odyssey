@@ -82,15 +82,18 @@ def test_langsmith_roundtrip_produces_well_formed_journey():
     assert len(journey.steps[-1].messages) == 5
 
     # Tool-call metrics flow through.
-    assert journey.metrics.num_tool_calls == 1
-    assert journey.metrics.num_tool_failures == 0
-    assert journey.metrics.tool_error_rate == 0.0
+    metrics = journey.metrics
+    assert metrics is not None
+    assert metrics.num_tool_calls == 1
+    assert metrics.num_tool_failures == 0
+    assert metrics.tool_error_rate == 0.0
 
     # Message structure: assistant carries the ToolCall, tool message carries
     # the ToolResponse with id linkage.
     assistant_with_tool = next(
         m for m in messages if m.role == "assistant" and m.tool_calls
     )
+    assert assistant_with_tool.tool_calls is not None
     assert assistant_with_tool.tool_calls[0].name == "search_web"
     assert assistant_with_tool.tool_calls[0].arguments == {"query": "Clay 2024 revenue"}
     assert assistant_with_tool.tool_calls[0].id == "call_abc123"
@@ -102,6 +105,7 @@ def test_langsmith_roundtrip_produces_well_formed_journey():
     assert tool_message.tool_response.response.startswith("Clay reported")
 
     # Telemetry captures content_hash + idempotency_key for re-ingest safety.
+    assert journey.telemetry is not None
     assert journey.telemetry.source == "langsmith_export_roundtrip_test"
     assert journey.telemetry.data["conversation_id"] == "conv_langsmith_demo"
     assert journey.telemetry.data["content_hash"]
@@ -121,6 +125,7 @@ def test_langsmith_roundtrip_is_deterministic():
         conversation_id="conv_1",
         data_source="langsmith_export_roundtrip_test",
     )
+    assert a.telemetry is not None and b.telemetry is not None
     assert a.telemetry.data["content_hash"] == b.telemetry.data["content_hash"]
     assert a.telemetry.data["idempotency_key"] == b.telemetry.data["idempotency_key"]
 
@@ -153,8 +158,8 @@ def test_langsmith_roundtrip_repeated_system_prompts_survive():
     assert len(journey.steps) >= 2
     first_systems = [m.content for m in journey.steps[0].messages if m.role == "system"]
     last_systems = [m.content for m in journey.steps[-1].messages if m.role == "system"]
-    assert "Revision 1." in first_systems[0]
-    assert "Revision 2" in last_systems[0]
+    assert "Revision 1." in (first_systems[0] or "")
+    assert "Revision 2" in (last_systems[0] or "")
 
 
 def test_langsmith_roundtrip_multi_turn_tool_loop_step_count():
@@ -197,4 +202,6 @@ def test_langsmith_roundtrip_multi_turn_tool_loop_step_count():
     # exporter that wants per-LLM-call granularity can recover it from there.
     assert len(journey.steps) == 1
     assert len(journey.steps[0].messages) == 6
-    assert journey.metrics.num_tool_calls == 2
+    metrics = journey.metrics
+    assert metrics is not None
+    assert metrics.num_tool_calls == 2

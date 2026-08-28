@@ -105,6 +105,8 @@ def test_anthropic_journey_end_to_end_metrics():
     traj = build_journey_from_messages(
         msgs, conversation_id="conv-anthro", data_source="anthropic-e2e"
     )
-    assert traj.metrics.num_tool_calls == 2
-    assert traj.metrics.num_tool_failures == 1
-    assert traj.metrics.tool_error_rate == 0.5
+    metrics = traj.metrics
+    assert metrics is not None
+    assert metrics.num_tool_calls == 2
+    assert metrics.num_tool_failures == 1
+    assert metrics.tool_error_rate == 0.5

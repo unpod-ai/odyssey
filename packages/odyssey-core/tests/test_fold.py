@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from typing import Optional
 
 import pytest
 
@@ -11,8 +12,10 @@ from odyssey.primitives import (
     JourneyEvent,
     Message,
     Reward,
+    Role,
     Signal,
     Terminal,
+    TerminationReason,
     ToolCall,
     ToolResponse,
 )
@@ -20,7 +23,7 @@ from odyssey.primitives import (
 JID = "j_1"
 
 
-def msg_event(seq: int, role: str, content: str, **kw) -> JourneyEvent:
+def msg_event(seq: int, role: Role, content: Optional[str], **kw) -> JourneyEvent:
     return JourneyEvent(
         journey_id=JID,
         seq=seq,
@@ -31,7 +34,9 @@ def msg_event(seq: int, role: str, content: str, **kw) -> JourneyEvent:
     )
 
 
-def terminal_event(seq: int, reason="ENV_DONE", error=None) -> JourneyEvent:
+def terminal_event(
+    seq: int, reason: TerminationReason = "ENV_DONE", error=None
+) -> JourneyEvent:
     return JourneyEvent(
         journey_id=JID,
         seq=seq,
@@ -157,7 +162,9 @@ def test_events_after_terminal_are_rejected_and_counted():
 def test_terminal_reason_and_error_reach_the_journey():
     events = basic_stream()[:-1] + [terminal_event(3, reason="ERROR", error="boom")]
     r = fold(events, data_source="t")
-    assert r.journey.execution_metrics.termination_reason == "ERROR"
+    metrics = r.journey.execution_metrics
+    assert metrics is not None
+    assert metrics.termination_reason == "ERROR"
     assert r.journey.error == "boom"
 
 
@@ -305,7 +312,9 @@ def test_aggregated_reward_is_populated_from_the_reward_event():
         terminal_event(4),
     ]
     r = fold(events, data_source="t")
-    assert r.journey.metrics.aggregated_reward == 0.8
+    metrics = r.journey.metrics
+    assert metrics is not None
+    assert metrics.aggregated_reward == 0.8
 
 
 def test_num_tool_response_none_is_counted():
@@ -326,7 +335,9 @@ def test_num_tool_response_none_is_counted():
         terminal_event(3),
     ]
     r = fold(events, data_source="t")
-    assert r.journey.metrics.num_tool_response_none == 1
+    metrics = r.journey.metrics
+    assert metrics is not None
+    assert metrics.num_tool_response_none == 1
 
 
 # --------------------------------------------------------------------------
