@@ -182,7 +182,9 @@ conversational message lists straight through to `trl.DPOTrainer`.
 **What's next, in dependency order:**
 
 1. **9.4** — `NOTICE` copyright holder. The only remaining hard blocker
-   (public distribution), and it needs a human, not more engineering.
+   (public distribution), needs a human, not more engineering. **LlamaIndex
+   hooks (0.10) are intentionally bundled with this item** — picked up
+   together in a later pass, not attempted now.
 2. **`services/api`** (8.1–8.3) — bigger scope (`odyssey-schemas` +
    FastAPI + OpenAPI), the next major unbuilt piece per `docs/STRUCTURE.md`.
    5.7/5.8 are done (this session), so Step 5 is closed except 5.9
@@ -198,15 +200,16 @@ error, suppressed).
 1.9 (server-side idempotency in `services/collector`), 1.11 (removed dead
 `TelemetryEvent` code), 0.9 (Gemini drop-in client), 0′.2 (LangGraph
 compatibility — no additional code, only verification it dispatches the same
-callback tree LangChain already does).
+callback tree LangChain already does), 1.6 (project scoping — a `projects`
+roster of `{slug, name, api_key}` in `services/collector`, structural storage
+isolation per project, `GET /projects`).
 
 **Still open:** 0.11/0′.3 (OTel bridge — deferred, documented only, no
 consuming backend named), LlamaIndex hooks (a genuinely different,
-non-LangChain-compatible instrumentation API), 1.6 (project scoping — needs
-real multi-tenant state in `services/collector`), 1.7's cross-journey
-batching (explicit scope cut), 3.5's LLM-based augmentation (needs a new
-dependency, explicit scope cut), 9.10's 157 `tests/` narrowing gaps (scope
-decision).
+non-LangChain-compatible instrumentation API — **deliberately deferred,
+bundled with item 9.4**, not started here), 1.7's cross-journey batching
+(explicit scope cut), 3.5's LLM-based augmentation (needs a new dependency,
+explicit scope cut), 9.10's 157 `tests/` narrowing gaps (scope decision).
 
 ---
 
