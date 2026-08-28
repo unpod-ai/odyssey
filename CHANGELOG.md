@@ -119,6 +119,14 @@ project has not yet made a versioned release, so entries accumulate under
   `odyssey train record-experiment --checkpoint-uri/--checkpoint-sha256`.
   Closes Step 5.
 
+- `training/models_registry.py`'s `register_model()` (item 6.1) — writes
+  `models/registry.yaml` entries (`name -> version -> sha256 -> URI ->
+  base model -> corpus version`, per `docs/STRUCTURE.md`'s schema),
+  idempotent on `(name, version)` — replaces in place rather than
+  duplicating, mirroring `data_preparation`'s `datasets.update_registry`.
+  `sha256`/`uri` are meant to be `checkpoints.upload_checkpoint`'s own
+  output (item 5.9). New top-level `odyssey model register` CLI group.
+
 ### Removed
 
 - `primitives.TelemetryEvent` (item 1.11) — dead code targeting a

@@ -450,17 +450,18 @@ turns them into a training file.
 
 ### Step 6 — Models registry
 
-| # | Item | Status |
-|---|---|---|
-| 6.1 | `models/registry.yaml` | ❌ |
-| 6.2 | `models/cards/<model>-v1.md` | ❌ |
-| 6.3 | Weights stay out of git | ✅ (`.gitignore` + `.gitkeep`, ADR 0002) |
-| 6.4 | Promote / export commands | ❌ |
+| # | Item | Status | Note |
+|---|---|---|---|
+| 6.1 | **`models/registry.yaml`** | ✅ | `odyssey_training.models_registry.register_model(registry_path, name, *, sha256, uri, base_model, corpus_version, version=None)` — `name -> version -> sha256 -> URI -> base model -> corpus version`, per `docs/STRUCTURE.md`'s own schema. `version` defaults to `next_version(...)` (highest existing + 1, mirroring `odyssey_dataprep.datasets.next_version`'s rule for corpus versions); passing one explicitly is idempotent on `(name, version)` — replaces in place rather than duplicating, the same discipline `datasets.update_registry` already applies. `sha256`/`uri` are meant to be `checkpoints.upload_checkpoint`'s own `manifest_sha256`/`uri` (item 5.9) — this module does not re-verify them, the same caller-trust boundary `datasets.write_card`'s license/PII fields already accept. New top-level CLI group: `odyssey model register` |
+| 6.2 | `models/cards/<model>-v1.md` | ❌ | |
+| 6.3 | Weights stay out of git | ✅ | `.gitignore` + `.gitkeep`, ADR 0002 |
+| 6.4 | Promote / export commands | ❌ | |
 
 `model_id` is tracked **per event** and the Anthropic wrapper now populates it
 from the provider response, so `fold()` sets a journey-level `model_id` only when
-the journey never switched models. Provenance is correct at the source; the
-registry that consumes it does not exist.
+the journey never switched models. Provenance is correct at the source, and the
+registry that consumes it now exists (6.1) — promotion is still manual, and
+export/promote commands (6.4) and the model card (6.2) are not built.
 
 ---
 

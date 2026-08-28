@@ -224,11 +224,19 @@ properly; the other 196 were narrowing gaps, fixed per call site), 1.7
 `boto3`, same lazy-import/`client=` injection seam as 1.10's
 `collect_from_object_store`; `odyssey train upload-checkpoint` prints the
 `checkpoint_uri`/`checkpoint_sha256` pair `odyssey train
-record-experiment` now accepts, closing Step 5 entirely).
+record-experiment` now accepts, closing Step 5 entirely), 6.1 (models
+registry — `odyssey_training.models_registry.register_model()`, `name ->
+version -> sha256 -> URI -> base model -> corpus version` per
+`docs/STRUCTURE.md`'s own schema, idempotent on `(name, version)`
+mirroring `datasets.update_registry`'s replace-in-place rule; new
+top-level `odyssey model register` CLI group, its own entry-point group
+name distinct from `train` even though both are currently backed by
+`odyssey_training`).
 
 **Still open:** LlamaIndex hooks (a genuinely different, non-LangChain-compatible
 instrumentation API — **deliberately deferred, bundled with item 9.4**, not
-started here).
+started here). Step 6's 6.2 (model cards) and 6.4 (promote/export commands)
+are also still open.
 
 ---
 

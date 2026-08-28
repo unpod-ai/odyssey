@@ -30,6 +30,7 @@ s3 = ["boto3>=1.34"]
 
 [project.entry-points."odyssey.commands"]
 train = "odyssey_training.cli:register"
+model = "odyssey_training.model_cli:register"
 
 [tool.uv.sources]
 odyssey = { workspace = true }
