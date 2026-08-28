@@ -199,6 +199,70 @@ class _AsyncMessagesProxy:
             )
             return result
 
+    def stream(self, *args: Any, **kwargs: Any) -> Any:
+        """Async counterpart to :meth:`_MessagesProxy.stream` — same deferred
+        capture, same "final message, not chunks" rule."""
+        return _AsyncStreamProxy(self._inner.stream(*args, **kwargs), kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class _AsyncStreamProxy:
+    """Async counterpart to :class:`_StreamProxy`."""
+
+    def __init__(self, inner: Any, kwargs: Dict[str, Any]) -> None:
+        self._inner = inner
+        self._kwargs = kwargs
+        self._journey: Any = None
+        self._handle: Any = None
+
+    async def __aenter__(self) -> Any:
+        self._journey = journey()
+        self._handle = self._journey.__enter__()
+        _safe("anthropic.request", lambda: capture_request(self._kwargs))
+        return _AsyncStreamBody(await self._inner.__aenter__(), self._kwargs)
+
+    async def __aexit__(self, *exc: Any) -> Any:
+        try:
+            return await self._inner.__aexit__(*exc)
+        finally:
+            if self._journey is not None:
+                self._journey.__exit__(*exc)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class _AsyncStreamBody:
+    """Async counterpart to :class:`_StreamBody`."""
+
+    def __init__(self, inner: Any, kwargs: Dict[str, Any]) -> None:
+        self._inner = inner
+        self._kwargs = kwargs
+        self._captured = False
+
+    async def get_final_message(self) -> Any:
+        message = await self._inner.get_final_message()
+        self._capture(message)
+        return message
+
+    def _capture(self, message: Any) -> None:
+        if self._captured:
+            return
+        self._captured = True
+        _safe(
+            "anthropic.response",
+            lambda: capture_response(message, model=self._kwargs.get("model")),
+        )
+
+    @property
+    def text_stream(self) -> Any:
+        return self._inner.text_stream
+
+    def __aiter__(self) -> Any:
+        return self._inner.__aiter__()
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
 

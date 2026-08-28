@@ -36,3 +36,6 @@ project has not yet made a versioned release, so entries accumulate under
 - `spool.gc()` / `odyssey spool prune` and `services/collector`'s
   `prune.py` / `python -m odyssey_collector.prune` — retention/TTL for
   fully-drained shards and stale date partitions, operator-invoked only.
+- `integrations/anthropic.py`: async streaming capture (item 0′.5) —
+  `AsyncAnthropic.messages.stream()` now records the assembled final message,
+  matching the existing sync `messages.stream()` behavior.

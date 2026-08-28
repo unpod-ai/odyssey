@@ -51,6 +51,71 @@ class FakeResponse:
         return self._d["content"]
 
 
+class FakeStreamBody:
+    """Shaped like anthropic's ``MessageStream``: chunks plus a final message."""
+
+    def __init__(self, response):
+        self._response = response
+
+    def get_final_message(self):
+        return self._response
+
+    @property
+    def text_stream(self):
+        return iter(["ok"])
+
+    def __iter__(self):
+        return iter([])
+
+
+class FakeStreamManager:
+    """Shaped like anthropic's ``MessageStreamManager`` — a plain context manager."""
+
+    def __init__(self, response):
+        self._response = response
+
+    def __enter__(self):
+        return FakeStreamBody(self._response)
+
+    def __exit__(self, *exc):
+        return False
+
+
+async def _fake_aiter(items):
+    for item in items:
+        yield item
+
+
+class FakeAsyncStreamBody:
+    """Async counterpart to :class:`FakeStreamBody`."""
+
+    def __init__(self, response):
+        self._response = response
+
+    async def get_final_message(self):
+        return self._response
+
+    @property
+    def text_stream(self):
+        return _fake_aiter(["ok"])
+
+    def __aiter__(self):
+        return _fake_aiter([])
+
+
+class FakeAsyncStreamManager:
+    """Async counterpart to :class:`FakeStreamManager`."""
+
+    def __init__(self, response):
+        self._response = response
+
+    async def __aenter__(self):
+        return FakeAsyncStreamBody(self._response)
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 class FakeMessages:
     def __init__(self, scripted):
         self._scripted = list(scripted)
@@ -62,10 +127,26 @@ class FakeMessages:
             return FakeResponse([{"type": "text", "text": "ok"}])
         return self._scripted.pop(0)
 
+    def stream(self, **kwargs):
+        self.calls.append(kwargs)
+        if not self._scripted:
+            response = FakeResponse([{"type": "text", "text": "ok"}])
+        else:
+            response = self._scripted.pop(0)
+        return FakeStreamManager(response)
+
 
 class FakeAsyncMessages(FakeMessages):
     async def create(self, **kwargs):  # type: ignore[override]
         return FakeMessages.create(self, **kwargs)
+
+    def stream(self, **kwargs):  # type: ignore[override]
+        self.calls.append(kwargs)
+        if not self._scripted:
+            response = FakeResponse([{"type": "text", "text": "ok"}])
+        else:
+            response = self._scripted.pop(0)
+        return FakeAsyncStreamManager(response)
 
 
 class FakeClient:
@@ -505,6 +586,53 @@ def test_the_async_client_records_too(tmp_path):
 
     asyncio.run(main())
     assert roles("j") == ["user", "assistant"]
+
+
+# --------------------------------------------------------------------------
+# Streaming: the final message, not chunks
+# --------------------------------------------------------------------------
+
+
+def test_the_sync_stream_captures_the_final_message_not_chunks(tmp_path):
+    start(tmp_path)
+    from odyssey.integrations.anthropic import Anthropic
+
+    expected = FakeResponse([{"type": "text", "text": "hi"}])
+    client = Anthropic(scripted=[expected])
+    with client.messages.stream(
+        model="m", messages=[{"role": "user", "content": "q"}]
+    ) as stream:
+        message = stream.get_final_message()
+
+    assert message is expected
+    assert roles(_only_journey_id()) == ["user", "assistant"]
+
+
+def test_the_async_stream_captures_the_final_message_not_chunks(tmp_path):
+    start(tmp_path)
+    from odyssey.integrations.anthropic import AsyncAnthropic
+
+    expected = FakeResponse([{"type": "text", "text": "hi"}])
+    client = AsyncAnthropic(scripted=[expected])
+
+    async def main():
+        async with client.messages.stream(
+            model="m", messages=[{"role": "user", "content": "q"}]
+        ) as stream:
+            return await stream.get_final_message()
+
+    message = asyncio.run(main())
+    assert message is expected
+    assert roles(_only_journey_id()) == ["user", "assistant"]
+
+
+def _only_journey_id() -> str:
+    """The stream proxy generates its own journey id — read it back off disk."""
+    client = odyssey.get_client()
+    assert client is not None
+    ids = client.spool.journey_ids()
+    assert len(ids) == 1
+    return ids[0]
 
 
 # --------------------------------------------------------------------------
