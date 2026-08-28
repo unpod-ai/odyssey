@@ -108,6 +108,26 @@ def test_a_second_drain_appends_without_a_second_header(running):
     assert [e.seq for e in read_events(stored_path(running)).events] == [0, 1]
 
 
+def test_a_retried_batch_is_not_written_twice(running):
+    """HttpSink retries on failure; a lost 200 must not double the raw layer."""
+    sent = evs()
+    HttpSink(endpoint(running)).send(JID, sent, header=HEADER)
+    HttpSink(endpoint(running)).send(JID, sent, header=HEADER)  # the "retry"
+
+    result = read_events(stored_path(running))
+    assert result.events == sent
+    raw = stored_path(running).read_text()
+    assert raw.count("odyssey_schema_version") == 1
+
+
+def test_a_partially_new_retried_batch_only_writes_the_new_events(running):
+    HttpSink(endpoint(running)).send(JID, evs()[:1], header=HEADER)
+    HttpSink(endpoint(running)).send(JID, evs(), header=HEADER)  # e0 repeats, e1 new
+
+    result = read_events(stored_path(running))
+    assert [e.event_id for e in result.events] == ["e0", "e1"]
+
+
 def test_different_journeys_land_in_different_files(running):
     HttpSink(endpoint(running)).send("j_a", evs())
     HttpSink(endpoint(running)).send("j_b", evs())

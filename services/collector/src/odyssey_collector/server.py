@@ -126,6 +126,14 @@ def _safe_stem(journey_id: str) -> str:
     return stem or "journey"
 
 
+def _existing_event_ids(dest: Path) -> set[str]:
+    """``event_id``s already committed to ``dest``, empty if it doesn't exist yet."""
+    if not dest.exists():
+        return set()
+    result = read_events(dest)
+    return {e.event_id for e in result.events}
+
+
 class BatchRejected(ValueError):
     """A posted batch parsed but wasn't a clean, well-formed odyssey stream."""
 
@@ -245,6 +253,13 @@ class _Handler(BaseHTTPRequestHandler):
         bytes as-is is what makes this a validating ingest point instead of a
         dumb pipe: a malformed batch is rejected with a 400 here, not written
         and only discovered broken the next time someone folds it.
+
+        Deduplicates by ``event_id`` against what is already on disk for this
+        journey/date (item 1.9): ``HttpSink``'s retry-on-failure means the same
+        batch can be posted twice when a response is lost after the server
+        already committed it. Without this, a retried batch would double-write
+        every event in it — `fold()` would still dedupe it correctly on read,
+        but the raw layer would carry redundant bytes indefinitely.
         """
         with tempfile.TemporaryDirectory() as tmp:
             received = Path(tmp) / "received.jsonl"
@@ -263,8 +278,11 @@ class _Handler(BaseHTTPRequestHandler):
         dest = date_dir / f"{_safe_stem(journey_id)}.jsonl"
         with self.server.write_lock:
             date_dir.mkdir(parents=True, exist_ok=True)
-            write_events(dest, result.events, append=True, header=result.header)
-        return len(result.events)
+            existing_ids = _existing_event_ids(dest)
+            new_events = [e for e in result.events if e.event_id not in existing_ids]
+            if new_events:
+                write_events(dest, new_events, append=True, header=result.header)
+        return len(new_events)
 
     def _respond(self, status: int, payload: dict[str, Any]) -> None:
         data = json.dumps(payload).encode("utf-8")
