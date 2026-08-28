@@ -63,6 +63,26 @@ def test_check_pii_redaction_flags_a_leaked_secret():
     assert "api_key" in errors[0]
 
 
+def test_check_pii_redaction_ignores_content_by_default():
+    journey = {"steps": [{"messages": [{"role": "user", "content": "a@b.com"}]}]}
+    assert check_pii_redaction(journey) == []
+
+
+def test_check_pii_redaction_flags_content_when_rules_given():
+    journey = {"steps": [{"messages": [{"role": "user", "content": "email a@b.com"}]}]}
+    errors = check_pii_redaction(journey, content_rules=["EMAIL"])
+    assert len(errors) == 1
+    assert "EMAIL" in errors[0]
+    assert "message.content" in errors[0]
+
+
+def test_check_pii_redaction_only_scans_requested_content_rules():
+    journey = {
+        "steps": [{"messages": [{"role": "user", "content": "call 555-123-4567"}]}]
+    }
+    assert check_pii_redaction(journey, content_rules=["EMAIL"]) == []
+
+
 def test_check_leakage_flags_an_id_in_two_splits():
     errors = check_leakage({"train": ["a", "b"], "val": ["b", "c"]})
     assert len(errors) == 1

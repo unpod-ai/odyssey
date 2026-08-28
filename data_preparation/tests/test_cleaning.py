@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 
+from odyssey.primitives import PiiPolicy
+
 from odyssey_dataprep.cleaning import (
     clean_dir,
     dedupe_journeys,
     drop_dead_turns,
     repair_encoding,
+    scrub_pii_content,
 )
 
 
@@ -95,6 +98,43 @@ def test_dedupe_journeys_keeps_distinct_content(tmp_path):
     kept, dropped = dedupe_journeys([a, b])
     assert set(kept) == {a, b}
     assert dropped == []
+
+
+def test_scrub_pii_content_redacts_content_per_policy():
+    journey = {"steps": [{"messages": [m("user", "call me at 555-123-4567")]}]}
+    policy = PiiPolicy(name="p", rules=["PHONE"])
+    cleaned, changed = scrub_pii_content(journey, policy)
+    assert changed == 1
+    assert "555-123-4567" not in cleaned["steps"][0]["messages"][0]["content"]
+    assert "[REDACTED_PHONE]" in cleaned["steps"][0]["messages"][0]["content"]
+
+
+def test_scrub_pii_content_reports_zero_changes_for_clean_text():
+    journey = {"steps": [{"messages": [m("assistant", "book Tuesday at 3")]}]}
+    _, changed = scrub_pii_content(journey, PiiPolicy(name="p", rules=["EMAIL"]))
+    assert changed == 0
+
+
+def test_clean_dir_pii_policy_is_opt_in(tmp_path):
+    src = tmp_path / "normalized"
+    src.mkdir()
+    write_journey(
+        src,
+        "a",
+        [{"messages": [m("user", "email me at a@b.com")]}],
+        content_hash_val="h1",
+    )
+
+    without_policy = clean_dir(src, tmp_path / "no-scrub")
+    assert without_policy.pii_scrubs == 0
+    cleaned_doc = json.loads((tmp_path / "no-scrub" / "a.json").read_text())
+    assert cleaned_doc["steps"][0]["messages"][0]["content"] == "email me at a@b.com"
+
+    policy = PiiPolicy(name="p", rules=["EMAIL"])
+    with_policy = clean_dir(src, tmp_path / "scrub", pii_policy=policy)
+    assert with_policy.pii_scrubs == 1
+    scrubbed_doc = json.loads((tmp_path / "scrub" / "a.json").read_text())
+    assert "a@b.com" not in scrubbed_doc["steps"][0]["messages"][0]["content"]
 
 
 def test_clean_dir_end_to_end(tmp_path):

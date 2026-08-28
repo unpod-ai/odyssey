@@ -8,6 +8,8 @@
 #   context     — ambient journey context and seq allocation
 #   sdk         — init(), journey(), observe(), health(); capture never raises
 #   integrations— provider capture: Anthropic + OpenAI drop-in/patch, no duplicates
+#   langchain   — LangChain callback handler (item 0.10)
+#   pii         — content-level PII scan/redact (item 2.15)
 #   cli         — the command-line drain trigger and health report
 #   sft         — SFT export: one line per trainable turn
 #   dpo         — DPO pair extraction: (prompt, chosen, rejected)
@@ -49,6 +51,12 @@ case "$MODULE" in
     ;;
   integrations)
     uv run pytest tests/test_integrations.py tests/test_openai_integration.py "$@"
+    ;;
+  langchain)
+    uv run pytest tests/test_langchain_integration.py "$@"
+    ;;
+  pii)
+    uv run pytest tests/test_pii.py "$@"
     ;;
   cli)
     uv run pytest tests/test_cli.py "$@"

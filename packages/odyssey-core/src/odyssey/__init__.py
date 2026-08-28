@@ -57,6 +57,7 @@ from odyssey.export import (
 )
 from odyssey.fold import FoldResult, fold
 from odyssey.jsonl import ReadResult, read_events, read_header, write_events
+from odyssey.pii import redact_pii, scan_pii
 from odyssey.primitives import (
     SCHEMA_VERSION,
     WRITER_META_KEY,
@@ -64,6 +65,8 @@ from odyssey.primitives import (
     JourneyEvent,
     JourneyHeader,
     Message,
+    PiiPolicy,
+    RedactionPreview,
     Reward,
     RewardComponent,
     Signal,
@@ -130,6 +133,10 @@ __all__ = [
     "Step",
     "SCHEMA_VERSION",
     "WRITER_META_KEY",
+    "PiiPolicy",
+    "RedactionPreview",
+    "scan_pii",
+    "redact_pii",
     # Read side
     "fold",
     "FoldResult",

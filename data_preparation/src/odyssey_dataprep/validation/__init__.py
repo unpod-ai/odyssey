@@ -5,10 +5,13 @@ violation exits 3, the code CI greps for — `odyssey.cli._cmd_health`
 already does this for a writer conflict; `odyssey data validate` (this
 stage's CLI command) does it for a validation breach.
 
-PII assert checks that the existing key-based redaction
-(`odyssey.spool.DEFAULT_REDACT_KEYS`/`REDACTED`) actually reached the
-normalized artifact, not new content-level scrubbing — that primitive does
-not exist yet (`docs/WORKING.md` item 2.15).
+PII assert has two independent halves now. The key-based one checks that
+`odyssey.spool`'s own redaction (`DEFAULT_REDACT_KEYS`/`REDACTED`) actually
+reached the normalized artifact, reusing its exact matching rule
+(`_is_secret`) rather than a re-derived one. The optional `content_rules`
+half (item 2.15, `odyssey.pii`) additionally regex-scans `message.content`/
+`.reasoning` — detection only, same as the rest of this stage: a violation
+fails validation, nothing here mutates the journey.
 """
 
 from __future__ import annotations
@@ -17,8 +20,10 @@ import json
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
+from odyssey.pii import scan_pii
+from odyssey.primitives import PiiRule
 from odyssey.spool import DEFAULT_REDACT_KEYS, REDACTED, _is_secret
 
 __all__ = [
@@ -84,12 +89,21 @@ def _walk(obj: Any):
 
 
 def check_pii_redaction(
-    journey: Dict[str, Any], redact_keys: frozenset = DEFAULT_REDACT_KEYS
+    journey: Dict[str, Any],
+    redact_keys: frozenset = DEFAULT_REDACT_KEYS,
+    *,
+    content_rules: Optional[Sequence[PiiRule]] = None,
 ) -> List[str]:
     """Every key ``odyssey.spool``'s own redaction would have masked must
     carry the redaction marker here too — reuses its exact matching rule
     (``_is_secret``), not a re-derived one, so this check can never be
-    stricter or looser than what actually ran."""
+    stricter or looser than what actually ran.
+
+    ``content_rules`` (item 2.15) additionally regex-scans ``content``/
+    ``reasoning`` on every message via ``odyssey.pii.scan_pii`` — omitted
+    by default, since most journeys legitimately carry prose that looks
+    like an email or a phone number as training data, not a leak.
+    """
     errors = []
     for mapping in _walk(journey):
         for key, value in mapping.items():
@@ -101,6 +115,22 @@ def check_pii_redaction(
                 REDACTED,
             ):
                 errors.append(f"unredacted key {key!r} (value: {value!r})")
+
+    if content_rules:
+        for step in journey.get("steps") or []:
+            for message in step.get("messages") or []:
+                if not isinstance(message, dict):
+                    continue
+                for field_name in ("content", "reasoning"):
+                    text = message.get(field_name)
+                    if not isinstance(text, str):
+                        continue
+                    preview = scan_pii(text, content_rules)
+                    for rule, count in sorted(preview.total_rule_counts.items()):
+                        errors.append(
+                            f"unredacted {rule} in message.{field_name} "
+                            f"({count} match(es))"
+                        )
     return errors
 
 
@@ -160,15 +190,21 @@ def validate_dir(
     *,
     splits: Optional[Dict[str, List[str]]] = None,
     baseline_stats: Optional[Dict[str, float]] = None,
+    content_pii_rules: Optional[Sequence[PiiRule]] = None,
 ) -> ValidationResult:
     """Run schema + PII-redaction checks over every journey in
     ``journeys_dir``, plus leakage (if ``splits`` given) and drift (if
-    ``baseline_stats`` given)."""
+    ``baseline_stats`` given). ``content_pii_rules`` opts into the
+    content-level scan (item 2.15) alongside the always-on key-based one.
+    """
     errors: List[str] = []
     for path in sorted(Path(journeys_dir).glob("*.json")):
         journey = json.loads(path.read_text(encoding="utf-8"))
         errors.extend(f"{path.name}: {e}" for e in validate_schema(journey))
-        errors.extend(f"{path.name}: {e}" for e in check_pii_redaction(journey))
+        errors.extend(
+            f"{path.name}: {e}"
+            for e in check_pii_redaction(journey, content_rules=content_pii_rules)
+        )
 
     if splits is not None:
         errors.extend(check_leakage(splits))

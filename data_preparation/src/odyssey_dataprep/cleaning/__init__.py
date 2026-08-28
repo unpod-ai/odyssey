@@ -1,11 +1,13 @@
 """Cleaning — item 3.2: dedupe, dead-turn drop, encoding repair over the
 normalized `*.json` artifacts `normalization` (3.3) already produces.
 
-**Content-level PII scrub is not here.** `PiiPolicy`/`RedactionPreview` are
-still types with no implementation (`docs/WORKING.md` item 2.15) — only
-key-based masking exists, at the spool layer, not this one. Implementing it
-here would be inventing the missing primitive under a different name;
-wiring it in is one call once 2.15 lands, not this stage's job today.
+**Content-level PII scrub** (item 2.15, `odyssey.pii`) lives here as
+:func:`scrub_pii_content`, opt-in via `clean_dir(..., pii_policy=...)` —
+never applied by default. Blanket-redacting `message.content` would
+quietly destroy training data, the same reason `odyssey.spool.
+redact_event` never touches it either; a caller has to hand this stage a
+real `PiiPolicy` naming which rules to apply before anything in `content`
+changes.
 """
 
 from __future__ import annotations
@@ -14,15 +16,18 @@ import json
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from odyssey.hashing import content_hash
+from odyssey.pii import redact_pii
+from odyssey.primitives import PiiPolicy
 
 __all__ = [
     "CleanResult",
     "dedupe_journeys",
     "drop_dead_turns",
     "repair_encoding",
+    "scrub_pii_content",
     "clean_dir",
 ]
 
@@ -33,6 +38,7 @@ class CleanResult:
     duplicates_dropped: int = 0
     dead_turns_dropped: int = 0
     encoding_repairs: int = 0
+    pii_scrubs: int = 0
 
     @property
     def count(self) -> int:
@@ -110,6 +116,37 @@ def repair_encoding(journey: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
     return {**journey, "steps": new_steps}, changed
 
 
+def scrub_pii_content(
+    journey: Dict[str, Any], policy: PiiPolicy
+) -> Tuple[Dict[str, Any], int]:
+    """Regex-redact `content`/`reasoning` per `policy.rules` (item 2.15).
+
+    Only ever called when a caller passes a real `PiiPolicy` — see the
+    module docstring for why this is opt-in, not automatic. Returns the
+    scrubbed journey and how many strings actually changed, the same
+    `(journey, count)` shape `repair_encoding` already uses.
+    """
+    changed = 0
+    steps = journey.get("steps") or []
+    new_steps = []
+    for step in steps:
+        messages = step.get("messages") or []
+        new_messages = []
+        for message in messages:
+            new_message = dict(message)
+            for key in ("content", "reasoning"):
+                text = message.get(key)
+                if not isinstance(text, str):
+                    continue
+                scrubbed = redact_pii(text, policy.rules)
+                if scrubbed != text:
+                    changed += 1
+                new_message[key] = scrubbed
+            new_messages.append(new_message)
+        new_steps.append({**step, "messages": new_messages})
+    return {**journey, "steps": new_steps}, changed
+
+
 def dedupe_journeys(paths: List[Path]) -> Tuple[List[Path], List[Path]]:
     """Split ``paths`` (sorted first, so the result is deterministic) into
     ``(kept, dropped)`` by exact content — the first occurrence of a given
@@ -130,9 +167,19 @@ def dedupe_journeys(paths: List[Path]) -> Tuple[List[Path], List[Path]]:
     return kept, dropped
 
 
-def clean_dir(journeys_dir: Path | str, out_dir: Path | str) -> CleanResult:
+def clean_dir(
+    journeys_dir: Path | str,
+    out_dir: Path | str,
+    *,
+    pii_policy: Optional[PiiPolicy] = None,
+) -> CleanResult:
     """Run dedupe, dead-turn drop, and encoding repair over a directory of
-    normalized journeys, writing the survivors to ``out_dir``."""
+    normalized journeys, writing the survivors to ``out_dir``.
+
+    ``pii_policy`` is opt-in (see the module docstring) — omit it and
+    ``content``/``reasoning`` pass through exactly as `repair_encoding`
+    left them.
+    """
     src = Path(journeys_dir)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -143,12 +190,16 @@ def clean_dir(journeys_dir: Path | str, out_dir: Path | str) -> CleanResult:
     written: List[Path] = []
     dead_turns = 0
     repairs = 0
+    pii_scrubs = 0
     for path in kept:
         journey = json.loads(path.read_text(encoding="utf-8"))
         journey, dead = drop_dead_turns(journey)
         journey, changed = repair_encoding(journey)
         dead_turns += dead
         repairs += changed
+        if pii_policy is not None:
+            journey, scrubbed = scrub_pii_content(journey, pii_policy)
+            pii_scrubs += scrubbed
 
         dest = out / path.name
         tmp = dest.with_suffix(".json.tmp")
@@ -163,4 +214,5 @@ def clean_dir(journeys_dir: Path | str, out_dir: Path | str) -> CleanResult:
         duplicates_dropped=len(dropped),
         dead_turns_dropped=dead_turns,
         encoding_repairs=repairs,
+        pii_scrubs=pii_scrubs,
     )
