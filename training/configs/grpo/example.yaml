@@ -1,0 +1,10 @@
+base: meta-llama/Llama-3.1-8B-Instruct
+task: grpo
+backend: transformers
+data:
+  train: data/grpo_prompts.jsonl
+  format: chatml
+output: ./output/grpo-example
+training:
+  num_generations: 8
+  reward_fn: format

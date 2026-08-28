@@ -1,0 +1,10 @@
+base: meta-llama/Llama-3.1-8B-Instruct
+task: sft
+backend: transformers
+data:
+  train: data/sft.jsonl
+  format: chatml
+output: ./output/sft-example
+training:
+  epochs: 3
+  lr: 2.0e-05

@@ -17,6 +17,12 @@ documentation:
   not a bare message. :func:`translate_dpo_shard` does that one required
   wrap; nothing else needs to change.
 
+- **GRPO** — odyssey has no GRPO data exporter (a different, unpaired data
+  shape than SFT/DPO, same reason ``dpo.py`` gives for not implementing
+  KTO/ORPO). :func:`write_grpo_config` still writes a real, schema-valid
+  ``task="grpo"`` config against a caller-supplied prompts shard and
+  ``reward_fn`` — it does not fabricate the missing exporter.
+
 Every config this module builds is validated against the real, installed
 ``soup_cli.config.schema.SoupConfig`` before being written — a config that
 does not parse never reaches disk.
@@ -31,7 +37,12 @@ from typing import Any, Dict, Optional
 import yaml
 from soup_cli.config.schema import SoupConfig
 
-__all__ = ["translate_dpo_shard", "write_sft_config", "write_dpo_config"]
+__all__ = [
+    "translate_dpo_shard",
+    "write_sft_config",
+    "write_dpo_config",
+    "write_grpo_config",
+]
 
 
 def translate_dpo_shard(src_path: Path | str, out_path: Path | str) -> int:
@@ -144,5 +155,42 @@ def write_dpo_config(
         output=output,
         backend=backend,
         training=training,
+    )
+    return _write_yaml(config, out_path)
+
+
+def write_grpo_config(
+    *,
+    base: str,
+    prompts_shard: Path | str,
+    reward_fn: str = "accuracy",
+    out_path: Path | str,
+    output: str = "./output",
+    backend: str = "transformers",
+    training: Optional[Dict[str, Any]] = None,
+) -> Path:
+    """Write a `soup.yaml` for GRPO (`task="grpo"`).
+
+    Odyssey has no GRPO data exporter — items 5.1-5.5 only cover Trajectory
+    JSON/SFT/DPO, the same reason the module docstring gives for KTO/ORPO
+    not being implemented in `dpo.py`. `prompts_shard` is any chatml-format
+    `*.jsonl` of prompts the caller supplies directly (soup-cli's `chatml`
+    format again — an `odyssey sft` shard's prompts happen to already be in
+    that shape, if a caller wants to reuse one). `reward_fn` is passed
+    straight through to soup-cli's own built-ins (`"accuracy"`, `"format"`,
+    `"verifiable"`, a path to a custom `.py` file, or a comma-separated
+    ensemble of the above) — this module implements no reward function
+    itself, so a real reward source is always the caller's responsibility.
+    """
+    merged_training = dict(training or {})
+    merged_training["reward_fn"] = reward_fn
+    config = _build_config(
+        task="grpo",
+        data_format="chatml",
+        base=base,
+        train_shard=prompts_shard,
+        output=output,
+        backend=backend,
+        training=merged_training,
     )
     return _write_yaml(config, out_path)

@@ -1,0 +1,11 @@
+base: meta-llama/Llama-3.1-8B-Instruct
+task: dpo
+backend: transformers
+data:
+  train: data/dpo.soup.jsonl
+  format: dpo
+output: ./output/dpo-example
+training:
+  epochs: 1
+  lr: 5.0e-06
+  beta: 0.1

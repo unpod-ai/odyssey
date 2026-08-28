@@ -1,0 +1,16 @@
+# Reference only — soup-cli's own config (`soup_cli.config.schema.SoupConfig`)
+# is a flat document, not composed via Hydra `defaults:` includes, so this
+# file is not read by anything. It exists to name the fields every task's
+# config repeats, so you can copy the ones you want into sft/, dpo/, or
+# grpo/ rather than re-deriving them from soup-cli's own (much larger)
+# schema each time.
+#
+# base:     any HF model id soup-cli's own loader accepts
+# backend:  transformers | unsloth | mlx — see soup_adapter.py's module
+#           docstring; Unsloth is one of soup-cli's own backends, not a
+#           separate integration
+# output:   soup train's own output dir — unrelated to this repo's
+#           training/outputs/ (that one is .gitignore'd; this is soup-cli's)
+base: meta-llama/Llama-3.1-8B-Instruct
+backend: transformers
+output: ./output

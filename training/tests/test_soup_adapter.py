@@ -11,6 +11,7 @@ from soup_cli.config.schema import SoupConfig
 from odyssey_training.soup_adapter import (
     translate_dpo_shard,
     write_dpo_config,
+    write_grpo_config,
     write_sft_config,
 )
 
@@ -121,6 +122,42 @@ def test_write_config_rejects_an_unknown_backend(tmp_path):
         write_sft_config(
             base=BASE,
             train_shard=tmp_path / "s.jsonl",
+            out_path=tmp_path / "soup.yaml",
+            backend="not-a-real-backend",
+        )
+
+
+def test_write_grpo_config_defaults_reward_fn_to_accuracy(tmp_path):
+    out = write_grpo_config(
+        base=BASE,
+        prompts_shard=tmp_path / "prompts.jsonl",
+        out_path=tmp_path / "soup.yaml",
+    )
+    doc = yaml.safe_load(out.read_text())
+    assert doc["task"] == "grpo"
+    assert doc["data"] == {"train": str(tmp_path / "prompts.jsonl"), "format": "chatml"}
+    assert doc["training"] == {"reward_fn": "accuracy"}
+    SoupConfig(**doc)
+
+
+def test_write_grpo_config_honours_a_custom_reward_fn(tmp_path):
+    out = write_grpo_config(
+        base=BASE,
+        prompts_shard=tmp_path / "prompts.jsonl",
+        reward_fn="format",
+        out_path=tmp_path / "soup.yaml",
+        training={"epochs": 2},
+    )
+    doc = yaml.safe_load(out.read_text())
+    assert doc["training"] == {"epochs": 2, "reward_fn": "format"}
+    SoupConfig(**doc)
+
+
+def test_write_grpo_config_rejects_an_unknown_backend(tmp_path):
+    with pytest.raises(Exception):
+        write_grpo_config(
+            base=BASE,
+            prompts_shard=tmp_path / "prompts.jsonl",
             out_path=tmp_path / "soup.yaml",
             backend="not-a-real-backend",
         )
