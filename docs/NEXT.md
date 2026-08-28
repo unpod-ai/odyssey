@@ -209,12 +209,15 @@ instrumentation vocabularies, not silent data loss), 1.7's cross-journey
 overhead (`HttpSink` reuses its connection across `send()` calls via
 HTTP/1.1 keep-alive — merged payloads were still ruled out, same
 partial-batch-failure reasoning as before, but the actual per-journey
-overhead this item was chasing is now addressed without that redesign).
+overhead this item was chasing is now addressed without that redesign), 3.5
+(`paraphrase_journey`/`generate_synthetic_negative`, optional
+`odyssey-dataprep[llm]` extra, both opt-in and off by default — the
+synthetic-negative chain's `superseded`-then-`trainable` step order was
+verified against `odyssey.dpo.dpo_pairs`'s real ordering rule).
 
 **Still open:** LlamaIndex hooks (a genuinely different, non-LangChain-compatible
 instrumentation API — **deliberately deferred, bundled with item 9.4**, not
-started here), 3.5's LLM-based augmentation (needs a new dependency, explicit
-scope cut), 9.10's 157 `tests/` narrowing gaps (scope decision).
+started here), 9.10's 157 `tests/` narrowing gaps (scope decision).
 
 ---
 

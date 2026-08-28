@@ -736,6 +736,9 @@ dev = [
     { name = "pyrefly" },
     { name = "pytest" },
 ]
+llm = [
+    { name = "openai" },
+]
 s3 = [
     { name = "boto3" },
 ]
@@ -747,11 +750,12 @@ requires-dist = [
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.3" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=5.13" },
     { name = "odyssey", editable = "packages/odyssey-core" },
+    { name = "openai", marker = "extra == 'llm'", specifier = ">=1.0" },
     { name = "pyrefly", marker = "extra == 'dev'", specifier = ">=0.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pyyaml", specifier = ">=6" },
 ]
-provides-extras = ["dev", "s3"]
+provides-extras = ["dev", "s3", "llm"]
 
 [[package]]
 name = "odyssey-training"

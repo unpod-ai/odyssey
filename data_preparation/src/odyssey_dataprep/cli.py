@@ -35,7 +35,11 @@ def register(app: Any) -> None:
 
     from odyssey_dataprep.annotation import apply_reviews as _apply_reviews
     from odyssey_dataprep.annotation import build_queue
-    from odyssey_dataprep.augmentation import perturb_tool_calls
+    from odyssey_dataprep.augmentation import (
+        generate_synthetic_negative,
+        paraphrase_journey,
+        perturb_tool_calls,
+    )
     from odyssey_dataprep.cleaning import clean_dir
     from odyssey_dataprep.collection import (
         collect_from_collector,
@@ -297,10 +301,39 @@ def register(app: Any) -> None:
         out: str = typer.Option(
             ..., "--out", help="output directory for synthetic journeys"
         ),
+        paraphrase: int = typer.Option(
+            0,
+            "--paraphrase",
+            help="LLM-generated paraphrases per journey (item 3.5) -- opt-in, "
+            "0 by default; requires an OpenAI-compatible client (OPENAI_API_KEY "
+            "env, or odyssey-dataprep[llm] installed)",
+        ),
+        synthetic_negatives: bool = typer.Option(
+            False,
+            "--synthetic-negatives",
+            help="one LLM-generated wrong-answer DPO pair per journey (item "
+            "3.5) -- opt-in, off by default; same client requirement as "
+            "--paraphrase",
+        ),
+        llm_model: str = typer.Option(
+            "gpt-4.1-mini",
+            "--llm-model",
+            help="model for --paraphrase/--synthetic-negatives",
+        ),
     ) -> None:
-        """Generate synthetic negatives via tool-call perturbation (item 3.5)."""
+        """Synthetic negatives via tool-call perturbation (item 3.5, always
+        on) plus optional LLM-backed paraphrase / synthetic-negative
+        generation (opt-in, both off by default -- an LLM call per journey
+        is a real cost this stage does not spend unless asked to)."""
         import json
         from pathlib import Path
+
+        client = None
+        if paraphrase or synthetic_negatives:
+            # pyrefly: ignore[missing-import]  — optional extra, odyssey-dataprep[llm].
+            import openai  # noqa: PLC0415 - opt-in only when actually requested
+
+            client = openai.OpenAI()
 
         src = Path(journeys)
         dest_dir = Path(out)
@@ -308,7 +341,18 @@ def register(app: Any) -> None:
         n = 0
         for path in sorted(src.glob("*.json")):
             journey = json.loads(path.read_text(encoding="utf-8"))
-            for synthetic in perturb_tool_calls(journey):
+            synthetic_journeys = list(perturb_tool_calls(journey))
+            if paraphrase:
+                synthetic_journeys += paraphrase_journey(
+                    journey, client=client, model=llm_model, n=paraphrase
+                )
+            if synthetic_negatives:
+                negative = generate_synthetic_negative(
+                    journey, client=client, model=llm_model
+                )
+                if negative is not None:
+                    synthetic_journeys.append(negative)
+            for synthetic in synthetic_journeys:
                 cid = synthetic["task"]["conversation_id"]
                 dest = dest_dir / f"{cid}.json"
                 dest.write_text(json.dumps(synthetic, indent=2, sort_keys=True) + "\n")

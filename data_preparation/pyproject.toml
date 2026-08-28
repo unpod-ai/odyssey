@@ -24,6 +24,11 @@ dev = [
 # item 1.10 — collect_from_object_store imports boto3 lazily, only when no
 # `client` double is injected, so a light install never needs an S3 SDK.
 s3 = ["boto3>=1.34"]
+# item 3.5 — paraphrase_journey/generate_synthetic_negative need an LLM in
+# the loop; a real client (an `openai.OpenAI`-shaped `.chat.completions
+# .create()`) is caller-injected, so this extra is a convenience for
+# building one, never imported unless a caller actually asks for it.
+llm = ["openai>=1.0"]
 
 [project.entry-points."odyssey.commands"]
 data = "odyssey_dataprep.cli:register"

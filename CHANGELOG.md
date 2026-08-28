@@ -77,6 +77,14 @@ project has not yet made a versioned release, so entries accumulate under
   attributes, `gen_ai.content.prompt`/`.completion` events, legacy
   `gen_ai.prompt`/`.completion` attributes). Other instrumentation
   vocabularies (OpenInference, etc.) are an explicit, documented scope cut.
+- `data_preparation`'s `augmentation.paraphrase_journey`/
+  `.generate_synthetic_negative` (item 3.5, optional `odyssey-dataprep[llm]`
+  extra) — LLM-backed paraphrase and synthetic-negative generation, both
+  opt-in and off by default. `paraphrase_journey` rewords only real user
+  turns, keeping the assistant's trainable output untouched.
+  `generate_synthetic_negative` emits a `superseded`-then-`trainable` step
+  chain — the shape `odyssey.dpo.dpo_pairs` looks for. Wired into
+  `odyssey data augment --paraphrase N --synthetic-negatives`.
 
 ### Removed
 
