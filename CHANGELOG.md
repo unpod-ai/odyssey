@@ -42,6 +42,12 @@ project has not yet made a versioned release, so entries accumulate under
 - `services/collector`: server-side idempotency (item 1.9) — `_store()` skips
   any `event_id` already committed to the destination file, so a retried
   `HttpSink` POST no longer double-writes the raw layer.
+- `integrations/gemini.py` (item 0.9) — drop-in `Client` for `google-genai`
+  (optional `odyssey[gemini]` extra), sync (`client.models`) + async
+  (`client.aio.models`) + opt-in `instrument()` patch. New
+  `builders.messages.messages_from_gemini` parser for Gemini's
+  `Content`/`parts` shape (`function_call`/`function_response` parts,
+  `thought` parts → `Message.reasoning`).
 
 ### Removed
 

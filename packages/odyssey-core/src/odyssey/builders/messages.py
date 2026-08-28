@@ -4,6 +4,7 @@ Recipes shipped:
 
 - :func:`messages_from_openai_chat` -- OpenAI ChatCompletion (modern ``tool_calls`` or legacy ``function_call``)
 - :func:`messages_from_anthropic_messages` -- Anthropic Messages API content blocks
+- :func:`messages_from_gemini` -- Gemini/``google-genai`` ``Content``/``parts`` shapes
 - :func:`messages_from_vercel_ai_sdk` -- Vercel AI SDK ``UIMessage`` / ``CoreMessage`` shapes
 - :func:`messages_from_prompt_response` -- flat prompt/response strings
 - :func:`messages_from_role_content_pairs` -- ``[(role, content), ...]``
@@ -473,6 +474,122 @@ def messages_from_anthropic_messages(raw: List[Dict[str, Any]]) -> List[Message]
                     role=role, content=None, finish_reason=finish_reason, usage=usage
                 )
             )
+
+    return out
+
+
+def messages_from_gemini(raw: List[Dict[str, Any]]) -> List[Message]:
+    """Convert Gemini/``google-genai`` ``Content`` dicts to :class:`Message` objects.
+
+    Gemini's shape differs from Anthropic's in the same three ways every time:
+    ``role`` is ``"user"``/``"model"`` rather than ``"user"``/``"assistant"``
+    (:func:`normalize_role` already aliases ``model → assistant``), content is
+    a list of ``parts`` rather than content blocks, and a tool result is a
+    ``function_response`` part sent back inside a ``role="user"`` (sometimes
+    ``"tool"``) ``Content`` rather than a dedicated role. That last one gets
+    the same treatment Anthropic's ``tool_result`` blocks get: a
+    ``function_response`` part always becomes its own ``role="tool"``
+    message, regardless of what role the ``Content`` itself claims — the
+    provider's role name describes the turn, not the response inside it.
+
+    A ``text`` part with ``"thought": true`` is Gemini's "thinking" signal,
+    landing on ``Message.reasoning`` rather than content — same reasoning
+    Anthropic's ``thinking``/``redacted_thinking`` blocks get.
+    """
+    out: List[Message] = []
+    for i, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise TypeError(
+                f"gemini content {i} must be a dict, got {type(entry).__name__}"
+            )
+        role = normalize_role(entry.get("role"))
+        parts = entry.get("parts")
+        if not isinstance(parts, list):
+            raise TypeError(
+                f"gemini content {i}: 'parts' must be a list, got "
+                f"{type(parts).__name__}"
+            )
+
+        text_parts: List[str] = []
+        reasoning_parts: List[str] = []
+        tool_calls: List[ToolCall] = []
+        tool_results: List[ToolResponse] = []
+
+        for j, part in enumerate(parts):
+            if not isinstance(part, dict):
+                raise TypeError(
+                    f"gemini content {i} part {j} must be a dict, got "
+                    f"{type(part).__name__}"
+                )
+            if part.get("function_call") is not None:
+                fc = part["function_call"]
+                name = fc.get("name") if isinstance(fc, dict) else None
+                if not name:
+                    raise ValueError(
+                        f"gemini content {i} part {j} is a function_call but "
+                        "'name' is missing"
+                    )
+                tool_calls.append(
+                    ToolCall(
+                        name=name,
+                        arguments=fc.get("args") or {},
+                        id=fc.get("id"),
+                    )
+                )
+            elif part.get("function_response") is not None:
+                fr = part["function_response"]
+                if not isinstance(fr, dict):
+                    raise TypeError(
+                        f"gemini content {i} part {j}: 'function_response' "
+                        f"must be a dict, got {type(fr).__name__}"
+                    )
+                tool_results.append(
+                    ToolResponse(
+                        id=fr.get("id") or fr.get("name") or "",
+                        name=fr.get("name") or "",
+                        arguments={},
+                        response=_tool_result_to_response_text(fr.get("response")),
+                    )
+                )
+            elif part.get("text") is not None:
+                text = part["text"]
+                if not isinstance(text, str):
+                    raise ValueError(
+                        f"gemini content {i} part {j} has a non-string 'text'"
+                    )
+                if part.get("thought"):
+                    reasoning_parts.append(text)
+                else:
+                    text_parts.append(text)
+            else:
+                raise ValueError(
+                    f"gemini content {i} part {j} has no recognized key; "
+                    "expected 'text', 'function_call', or 'function_response'"
+                )
+
+        primary_content = "\n".join(text_parts) if text_parts else None
+        reasoning = "\n".join(reasoning_parts) or None
+        has_primary = primary_content is not None or tool_calls or reasoning
+
+        if has_primary:
+            out.append(
+                Message(
+                    role=role,
+                    content=primary_content,
+                    tool_calls=tool_calls or None,
+                    reasoning=reasoning,
+                )
+            )
+
+        # Each function_response becomes its own role="tool" message so
+        # downstream step builders and failure metrics (which key on
+        # role == "tool") see every result, including parallel ones.
+        for tr in tool_results:
+            out.append(Message(role="tool", content=tr.response, tool_response=tr))
+
+        if not has_primary and not tool_results:
+            # Preserve empty-content turns rather than silently dropping them.
+            out.append(Message(role=role, content=None))
 
     return out
 

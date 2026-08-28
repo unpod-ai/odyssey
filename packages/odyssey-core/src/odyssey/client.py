@@ -385,6 +385,10 @@ def _instrument(name: str, client: Client) -> None:
             from odyssey.integrations.openai import instrument
 
             instrument()
+        elif key == "gemini":
+            from odyssey.integrations.gemini import instrument
+
+            instrument()
         else:
             raise ValueError(f"unknown instrumentation target {name!r}")
     except Exception as exc:  # noqa: BLE001 - a missing provider is not fatal
