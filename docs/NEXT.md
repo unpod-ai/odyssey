@@ -1,5 +1,40 @@
 # odyssey — session handoff
 
+## Step 8 items 8.1-8.3 (services/api) are now closed
+
+Built this session: two new workspace members, `packages/odyssey-schemas`
+(pure pydantic DTOs, no `fastapi`/`odyssey-core` dependency) and
+`services/api` (`odyssey-api`, FastAPI), layered `routers/` ->
+`domain/` (zero fastapi imports) -> `repositories/filesystem.py`. Routes:
+`/health`, `/journeys`+`/journeys/{id}`, `/datasets`+`/datasets/{name}`,
+`/models`+`/models/{name}`, `/runs`, `/exports`. New `odyssey api
+serve/openapi/routes` CLI commands; `services/api/openapi.json` generated
+and committed. 25 new tests, full workspace (919 tests, 8 members) green.
+
+**Explicitly not merged with `services/collector`** (the "8.2 and 1.8 are
+the same server" note `docs/WORKING.md` already carried) — `services/api`
+is a pure read layer over the files the collector already writes;
+merging ingest into FastAPI would mean rewriting the collector's
+idempotency/project-scoping/backoff handling for no functional gain today.
+Also deliberately not built this session, same explicit-deferral pattern
+`judges.py` got: `repositories/mongo.py`/`postgres.py`/`objectstore.py`,
+`workers/drain_consumer.py` (no Kafka anywhere in this repo),
+`migrations/` (alembic — no relational schema). Each has its own README
+documenting the deferral.
+
+**Next up, in dependency order:**
+
+1. **9.4** — `NOTICE` copyright holder. Still the only remaining hard
+   blocker for public distribution, still needs a human, not more
+   engineering. LlamaIndex hooks (0.10) are still bundled with this item.
+2. **8.4-8.7** — `sdk/python` (generated OpenAPI client — settle the
+   `odyssey-sdk` naming collision with the capture-layer "SDK" first, see
+   `docs/WORKING.md`'s ⚠️ note), `sdk/javascript`, `apps/web`,
+   `scripts/codegen.sh` + CI drift gate. Bigger scope, and the naming
+   collision needs resolving before 8.4 specifically.
+
+---
+
 ## Step 7 (evaluation harness) is now closed
 
 Built this session per the plan below (kept for reference — every item it

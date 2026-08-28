@@ -519,21 +519,78 @@ and a real `check-overlap` breach/no-breach pair, not just unit tests.
 
 | # | Item | Status |
 |---|---|---|
-| 8.1 | `packages/odyssey-schemas` (pydantic DTOs) | ❌ |
-| 8.2 | `services/api` (FastAPI) | ❌ |
-| 8.3 | `services/api/openapi.json` | ❌ |
+| 8.1 | `packages/odyssey-schemas` (pydantic DTOs) | ✅ |
+| 8.2 | `services/api` (FastAPI) | ✅ |
+| 8.3 | `services/api/openapi.json` | ✅ |
 | 8.4 | `sdk/python` (generated) | ❌ |
 | 8.5 | `sdk/javascript` (`@odyssey/sdk`) | ❌ |
 | 8.6 | `apps/web` (Next.js dashboard) | ❌ |
 | 8.7 | `scripts/codegen.sh` + CI drift gate | ❌ |
 
-Note the overlap: **8.2 and 1.8 are the same server.** Plan the ingest endpoint
-and the read API together or the "one place" ends up being two places.
+Note the overlap: **8.2 and 1.8 are the same server**, per this file's own
+earlier note. Resolved by *not* merging them: `services/collector` (1.8)
+keeps owning ingest (stdlib, idempotency, project-scoping, gzip/`Retry-After`
+backoff — a real rewrite risk with no functional gain today), and
+`services/api` (8.2) is a pure read layer over the exact files the collector
+already writes. If a genuine "one server" need shows up later, this is a
+swap of `services/api`'s `repositories/filesystem.py`, not a rewrite of its
+routers/domain layer.
 
 ⚠️ **Naming collision to settle before 8.4:** `STRUCTURE.md` reserves the
 distribution name `odyssey-sdk` / package `odyssey_sdk` for the *generated
 OpenAPI client*. The capture layer that people will call "the SDK" now lives in
-`odyssey-core`. Two different things, one obvious name.
+`odyssey-core`. Two different things, one obvious name. **Still open** —
+not touched by 8.1-8.3.
+
+`packages/odyssey-schemas` (item 8.1) — pure pydantic DTOs (`HealthOut`,
+`JourneySummaryOut`/`JourneyDetailOut`/`StepOut`/`JourneyMetricsOut`,
+`DatasetOut`/`DatasetVersionOut`, `ModelOut`/`ModelVersionOut`, `EvalRunOut`,
+`ExportArtifactOut`), no `fastapi` or `odyssey-core` dependency — a stable
+wire contract a future generated SDK (8.4) can depend on without pulling in
+the service's own `fastapi`/`uvicorn` dependencies.
+
+`services/api` (item 8.2) — new FastAPI workspace member (`odyssey-api`),
+layered per `docs/STRUCTURE.md`: `routers/` (parse/validate/render only) ->
+`domain/` (use-cases, zero fastapi imports) -> `repositories/filesystem.py`
+(the only repository built — see below). Routes: `GET /health`,
+`/journeys` + `/journeys/{id}` (folds a collector-written shard through
+`odyssey.export.fold_shard`, the same path every exporter uses),
+`/datasets` + `/datasets/{name}` and `/models` + `/models/{name}` (read
+`data_preparation`'s / `training`'s own `registry.yaml` files directly, no
+new registry), `/runs` (reads `odyssey eval run`'s own `*.json` reports),
+`/exports` (lists `*.jsonl` shards in a caller-configured directory,
+sha256/row-count computed fresh — no export registry exists anywhere in
+this repo). New `odyssey api serve/openapi/routes` CLI commands.
+
+**Deliberately not built**, same explicit-deferral treatment `judges.py`
+(item 7) and 0.11/3.5 got before a named consumer existed: `repositories/
+mongo.py`/`postgres.py`/`objectstore.py` (only `filesystem.py` — every
+store this service reads is a real file today, same state
+`odyssey_dataprep.datasets` is already in), `workers/drain_consumer.py`
+(Kafka -> spool drain — no Kafka broker/topic exists anywhere in this
+repo), `migrations/` (alembic — no relational schema to migrate). Each has
+its own README documenting the deferral in place, not a silently-missing
+`.gitkeep`.
+
+`services/api/openapi.json` (item 8.3) — generated via `odyssey api
+openapi` from the live `FastAPI.openapi()` schema, committed (the
+"generated, committed — SDK + web codegen input" contract `docs/
+STRUCTURE.md` names). Hit one real starlette-version quirk while building
+`odyssey api routes`: this repo's pinned starlette (1.6.0, via fastapi
+0.141.1) wraps each `include_router()` call as an opaque `_IncludedRouter`
+on `app.routes` instead of flattening routes in place —
+`.original_router.routes` is where the real `APIRoute`s live; `routes()`
+walks both shapes so it isn't starlette-version-fragile.
+
+25 new tests (7 `odyssey-schemas`, 18 `odyssey-api`), full workspace
+re-verified green (919 tests across 8 members).
+Verified against a real end-to-end run: a real journey shard written via
+`odyssey.jsonl.write_events`, a real `uvicorn` process started via
+`odyssey api serve`, `curl` against `/health`, `/journeys`,
+`/journeys/{id}`, `/datasets`, `/models`, and the `/journeys/nope` 404
+path — not just `TestClient` unit tests. `uv run odyssey doctor` confirms
+cold `--help` is still 315ms, comfortably under budget, even with
+`fastapi`/`uvicorn` now in the shared venv.
 
 ---
 

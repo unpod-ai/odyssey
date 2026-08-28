@@ -1,29 +1,19 @@
-name: ci-cli
+name: ci-schemas
 
 on:
   push:
     branches: [main]
     paths:
-      - "cli/**"
-      - "packages/odyssey-core/**"
-      - "data_preparation/**"
-      - "training/**"
       - "packages/odyssey-schemas/**"
-      - "services/api/**"
-      - ".github/workflows/ci-cli.yml"
+      - ".github/workflows/ci-schemas.yml"
   pull_request:
     paths:
-      - "cli/**"
-      - "packages/odyssey-core/**"
-      - "data_preparation/**"
-      - "training/**"
       - "packages/odyssey-schemas/**"
-      - "services/api/**"
-      - ".github/workflows/ci-cli.yml"
+      - ".github/workflows/ci-schemas.yml"
 
 defaults:
   run:
-    working-directory: cli
+    working-directory: packages/odyssey-schemas
 
 jobs:
   check:
@@ -41,7 +31,7 @@ jobs:
         with:
           python-version-file: ".python-version"
 
-      - name: Sync dependencies (whole workspace — this depends on odyssey-core and odyssey-dataprep)
+      - name: Sync dependencies (whole workspace)
         working-directory: .
         run: uv sync --all-packages --extra dev
 
@@ -59,6 +49,3 @@ jobs:
 
       - name: tests
         run: uv run pytest tests
-
-      - name: doctor (plugin discovery + cold-start sanity)
-        run: uv run odyssey doctor

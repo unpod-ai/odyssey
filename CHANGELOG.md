@@ -170,6 +170,32 @@ project has not yet made a versioned release, so entries accumulate under
   `evaluation/**` + `packages/odyssey-core/**` + `data_preparation/**`.
   New `odyssey eval run/compare/build-set/card/check-overlap` CLI commands.
 
+- **New `packages/odyssey-schemas` and `services/api` workspace members,
+  closing items 8.1-8.3.** `odyssey-schemas` is a pure pydantic-DTO
+  package (no `fastapi`/`odyssey-core` dependency) — a stable wire
+  contract a future generated SDK (item 8.4, not built) can depend on
+  independently of the service. `services/api` (`odyssey-api`) is a new
+  FastAPI read service layered `routers/` (parse/validate/render) ->
+  `domain/` (use-cases, zero fastapi imports) -> `repositories/
+  filesystem.py`, exposing `GET /health`, `/journeys`+`/journeys/{id}`
+  (via `odyssey.export.fold_shard`, the same folding path every exporter
+  uses), `/datasets`+`/datasets/{name}`, `/models`+`/models/{name}`
+  (reading `data_preparation`'s/`training`'s own `registry.yaml` files
+  directly), `/runs` (`odyssey eval run`'s own report JSON), and
+  `/exports` (a caller-configured directory of `*.jsonl` shards, sha256/row
+  count computed fresh). New `odyssey api serve/openapi/routes` CLI
+  commands; `services/api/openapi.json` generated and committed.
+  **Deliberately not built**, same explicit-deferral treatment `judges.py`
+  (item 7) got: `repositories/mongo.py`/`postgres.py`/`objectstore.py`
+  (only `filesystem.py`), `workers/drain_consumer.py` (no Kafka anywhere
+  in this repo), `migrations/` (alembic — no relational schema). This
+  service is a pure read layer — `services/collector` (item 1.8) keeps
+  owning ingest; merging "8.2 and 1.8 are the same server" (flagged in
+  `docs/WORKING.md`) was deliberately not attempted, since it would mean
+  rewriting the collector's idempotency/project-scoping/backoff handling
+  into FastAPI for no functional gain today. 25 new tests; full workspace
+  (919 tests, 8 members) re-verified green.
+
 ### Removed
 
 - `primitives.TelemetryEvent` (item 1.11) — dead code targeting a

@@ -1,0 +1,137 @@
+"""End-to-end against a real FastAPI app + real files on disk, not mocks —
+this repo's own established convention (see 5.9/6.1/7's own test suites)."""
+
+from __future__ import annotations
+
+import json
+
+import yaml
+from fastapi.testclient import TestClient
+from odyssey.jsonl import write_events
+from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
+
+from odyssey_api import deps
+from odyssey_api.main import create_app
+from odyssey_api.settings import Settings
+
+JID = "j_api"
+HEADER = JourneyHeader(journey_id=JID, data_source="livekit")
+
+
+def _client(settings: Settings) -> TestClient:
+    app = create_app()
+    app.dependency_overrides[deps.get_settings_dep] = lambda: settings
+    return TestClient(app)
+
+
+def test_health(tmp_path):
+    client = _client(Settings())
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+def test_journeys_list_and_detail(tmp_path):
+    journeys_dir = tmp_path / "journeys"
+    date_dir = journeys_dir / "2026-08-28"
+    date_dir.mkdir(parents=True)
+    write_events(
+        date_dir / f"{JID}.jsonl",
+        [
+            JourneyEvent(
+                journey_id=JID,
+                seq=0,
+                kind="message",
+                event_id="e0",
+                message=Message(role="user", content="hi"),
+            ),
+            JourneyEvent(
+                journey_id=JID,
+                seq=1,
+                kind="terminal",
+                event_id="e1",
+                terminal=Terminal(termination_reason="ENV_DONE"),
+            ),
+        ],
+        header=HEADER,
+    )
+    settings = Settings(journeys_dir=journeys_dir)
+    client = _client(settings)
+
+    listed = client.get("/journeys")
+    assert listed.status_code == 200
+    assert listed.json() == [
+        {"journey_id": JID, "date": "2026-08-28", "complete": True}
+    ]
+
+    detail = client.get(f"/journeys/{JID}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["complete"] is True
+    assert body["steps"]
+
+    missing = client.get("/journeys/does-not-exist")
+    assert missing.status_code == 404
+
+
+def test_datasets_and_models(tmp_path):
+    datasets_registry = tmp_path / "datasets" / "registry.yaml"
+    datasets_registry.parent.mkdir(parents=True)
+    datasets_registry.write_text(
+        yaml.safe_dump(
+            {"corpora": {"c1": [{"version": 1, "manifest_sha256": "a", "uri": "u"}]}}
+        )
+    )
+    models_registry = tmp_path / "models" / "registry.yaml"
+    models_registry.parent.mkdir(parents=True)
+    models_registry.write_text(
+        yaml.safe_dump({"models": {"m1": [{"version": 1, "sha256": "a", "uri": "u"}]}})
+    )
+    settings = Settings(
+        datasets_registry=datasets_registry, models_registry=models_registry
+    )
+    client = _client(settings)
+
+    ds = client.get("/datasets")
+    assert ds.status_code == 200
+    assert ds.json()[0]["name"] == "c1"
+
+    ds_one = client.get("/datasets/c1")
+    assert ds_one.status_code == 200
+    assert client.get("/datasets/nope").status_code == 404
+
+    models = client.get("/models")
+    assert models.status_code == 200
+    assert models.json()[0]["name"] == "m1"
+    assert client.get("/models/nope").status_code == 404
+
+
+def test_runs_and_exports(tmp_path):
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    (reports_dir / "b1.json").write_text(
+        json.dumps(
+            {"benchmark": "b1", "metric": "exact_match", "mean_score": 1.0, "tasks": []}
+        )
+    )
+    exports_dir = tmp_path / "exports"
+    exports_dir.mkdir()
+    (exports_dir / "sft.jsonl").write_text('{"messages": []}\n')
+
+    settings = Settings(eval_reports_dir=reports_dir, exports_dir=exports_dir)
+    client = _client(settings)
+
+    runs = client.get("/runs")
+    assert runs.status_code == 200
+    assert runs.json()[0]["benchmark_name"] == "b1"
+
+    exp = client.get("/exports")
+    assert exp.status_code == 200
+    assert exp.json()[0]["rows"] == 1
+
+
+def test_openapi_schema_is_generated():
+    client = _client(Settings())
+    resp = client.get("/openapi.json")
+    assert resp.status_code == 200
+    assert "/journeys" in resp.json()["paths"]

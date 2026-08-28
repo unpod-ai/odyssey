@@ -1,0 +1,41 @@
+[project]
+name = "odyssey-schemas"
+version = "0.1.0"
+description = "pydantic DTOs shared by services/api's routers — the source OpenAPI is generated from (item 8.1)."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Unpod", email = "parvinder@unpod.ai" }]
+
+# pydantic only — no fastapi, no odyssey-core. This package is a pure wire
+# contract: fields are a deliberately narrowed view of dataclasses already
+# defined in odyssey.primitives / the datasets/models/eval-sets registries,
+# not a second source of truth for them. services/api depends on this
+# package (and on odyssey-core/-dataprep/-training/-eval for the data
+# itself); nothing here depends back on any of those.
+dependencies = ["pydantic>=2"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "black==26.3.1",
+  "isort>=5.13",
+  "flake8>=7.3",
+  "pyrefly>=0.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/odyssey_schemas"]
+
+[tool.black]
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
