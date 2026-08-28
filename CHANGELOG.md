@@ -42,3 +42,10 @@ project has not yet made a versioned release, so entries accumulate under
 - `services/collector`: server-side idempotency (item 1.9) — `_store()` skips
   any `event_id` already committed to the destination file, so a retried
   `HttpSink` POST no longer double-writes the raw layer.
+
+### Removed
+
+- `primitives.TelemetryEvent` (item 1.11) — dead code targeting a
+  `push_events()` pipeline and a `POST /api/v1/telemetry/events` backend,
+  neither of which exists anywhere in this repo. `Telemetry` (no suffix,
+  `JourneyEvent.telemetry`) is unrelated and unaffected.

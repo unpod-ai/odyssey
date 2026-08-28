@@ -121,57 +121,6 @@ class Telemetry:
 
 
 @dataclass(frozen=True)
-class TelemetryEvent:
-    """A single product telemetry event for the push_events() pipeline.
-
-    Mirrors the backend's TelemetryEventCreateModel. The event_id UUID serves
-    as the idempotency key -- partners can set it deterministically (e.g. hash
-    their own primary key) so re-pushes never produce duplicates.
-    """
-
-    event_type: str
-    session_id: str
-    properties: Dict[str, Any] = field(default_factory=dict)
-    event_id: str = field(default_factory=lambda: __import__("uuid").uuid4().hex)
-    timestamp: str = field(
-        default_factory=lambda: (
-            __import__("datetime")
-            .datetime.now(__import__("datetime").timezone.utc)
-            .isoformat()
-        )
-    )
-    user_id: Optional[str] = None
-    # `trajectory_id`, not `journey_id`: this is the backend's own id for the
-    # persisted row, returned by upload and stamped back onto buffered events.
-    # The field name is the platform's, so it stays the platform's spelling even
-    # though everything odyssey owns says "journey".
-    trajectory_id: Optional[str] = None
-    source: str = "sdk"
-    metadata: Optional[Dict[str, Any]] = None
-    trace_id: Optional[str] = None
-
-    def to_api_dict(self) -> Dict[str, Any]:
-        """Serialize to the shape expected by POST /api/v1/telemetry/events."""
-        d: Dict[str, Any] = {
-            "event_type": self.event_type,
-            "session_id": self.session_id,
-            "properties": self.properties,
-            "event_id": self.event_id,
-            "timestamp": self.timestamp,
-            "source": self.source,
-        }
-        if self.trace_id is not None:
-            d["trace_id"] = self.trace_id
-        if self.user_id is not None:
-            d["user_id"] = self.user_id
-        if self.trajectory_id is not None:
-            d["trajectory_id"] = self.trajectory_id
-        if self.metadata is not None:
-            d["metadata"] = self.metadata
-        return d
-
-
-@dataclass(frozen=True)
 class Task:
     id: Optional[str] = None
     data_source: Optional[str] = None

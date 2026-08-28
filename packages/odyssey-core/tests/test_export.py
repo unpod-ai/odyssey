@@ -153,7 +153,7 @@ def test_the_file_is_named_by_conversation_id(tmp_path, shard):
 def test_a_platform_owned_field_keeps_the_platform_spelling(tmp_path):
     """`reference_journey` is odyssey's name; the schema says
     `reference_trajectory`. The artifact exists to be read without a translation
-    table, so the platform wins — same rule as `TelemetryEvent.trajectory_id`."""
+    table, so the platform wins."""
     r = fold(stream(), data_source="livekit")
     journey = dataclasses.replace(r.journey, reference_journey={"a": 1})
     doc = journey_to_dict(journey)

@@ -345,7 +345,7 @@ place. **This is the top of the critical path.**
 | 1.8 | **Ingest endpoint** (`services/collector`) | ✅ | `services/collector` — stdlib `http.server`, not FastAPI (deliberately; see its README). Receives exactly what `HttpSink` posts, round-trips it through `odyssey.jsonl.read_events`/`write_events` (one codec, not two), writes `<journey_id>.jsonl` files identical in shape to `FileSink`'s output. `GET /health`, optional `Authorization: Bearer` gate. Verified end-to-end with a live smoke test (SDK → spool → HttpSink → collector → readable file) in addition to its own test suite |
 | 1.9 | **Server-side idempotency** | ✅ | `services/collector`'s `_store()` reads the destination file's existing `event_id`s before appending and drops any already present, so a retried `HttpSink` POST (lost response, already-committed batch) does not double-write the raw layer. `services/api` (Step 8, not built) will need its own consumer of `WRITER_META_KEY`/`hashing.idempotency_key()` for its own storage layer — this closes the collector's half |
 | 1.10 | **Object-store landing** (raw layer) | ✅ | `data_preparation`'s `collection/collect_from_object_store()` — S3-compatible via `boto3` (`odyssey-dataprep[s3]` extra, lazily imported only when no `client=` double is injected). Paginates `list_objects_v2`, reads each `*.jsonl` key, merges by each event's own `journey_id` through the same `_write_merged()` helper `collect_from_collector` uses. Wired into `odyssey data collect --bucket/--prefix/--endpoint-url` |
-| 1.11 | `TelemetryEvent` → API | 🟡 | Still **dead code**: 2 grep hits, both its own definition, zero call sites. Targets a `POST /api/v1/telemetry/events` and a `push_events()` that do not exist |
+| 1.11 | `TelemetryEvent` → API | ✅ | **Removed as dead code** rather than wired to a `push_events()` pipeline and `POST /api/v1/telemetry/events` backend that don't exist anywhere in this repo (`services/api` is Step 8, not built) — building a client against a guessed shape for an unbuilt server would be worse than no code, same reasoning as 0.11/0′.3's OTel deferral. `Telemetry` (no suffix, `JourneyEvent.telemetry`) is unrelated and stays — it is used |
 | 1.12 | **Retention / TTL** | ✅ | `spool.gc(spool, *, min_age_seconds, journey_id=None, dry_run=False)` — deletes shards for fully-drained journeys (`watermark(jid) == highest_seq(jid)`) older than the cutoff, skips journeys with an open handle. `odyssey spool prune --older-than-days N [--journey ID] [--dry-run]` CLI. Operator-invoked only — no auto-GC on a timer |
 
 `HttpSink` needed no new abstraction — it is one class with one `send()` method,
@@ -702,8 +702,10 @@ ignored field.
 routing fallbacks, so journey-level attribution would silently mix models under
 one label.
 
-**Declared but unused:** `TelemetryEvent`, `PiiPolicy`, `RedactionPreview`,
-`ConversationSummary`. Items 1.11 and 2.15.
+**Declared but unused:** `ConversationSummary`. `PiiPolicy`/`RedactionPreview`
+(item 2.15) are now wired into `data_preparation`'s `cleaning`/`pii` modules;
+`TelemetryEvent` (item 1.11) was removed as dead code — see
+[§ Dead code](#dead-code-and-stale-references).
 
 **`spool.py`** — `record()` keeps a per-journey `_ShardState` (path, open handle,
 tracked size) instead of re-deriving the filesystem per event. `flush()` still
@@ -1292,9 +1294,9 @@ grep -rE "httpx|requests|urllib" src/   # → none.  L7/item 1.5 — HttpSink
 grep -rn "opentelemetry" src/           # → none.  item 0'.3
 grep -rn "openai" src/odyssey/integrations/   # → none.  item 0'.1
 
-# still dead code — item 1.11
-grep -rn "TelemetryEvent" src/ tests/   # → 2 hits, both inside its own
-                                        #   definition. Zero call sites.
+# item 1.11 — dead code, removed rather than wired to a backend that
+# doesn't exist (docs/WORKING.md's own "wire it or delete it" call)
+grep -rn "TelemetryEvent" src/ tests/   # → none
 ```
 
 ```bash
@@ -1395,9 +1397,9 @@ or schedule a rewrite of `primitives.py`.
 
 ### Dead code and stale references
 
-- **`TelemetryEvent`** — a `to_api_dict()` targeting
-  `POST /api/v1/telemetry/events` and a docstring citing a `push_events()`
-  pipeline. Neither exists. Zero call sites. Wire it into Step 1 or delete it.
+- ~~**`TelemetryEvent`**~~ — removed (item 1.11). Its `to_api_dict()` targeted
+  `POST /api/v1/telemetry/events` and a `push_events()` pipeline, neither of
+  which exists anywhere in this repo.
 - **`ConversationSummary`** — declared, unused.
 
 ### Formerly missing from Phase 1 (all three resolved)

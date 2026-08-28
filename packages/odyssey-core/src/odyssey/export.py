@@ -17,10 +17,9 @@ consumer the event stream and calling it the deliverable is the gap this closes
 file").
 
 Field naming follows the **platform**, not odyssey, wherever the two disagree:
-``reference_journey`` is written as ``reference_trajectory``. Same reasoning as
-``TelemetryEvent.trajectory_id`` — a name the platform owns keeps the platform's
-spelling, because the whole value of this file is that something else can read
-it without a translation table.
+``reference_journey`` is written as ``reference_trajectory`` — a name the
+platform owns keeps the platform's spelling, because the whole value of this
+file is that something else can read it without a translation table.
 """
 
 from __future__ import annotations
