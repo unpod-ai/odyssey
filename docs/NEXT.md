@@ -183,12 +183,10 @@ conversational message lists straight through to `trl.DPOTrainer`.
 
 1. **9.4** — `NOTICE` copyright holder. The only remaining hard blocker
    (public distribution), and it needs a human, not more engineering.
-2. **5.7 / 5.8** — `configs/{sft,dpo,grpo}` and `experiments/<exp_id>.yaml`
-   (config sha + corpus version + metrics ref) — natural companions to 5.6,
-   no new dependency needed.
-3. **`services/api`** (8.1–8.3) — bigger scope (`odyssey-schemas` +
-   FastAPI + OpenAPI), still the next major unbuilt piece per
-   `docs/STRUCTURE.md`.
+2. **`services/api`** (8.1–8.3) — bigger scope (`odyssey-schemas` +
+   FastAPI + OpenAPI), the next major unbuilt piece per `docs/STRUCTURE.md`.
+   5.7/5.8 are done (this session), so Step 5 is closed except 5.9
+   (checkpoint → object store).
 
 **Smaller, closed this session (2026-08-28):** 0.10 (LangChain), 0′.4 (voice
 events — breaking `SCHEMA_VERSION` 1.1 → 2.0), 0′.6 (sampling), 1.7

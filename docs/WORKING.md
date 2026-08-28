@@ -429,8 +429,8 @@ wrong, not just "runs without crashing").
 | 5.4b | **SFT export writer** | ✅ | `sft.py` + `odyssey sft` — one JSON line per trainable step (`{"messages": [...]}`), one combined `.jsonl` file (a training shard, not one-file-per-conversation like Trajectory JSON). Only `trainable_status == "trainable"` steps in a `trainable` (complete) journey are emitted |
 | 5.5 | **DPO pair extractor** | ✅ | `dpo.py` + `odyssey dpo` — walks `journey.steps` in order; a run of `superseded` steps immediately followed by a `trainable` one is a chain, and every rejected candidate in it pairs against the winner. Verified against the golden fixture's own regenerated→user_edit→thumbs_up chain (2 pairs). **KTO/ORPO not done** — those want unpaired single-response labels, a different data shape |
 | 5.6 | **soup-cli adapter** | ✅ | `training/src/odyssey_training/soup_adapter.py` — `write_sft_config`/`write_dpo_config`/`translate_dpo_shard`, reachable via `odyssey train sft-config`/`odyssey train dpo-config`. Checked against the *real, installed* `soup-cli` 0.73.3 (`soup_cli.config.schema.SoupConfig`, `soup_cli.data.formats`), not guessed from docs: `odyssey sft` already writes soup-cli's `chatml` format verbatim (`_convert_chatml` is a literal passthrough); `odyssey dpo`'s `chosen`/`rejected` are a single message, soup-cli's `dpo` format wants a message *list* (matching `trl.DPOTrainer`'s conversational contract) — `translate_dpo_shard` does that one wrap. Every generated config round-trips through soup-cli's own real `load_config`, not just our own schema import. `soup-cli` installed light-only (no `[train]` extra — no torch in this member) |
-| 5.7 | `configs/{sft,dpo,grpo}` | ❌ | `.gitkeep` only |
-| 5.8 | `experiments/<exp_id>.yaml` | ❌ | config sha + corpus version + metrics ref |
+| 5.7 | `configs/{sft,dpo,grpo}` | ✅ | `soup_adapter.write_grpo_config` (mirrors 5.6's `write_sft_config`/`write_dpo_config`), reachable via `odyssey train grpo-config`; `base.yaml`/`sft/example.yaml`/`dpo/example.yaml`/`grpo/example.yaml` replacing the `.gitkeep`s |
+| 5.8 | `experiments/<exp_id>.yaml` | ✅ | `odyssey_training.experiments.write_experiment_manifest` — config sha + corpus version + metrics ref, reachable via `odyssey train record-experiment` |
 | 5.9 | Checkpoint → object store | ❌ | ADR 0002 contract, no code |
 
 **On Unsloth** (researched while building 5.6): it is not a separate framework
@@ -534,7 +534,9 @@ now real, reachable via `odyssey data <cmd>` end to end: `collect` →
 or the whole thing sequenced by `run_recipe` (3.8). 5.6 (the soup-cli
 adapter, `training/`) closes the loop — `odyssey sft`/`odyssey dpo` →
 `odyssey train sft-config`/`dpo-config` → `soup train --config soup.yaml`,
-verified against the real installed `soup-cli`. What's next:
+verified against the real installed `soup-cli`. 5.7/5.8 (`write_grpo_config`,
+`write_experiment_manifest`) are done too, closing Step 5 except 5.9
+(checkpoint → object store, no code yet). What's next:
 
 ```
 9.4 NOTICE copyright holder   ← blocks public release, needs a human
@@ -542,12 +544,12 @@ verified against the real installed `soup-cli`. What's next:
 
 0′.1 (OpenAI drop-in) is done too — see Step 0′ below.
 
-Everything else in Steps 5–8 can still wait on the above (5.7/5.8 —
-`configs/{sft,dpo,grpo}`, `experiments/<exp_id>.yaml` — are the natural
-next companions to 5.6, no new dependency needed). Live gaps in the
-Step 1 destination itself: project scoping (multi-tenant auth beyond one
-shared key) and object-store backing (`services/collector` still writes local
-disk) — see its README's "Not done here".
+Everything else in Step 8 (`odyssey-schemas` + `services/api` + OpenAPI +
+`sdk/python`/`sdk/javascript` + `apps/web`) is the next major unbuilt piece,
+plus Steps 6–7 (models registry, evaluation harness), still empty. Live gaps
+in the Step 1 destination itself: project scoping (multi-tenant auth beyond
+one shared key) and object-store backing (`services/collector` still writes
+local disk) — see its README's "Not done here".
 
 ---
 
