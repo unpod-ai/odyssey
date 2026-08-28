@@ -192,10 +192,21 @@ conversational message lists straight through to `trl.DPOTrainer`.
 events — breaking `SCHEMA_VERSION` 1.1 → 2.0), 0′.6 (sampling), 1.7
 (batching/compression/backpressure), 1.10 (object-store landing), 1.12/2.14
 (retention/TTL), 2.15 (content-level PII scrub), 9.10 (the one real pyrefly
-error, suppressed). **Still open:** 0.11 (OTel bridge — deferred, documented
-only, no consuming backend named), LangGraph/LlamaIndex hooks, 1.7's
-cross-journey batching (explicit scope cut), 9.10's 157 `tests/` narrowing
-gaps (scope decision).
+error, suppressed).
+
+**Also closed later the same session:** 0′.5 (async streaming for Anthropic),
+1.9 (server-side idempotency in `services/collector`), 1.11 (removed dead
+`TelemetryEvent` code), 0.9 (Gemini drop-in client), 0′.2 (LangGraph
+compatibility — no additional code, only verification it dispatches the same
+callback tree LangChain already does).
+
+**Still open:** 0.11/0′.3 (OTel bridge — deferred, documented only, no
+consuming backend named), LlamaIndex hooks (a genuinely different,
+non-LangChain-compatible instrumentation API), 1.6 (project scoping — needs
+real multi-tenant state in `services/collector`), 1.7's cross-journey
+batching (explicit scope cut), 3.5's LLM-based augmentation (needs a new
+dependency, explicit scope cut), 9.10's 157 `tests/` narrowing gaps (scope
+decision).
 
 ---
 

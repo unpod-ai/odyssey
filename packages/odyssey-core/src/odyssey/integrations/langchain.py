@@ -1,9 +1,26 @@
-"""LangChain callback handler — item 0.10.
+"""LangChain (and LangGraph) callback handler — items 0.10 / 0'.2.
 
 ::
 
     from odyssey.integrations.langchain import OdysseyCallbackHandler
     chain.invoke({"input": "book Tuesday at 3"}, config={"callbacks": [OdysseyCallbackHandler()]})
+
+    # LangGraph too, no extra code -- `StateGraph(...).compile()` is itself a
+    # Runnable and dispatches through the identical callback interface:
+    graph.invoke({"x": 0}, config={"callbacks": [OdysseyCallbackHandler()]})
+
+**LangGraph needs nothing beyond what is already here.** A compiled graph's
+own `invoke()`/`ainvoke()` is a top-level chain run, and every node
+(including a `langgraph.prebuilt.ToolNode`) is its own nested chain/tool run
+parented to it via the same `run_id`/`parent_run_id` LangChain already uses
+— that tree collapses into one journey exactly like a plain LangChain chain
+wrapping an LLM and a tool does below. A node function calling
+`llm.invoke(...)` without explicitly forwarding `config` still lands under
+the graph's journey, because LangChain propagates callbacks via contextvars.
+Verified against real `langgraph`/`langchain-core` installs (not guessed);
+`tests/test_langchain_integration.py`'s "LangGraph compatibility" section
+replays the exact run trees observed from that verification without
+requiring either package to be installed for the suite to run.
 
 LangChain's callback interface is shaped differently from the Anthropic/
 OpenAI drop-in clients (``_base.py``'s request/response pair for a single

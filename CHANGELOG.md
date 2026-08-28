@@ -48,6 +48,12 @@ project has not yet made a versioned release, so entries accumulate under
   `builders.messages.messages_from_gemini` parser for Gemini's
   `Content`/`parts` shape (`function_call`/`function_response` parts,
   `thought` parts → `Message.reasoning`).
+- LangGraph compatibility (item 0′.2) — no new code: verified that a
+  compiled `StateGraph`'s `invoke()`/`ainvoke()` and every node (including
+  `langgraph.prebuilt.ToolNode`) dispatch through the same
+  `on_chain_start`/`on_chain_end`/`on_llm_*`/`on_tool_*` callback tree the
+  existing `OdysseyCallbackHandler()` already records, against real
+  installed `langgraph`/`langchain-core`.
 
 ### Removed
 
