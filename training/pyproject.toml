@@ -24,6 +24,9 @@ dev = [
   "flake8>=7.3",
   "pyrefly>=0.1",
 ]
+# item 5.9 — checkpoints.upload_checkpoint imports boto3 lazily, only when
+# no `client` double is injected, so a light install never needs an S3 SDK.
+s3 = ["boto3>=1.34"]
 
 [project.entry-points."odyssey.commands"]
 train = "odyssey_training.cli:register"

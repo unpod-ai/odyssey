@@ -45,6 +45,38 @@ def test_write_experiment_manifest_records_a_metrics_ref_when_given(tmp_path):
     assert doc["metrics_ref"] == "https://wandb.ai/acme/run/exp_0002"
 
 
+def test_write_experiment_manifest_records_a_checkpoint_pointer_when_given(tmp_path):
+    config = tmp_path / "soup.yaml"
+    config.write_text("base: x\n")
+
+    out = write_experiment_manifest(
+        "exp_ckpt",
+        config_path=config,
+        corpus_version="corpus-sha-ghi",
+        experiments_root=tmp_path / "experiments",
+        checkpoint_uri="s3://bucket/checkpoints/exp_ckpt/",
+        checkpoint_sha256="deadbeef",
+    )
+    doc = yaml.safe_load(out.read_text())
+    assert doc["checkpoint_uri"] == "s3://bucket/checkpoints/exp_ckpt/"
+    assert doc["checkpoint_sha256"] == "deadbeef"
+
+
+def test_write_experiment_manifest_checkpoint_pointer_defaults_to_none(tmp_path):
+    config = tmp_path / "soup.yaml"
+    config.write_text("base: x\n")
+
+    out = write_experiment_manifest(
+        "exp_no_ckpt",
+        config_path=config,
+        corpus_version="v1",
+        experiments_root=tmp_path / "experiments",
+    )
+    doc = yaml.safe_load(out.read_text())
+    assert doc["checkpoint_uri"] is None
+    assert doc["checkpoint_sha256"] is None
+
+
 def test_write_experiment_manifest_refuses_to_clobber_an_existing_exp_id(tmp_path):
     config = tmp_path / "soup.yaml"
     config.write_text("base: x\n")

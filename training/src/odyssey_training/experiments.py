@@ -37,6 +37,8 @@ def write_experiment_manifest(
     corpus_version: str,
     experiments_root: Path | str,
     metrics_ref: Optional[str] = None,
+    checkpoint_uri: Optional[str] = None,
+    checkpoint_sha256: Optional[str] = None,
     overwrite: bool = False,
 ) -> Path:
     """Write `{experiments_root}/{exp_id}.yaml`.
@@ -46,6 +48,12 @@ def write_experiment_manifest(
     discipline `datasets.py` already applies to `recipe_hash`.
     `metrics_ref` is a pointer (an MLflow/W&B run URL, a report path, ...),
     not the metrics themselves — nothing here parses or interprets it.
+    `checkpoint_uri`/`checkpoint_sha256` are `checkpoints.upload_checkpoint`'s
+    own output (item 5.9) — the object-store pointer and aggregate manifest
+    hash for this run's weights, per ADR 0002's "git holds the recipe and
+    the hash, the object store holds the bytes." Neither is required: a
+    manifest recorded before training finishes (or for a run whose
+    checkpoint was never uploaded) simply omits them.
 
     Raises `FileExistsError` unless `overwrite=True`: silently overwriting
     an experiment id would lose the previous run's provenance, the one
@@ -64,6 +72,8 @@ def write_experiment_manifest(
         "config_sha256": _sha256_file(Path(config_path)),
         "corpus_version": corpus_version,
         "metrics_ref": metrics_ref,
+        "checkpoint_uri": checkpoint_uri,
+        "checkpoint_sha256": checkpoint_sha256,
     }
 
     root.mkdir(parents=True, exist_ok=True)

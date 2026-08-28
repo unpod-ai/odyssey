@@ -431,13 +431,15 @@ wrong, not just "runs without crashing").
 | 5.6 | **soup-cli adapter** | ✅ | `training/src/odyssey_training/soup_adapter.py` — `write_sft_config`/`write_dpo_config`/`translate_dpo_shard`, reachable via `odyssey train sft-config`/`odyssey train dpo-config`. Checked against the *real, installed* `soup-cli` 0.73.3 (`soup_cli.config.schema.SoupConfig`, `soup_cli.data.formats`), not guessed from docs: `odyssey sft` already writes soup-cli's `chatml` format verbatim (`_convert_chatml` is a literal passthrough); `odyssey dpo`'s `chosen`/`rejected` are a single message, soup-cli's `dpo` format wants a message *list* (matching `trl.DPOTrainer`'s conversational contract) — `translate_dpo_shard` does that one wrap. Every generated config round-trips through soup-cli's own real `load_config`, not just our own schema import. `soup-cli` installed light-only (no `[train]` extra — no torch in this member) |
 | 5.7 | `configs/{sft,dpo,grpo}` | ✅ | `soup_adapter.write_grpo_config` (mirrors 5.6's `write_sft_config`/`write_dpo_config`), reachable via `odyssey train grpo-config`; `base.yaml`/`sft/example.yaml`/`dpo/example.yaml`/`grpo/example.yaml` replacing the `.gitkeep`s |
 | 5.8 | `experiments/<exp_id>.yaml` | ✅ | `odyssey_training.experiments.write_experiment_manifest` — config sha + corpus version + metrics ref, reachable via `odyssey train record-experiment` |
-| 5.9 | Checkpoint → object store | ❌ | ADR 0002 contract, no code |
+| 5.9 | **Checkpoint → object store** | ✅ | `odyssey_training.checkpoints.upload_checkpoint(checkpoint_dir, bucket, prefix, ...)` — S3-compatible via `boto3` (`odyssey-training[s3]` extra, lazily imported only when no `client=` double is injected, mirroring item 1.10's `collect_from_object_store`). Uploads every file under a `soup train --output` dir in sorted relative-path order, sha256'd locally before each `put_object` (never trusted from the response); returns `{uri, files, manifest_sha256}` — `manifest_sha256` is `content_hash` over the sorted `(key, sha256)` set, deterministic across repeat uploads of the same checkpoint. `experiments.write_experiment_manifest` gained `checkpoint_uri`/`checkpoint_sha256` params recording that pointer alongside `metrics_ref`, exactly the "git holds the recipe and the hash, the object store holds the bytes" split ADR 0002 already applies to the corpus/model layers. `odyssey train upload-checkpoint` / `odyssey train record-experiment --checkpoint-uri/--checkpoint-sha256` |
 
 **On Unsloth** (researched while building 5.6): it is not a separate framework
 to integrate — it patches Transformers/PEFT/TRL for faster training and is
 one of soup-cli's own three `backend` choices (`transformers` default,
 `unsloth`, `mlx`), selected by a config field our adapter already exposes.
 Nothing to build here beyond what 5.6 already does.
+
+**Step 5 is now fully closed** — 5.9 was the last open item.
 
 **L10 lives here, and it is now the second-biggest gap.** The schema was designed
 for DPO from day one — that is why `Signal` carries an *ordering* rather than

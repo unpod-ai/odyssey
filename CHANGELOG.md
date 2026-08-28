@@ -107,6 +107,18 @@ project has not yet made a versioned release, so entries accumulate under
   `drain()`'s per-journey semantics for partial-batch failure" concern
   rather than working around it.
 
+- `training/checkpoints.py`'s `upload_checkpoint()` (item 5.9) — uploads a
+  `soup train --output` checkpoint dir's bytes to an S3-compatible object
+  store (`odyssey-training[s3]` extra, `boto3` lazily imported only when
+  no `client=` double is injected — the same seam `data_preparation`'s
+  `collect_from_object_store` (item 1.10) uses), returning
+  `{uri, files, manifest_sha256}`. `experiments.write_experiment_manifest`
+  gained `checkpoint_uri`/`checkpoint_sha256` params to record that
+  pointer, per ADR 0002's "git holds the recipe and the hash, the object
+  store holds the bytes." New `odyssey train upload-checkpoint` /
+  `odyssey train record-experiment --checkpoint-uri/--checkpoint-sha256`.
+  Closes Step 5.
+
 ### Removed
 
 - `primitives.TelemetryEvent` (item 1.11) — dead code targeting a

@@ -14,6 +14,7 @@ def register(app: Any) -> None:
     # that actually depends on it; see odyssey_dataprep.cli's own comment.
     import typer  # noqa: PLC0415 - opt-in only when register() is called
 
+    from odyssey_training.checkpoints import upload_checkpoint
     from odyssey_training.experiments import write_experiment_manifest
     from odyssey_training.soup_adapter import (
         translate_dpo_shard,
@@ -112,6 +113,16 @@ def register(app: Any) -> None:
         metrics: str = typer.Option(
             None, "--metrics", help="a metrics pointer, e.g. an MLflow/W&B run URL"
         ),
+        checkpoint_uri: str = typer.Option(
+            None,
+            "--checkpoint-uri",
+            help="from `odyssey train upload-checkpoint`'s own output",
+        ),
+        checkpoint_sha256: str = typer.Option(
+            None,
+            "--checkpoint-sha256",
+            help="from `odyssey train upload-checkpoint`'s own output",
+        ),
         experiments_root: str = typer.Option(
             "training/experiments", "--experiments-root"
         ),
@@ -120,16 +131,40 @@ def register(app: Any) -> None:
         ),
     ) -> None:
         """Write experiments/<exp_id>.yaml (item 5.8): config sha + corpus
-        version + metrics ref."""
+        version + metrics ref (+ checkpoint pointer, item 5.9)."""
         path = write_experiment_manifest(
             exp_id,
             config_path=config,
             corpus_version=corpus_version,
             experiments_root=experiments_root,
             metrics_ref=metrics,
+            checkpoint_uri=checkpoint_uri,
+            checkpoint_sha256=checkpoint_sha256,
             overwrite=overwrite,
         )
         print(f"wrote {path}")
+
+    def upload_checkpoint_cmd(
+        checkpoint_dir: str = typer.Option(
+            ..., "--dir", help="a `soup train` run's --output dir"
+        ),
+        bucket: str = typer.Option(..., "--bucket"),
+        prefix: str = typer.Option(..., "--prefix", help="e.g. checkpoints/<exp_id>"),
+        endpoint_url: str = typer.Option(
+            None, "--endpoint-url", help="S3-compatible endpoint (MinIO, R2, ...)"
+        ),
+    ) -> None:
+        """Upload a checkpoint dir's bytes to the object store (item 5.9).
+
+        Prints the `uri`/`manifest_sha256` pair `odyssey train
+        record-experiment --checkpoint-uri/--checkpoint-sha256` records —
+        run this first, then feed its output into that command."""
+        result = upload_checkpoint(
+            checkpoint_dir, bucket, prefix, endpoint_url=endpoint_url
+        )
+        print(f"uploaded {len(result.files)} file(s) -> {result.uri}", file=sys.stderr)
+        print(f"checkpoint_uri={result.uri}")
+        print(f"checkpoint_sha256={result.manifest_sha256}")
 
     @app.callback()
     def _group() -> None:
@@ -139,3 +174,4 @@ def register(app: Any) -> None:
     app.command("dpo-config")(dpo_config)
     app.command("grpo-config")(grpo_config)
     app.command("record-experiment")(record_experiment)
+    app.command("upload-checkpoint")(upload_checkpoint_cmd)

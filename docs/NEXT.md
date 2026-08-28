@@ -187,8 +187,8 @@ conversational message lists straight through to `trl.DPOTrainer`.
    together in a later pass, not attempted now.
 2. **`services/api`** (8.1–8.3) — bigger scope (`odyssey-schemas` +
    FastAPI + OpenAPI), the next major unbuilt piece per `docs/STRUCTURE.md`.
-   5.7/5.8 are done (this session), so Step 5 is closed except 5.9
-   (checkpoint → object store).
+   Step 5 is now fully closed (5.9 — checkpoint → object store — done later
+   the same session).
 
 **Smaller, closed this session (2026-08-28):** 0.10 (LangChain), 0′.4 (voice
 events — breaking `SCHEMA_VERSION` 1.1 → 2.0), 0′.6 (sampling), 1.7
@@ -217,7 +217,14 @@ synthetic-negative chain's `superseded`-then-`trainable` step order was
 verified against `odyssey.dpo.dpo_pairs`'s real ordering rule), 9.10
 (`tests/` now permanently in `pyrefly`'s `project-includes`; 200 errors
 surfaced, not the ~157 estimated — 4 were real `src/` type bugs, fixed
-properly; the other 196 were narrowing gaps, fixed per call site).
+properly; the other 196 were narrowing gaps, fixed per call site), 1.7
+(cross-journey payload batching — `HttpSink.send_batch()` /
+`POST /batch/events`), 5.9 (checkpoint → object store —
+`odyssey_training.checkpoints.upload_checkpoint`, S3-compatible via
+`boto3`, same lazy-import/`client=` injection seam as 1.10's
+`collect_from_object_store`; `odyssey train upload-checkpoint` prints the
+`checkpoint_uri`/`checkpoint_sha256` pair `odyssey train
+record-experiment` now accepts, closing Step 5 entirely).
 
 **Still open:** LlamaIndex hooks (a genuinely different, non-LangChain-compatible
 instrumentation API — **deliberately deferred, bundled with item 9.4**, not
