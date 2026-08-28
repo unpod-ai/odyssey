@@ -40,6 +40,9 @@ langchain = ["langchain-core>=0.3"]
 # `odyssey.integrations.gemini` (item 0.9) imports this inside Client.__init__,
 # never at module scope -- same discipline as anthropic/openai above.
 gemini = ["google-genai>=1.0"]
+# `odyssey.integrations.otel` (items 0.11/0'.3) imports this inside
+# OdysseySpanProcessor(), never at module scope -- same discipline as above.
+otel = ["opentelemetry-sdk>=1.20"]
 
 # ADR 0003: cli/ owns the `odyssey` console script; core registers a plugin
 # instead of declaring its own [project.scripts]. `register` is called with a

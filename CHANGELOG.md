@@ -61,6 +61,14 @@ project has not yet made a versioned release, so entries accumulate under
   `<data_dir>/<slug>/<date>/` partition — structural isolation, not just an
   access check on shared storage. New `GET /projects` (any registered key)
   lists `{slug, name}` for the roster, never keys.
+- `integrations/otel.py` (items 0.11/0′.3) — `OdysseySpanProcessor()`, an
+  `opentelemetry.sdk.trace.SpanProcessor` (optional `odyssey[otel]` extra).
+  One journey per OTel trace; a span becomes a `Message` only when it
+  carries `gen_ai.*` content, checked across the three shapes actually
+  emitted in practice (`gen_ai.input.messages`/`.output.messages`
+  attributes, `gen_ai.content.prompt`/`.completion` events, legacy
+  `gen_ai.prompt`/`.completion` attributes). Other instrumentation
+  vocabularies (OpenInference, etc.) are an explicit, documented scope cut.
 
 ### Removed
 

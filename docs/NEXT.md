@@ -202,14 +202,16 @@ error, suppressed).
 compatibility — no additional code, only verification it dispatches the same
 callback tree LangChain already does), 1.6 (project scoping — a `projects`
 roster of `{slug, name, api_key}` in `services/collector`, structural storage
-isolation per project, `GET /projects`).
+isolation per project, `GET /projects`), 0.11/0′.3 (OTel bridge —
+`integrations/otel.py`'s `OdysseySpanProcessor()`, one journey per trace,
+`gen_ai.*` content only — a documented scope cut against other
+instrumentation vocabularies, not silent data loss).
 
-**Still open:** 0.11/0′.3 (OTel bridge — deferred, documented only, no
-consuming backend named), LlamaIndex hooks (a genuinely different,
-non-LangChain-compatible instrumentation API — **deliberately deferred,
-bundled with item 9.4**, not started here), 1.7's cross-journey batching
-(explicit scope cut), 3.5's LLM-based augmentation (needs a new dependency,
-explicit scope cut), 9.10's 157 `tests/` narrowing gaps (scope decision).
+**Still open:** LlamaIndex hooks (a genuinely different, non-LangChain-compatible
+instrumentation API — **deliberately deferred, bundled with item 9.4**, not
+started here), 1.7's cross-journey batching (explicit scope cut), 3.5's
+LLM-based augmentation (needs a new dependency, explicit scope cut), 9.10's
+157 `tests/` narrowing gaps (scope decision).
 
 ---
 

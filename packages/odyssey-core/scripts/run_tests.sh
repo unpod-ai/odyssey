@@ -7,8 +7,9 @@
 #   sinks       — drain destinations: FileSink, HttpSink over stdlib HTTP
 #   context     — ambient journey context and seq allocation
 #   sdk         — init(), journey(), observe(), health(); capture never raises
-#   integrations— provider capture: Anthropic + OpenAI drop-in/patch, no duplicates
-#   langchain   — LangChain callback handler (item 0.10)
+#   integrations— provider capture: Anthropic + OpenAI + Gemini drop-in/patch, no duplicates
+#   langchain   — LangChain (+ LangGraph) callback handler (items 0.10/0'.2)
+#   otel        — OpenTelemetry span bridge (items 0.11/0'.3)
 #   pii         — content-level PII scan/redact (item 2.15)
 #   cli         — the command-line drain trigger and health report
 #   sft         — SFT export: one line per trainable turn
@@ -50,10 +51,13 @@ case "$MODULE" in
     uv run pytest tests/test_sdk.py "$@"
     ;;
   integrations)
-    uv run pytest tests/test_integrations.py tests/test_openai_integration.py "$@"
+    uv run pytest tests/test_integrations.py tests/test_openai_integration.py tests/test_gemini_integration.py "$@"
     ;;
   langchain)
     uv run pytest tests/test_langchain_integration.py "$@"
+    ;;
+  otel)
+    uv run pytest tests/test_otel_integration.py "$@"
     ;;
   pii)
     uv run pytest tests/test_pii.py "$@"
