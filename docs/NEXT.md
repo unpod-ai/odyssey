@@ -205,13 +205,16 @@ roster of `{slug, name, api_key}` in `services/collector`, structural storage
 isolation per project, `GET /projects`), 0.11/0′.3 (OTel bridge —
 `integrations/otel.py`'s `OdysseySpanProcessor()`, one journey per trace,
 `gen_ai.*` content only — a documented scope cut against other
-instrumentation vocabularies, not silent data loss).
+instrumentation vocabularies, not silent data loss), 1.7's cross-journey
+overhead (`HttpSink` reuses its connection across `send()` calls via
+HTTP/1.1 keep-alive — merged payloads were still ruled out, same
+partial-batch-failure reasoning as before, but the actual per-journey
+overhead this item was chasing is now addressed without that redesign).
 
 **Still open:** LlamaIndex hooks (a genuinely different, non-LangChain-compatible
 instrumentation API — **deliberately deferred, bundled with item 9.4**, not
-started here), 1.7's cross-journey batching (explicit scope cut), 3.5's
-LLM-based augmentation (needs a new dependency, explicit scope cut), 9.10's
-157 `tests/` narrowing gaps (scope decision).
+started here), 3.5's LLM-based augmentation (needs a new dependency, explicit
+scope cut), 9.10's 157 `tests/` narrowing gaps (scope decision).
 
 ---
 

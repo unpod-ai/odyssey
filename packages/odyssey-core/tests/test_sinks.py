@@ -52,6 +52,10 @@ def evs() -> list[JourneyEvent]:
 
 
 class _CapturingHandler(http.server.BaseHTTPRequestHandler):
+    # HTTP/1.1 + Content-Length (below) is what makes keep-alive reuse
+    # observable in tests, matching services/collector's own opt-in.
+    protocol_version = "HTTP/1.1"
+
     def do_POST(self) -> None:  # noqa: N802 - stdlib method name
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
@@ -66,15 +70,31 @@ class _CapturingHandler(http.server.BaseHTTPRequestHandler):
         retry_after = getattr(self.server, "retry_after", None)
         if retry_after is not None:
             self.send_header("Retry-After", retry_after)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def log_message(self, *args: object) -> None:  # keep test output quiet
         pass
 
 
+class _CountingServer(http.server.HTTPServer):
+    """Counts distinct accepted TCP connections, not HTTP requests --
+    ``get_request()`` fires once per connection, and a keep-alive client
+    serves many requests over one, so this is what actually distinguishes
+    "one connection reused" from "one connection per request"."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.accepted_connections = 0
+
+    def get_request(self):  # type: ignore[override]
+        self.accepted_connections += 1
+        return super().get_request()
+
+
 @pytest.fixture
 def server():
-    srv = http.server.HTTPServer(("127.0.0.1", 0), _CapturingHandler)
+    srv = _CountingServer(("127.0.0.1", 0), _CapturingHandler)
     srv.requests = []  # type: ignore[attr-defined]
     srv.status_to_return = 200  # type: ignore[attr-defined]
     srv.retry_after = None  # type: ignore[attr-defined]
@@ -287,3 +307,53 @@ def test_drain_leaves_the_watermark_untouched_on_a_failed_post(tmp_path, server)
     retry = spool.push(HttpSink(endpoint(server)))
     assert retry.ok and retry.pushed == 2
     assert spool.watermark(JID) == 1
+
+
+# --------------------------------------------------------------------------
+# Connection reuse across journeys (item 1.7's "cross-journey overhead" fix
+# — see HttpSink's docstring for why this replaces payload batching)
+# --------------------------------------------------------------------------
+
+
+def test_two_sends_on_the_same_sink_reuse_one_connection(server):
+    sink = HttpSink(endpoint(server))
+    sink.send("j_a", evs())
+    sink.send("j_b", evs())
+
+    assert len(server.requests) == 2
+    assert server.accepted_connections == 1
+
+
+def test_two_sends_on_two_different_sinks_use_two_connections(server):
+    HttpSink(endpoint(server)).send("j_a", evs())
+    HttpSink(endpoint(server)).send("j_b", evs())
+
+    assert server.accepted_connections == 2
+
+
+def test_close_releases_the_connection_and_a_later_send_reconnects(server):
+    sink = HttpSink(endpoint(server))
+    sink.send("j_a", evs())
+    sink.close()
+    sink.send("j_b", evs())
+
+    assert server.accepted_connections == 2
+
+
+def test_close_before_any_send_is_a_safe_no_op(server):
+    HttpSink(endpoint(server)).close()  # must not raise
+
+
+def test_a_dropped_keep_alive_connection_is_retried_transparently(server):
+    """The server closing an idle connection out from under the client is
+    normal keep-alive behaviour (an idle timeout, a restart, ...) -- the
+    next send() must not surface that as a spurious drain failure."""
+    sink = HttpSink(endpoint(server))
+    sink.send("j_a", evs())
+
+    # Simulate the server having dropped the connection: close the socket
+    # the client thinks is still open, without telling HttpSink.
+    sink._conn.sock.close()  # type: ignore[union-attr]
+
+    sink.send("j_b", evs())  # must transparently reconnect, not raise
+    assert len(server.requests) == 2

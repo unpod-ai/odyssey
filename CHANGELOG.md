@@ -17,6 +17,14 @@ project has not yet made a versioned release, so entries accumulate under
   gate now refuses any file declaring a `1.x` (or earlier) schema version. No
   migration tool ships with this change — a schema-1.x `*.jsonl` shard on
   disk simply stops parsing under this reader.
+- `HttpSink` (item 1.7) now reuses one `http.client.HTTPConnection` across
+  `send()` calls instead of opening a fresh connection per journey —
+  `services/collector`'s `_Handler.protocol_version = "HTTP/1.1"` opts in
+  server-side. Draining N journeys in one process now costs one TCP/TLS
+  handshake, not N; a dropped keep-alive connection is retried once
+  transparently. Cross-journey *payload* batching (one POST for many
+  journeys) remains out of scope — this addresses the same overhead without
+  the partial-batch-failure redesign that would require.
 
 ### Added
 

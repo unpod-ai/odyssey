@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import email.utils
 import gzip
+import http.client
 import os
+import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 from odyssey.jsonl import encode_event, header_line, write_events
 from odyssey.primitives import JourneyEvent, JourneyHeader
@@ -98,11 +99,25 @@ class HttpSink:
     (seconds or an HTTP-date) is honoured — this sink refuses to attempt
     another request before that time, raising :class:`HttpSinkError`
     immediately rather than making a network call the server already asked
-    it not to make. This is not a queueing system: cross-journey batching
-    (one POST for many journeys) is explicitly out of scope here, noted as
-    still-open in ``docs/WORKING.md`` — `drain()`'s per-journey
-    watermark/retry semantics would need a real redesign to batch safely
-    across a partial failure.
+    it not to make. This is not a queueing system.
+
+    **Cross-journey overhead** (item 1.7): still one POST per journey, not
+    one POST for many — merging payloads was ruled out because it would
+    need a real redesign of ``drain()``'s per-journey watermark/retry
+    semantics to stay correct across a partial failure (see
+    ``docs/WORKING.md`` item 1.7). Instead, the connection itself is reused
+    across ``send()`` calls (``http.client.HTTPConnection`` with HTTP/1.1
+    keep-alive, ``services/collector`` opts in on its side) — draining N
+    journeys in one process pays for one TCP/TLS handshake, not N, without
+    touching the watermark-per-request correctness guarantee at all: every
+    journey's POST and response stay independent, so a failure on journey 3
+    still leaves journeys 1/2's already-advanced watermarks untouched and
+    journey 3 retried on the next drain, exactly as before. Not safe to call
+    ``send()`` concurrently from two threads at once (the connection is
+    shared, mutable state) — guarded by an internal lock, so a manual
+    ``push()`` racing the background ``IntervalDrainer`` serializes rather
+    than corrupting the connection, matching `drain()`'s own already-serial
+    per-journey loop.
     """
 
     def __init__(
@@ -126,6 +141,36 @@ class HttpSink:
         # server that asked to be left alone is not immediately re-hit.
         self._retry_after_until: float = 0.0
 
+        parsed = urlsplit(self.endpoint)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError(
+                f"HttpSink endpoint must be an http(s) URL: {self.endpoint!r}"
+            )
+        self._scheme = parsed.scheme
+        self._host = parsed.hostname
+        self._port = parsed.port
+        self._base_path = parsed.path.rstrip("/")
+        # The reused connection (item 1.7) and the lock guarding it — see the
+        # class docstring's "Cross-journey overhead" section.
+        self._conn: Optional[http.client.HTTPConnection] = None
+        self._lock = threading.Lock()
+
+    def _connect(self) -> http.client.HTTPConnection:
+        cls = (
+            http.client.HTTPSConnection
+            if self._scheme == "https"
+            else http.client.HTTPConnection
+        )
+        return cls(self._host, self._port, timeout=self.timeout)
+
+    def close(self) -> None:
+        """Release the connection reused across ``send()`` calls. Idempotent;
+        safe to call even if nothing was ever sent."""
+        with self._lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
+
     def send(
         self,
         journey_id: str,
@@ -146,37 +191,51 @@ class HttpSink:
         if self.compress:
             payload = gzip.compress(payload)
             headers["Content-Encoding"] = "gzip"
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
 
-        url = (
-            f"{self.endpoint}/journeys/"
+        path = (
+            f"{self._base_path}/journeys/"
             f"{urllib.parse.quote(journey_id, safe='')}/events"
         )
-        request = urllib.request.Request(
-            url, data=payload, method="POST", headers=headers
-        )
-        if self.api_key:
-            request.add_header("Authorization", f"Bearer {self.api_key}")
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                status = response.status
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429:
-                self._retry_after_until = time.monotonic() + _parse_retry_after(
-                    exc.headers.get("Retry-After")
-                )
+
+        with self._lock:
+            status, retry_after, error = self._request(path, payload, headers)
+
+        if error is not None:
             raise HttpSinkError(
-                f"{journey_id}: HTTP {exc.code} from {self.endpoint}"
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise HttpSinkError(
-                f"{journey_id}: could not reach {self.endpoint}: {exc.reason}"
-            ) from exc
-        if status >= 300:
-            # Unreachable via urlopen for a plain 2xx/4xx/5xx server — HTTPError
-            # already covers >=400, and urlopen follows redirects itself — but a
-            # defensive check costs nothing against a server that returns an
-            # unusual 3xx without a Location header.
-            raise HttpSinkError(f"{journey_id}: unexpected HTTP status {status}")
+                f"{journey_id}: could not reach {self.endpoint}: {error}"
+            )
+        if status == 429:
+            self._retry_after_until = time.monotonic() + _parse_retry_after(retry_after)
+        if status is None or status >= 300:
+            raise HttpSinkError(f"{journey_id}: HTTP {status} from {self.endpoint}")
+
+    def _request(
+        self, path: str, payload: bytes, headers: Dict[str, str]
+    ) -> Tuple[Optional[int], Optional[str], Optional[str]]:
+        """One POST, reusing ``self._conn`` when a prior request left it open.
+
+        A kept-alive connection the server (or an idle intermediary) closed
+        in the meantime raises on the *first* use after that, not at close
+        time — so a dropped connection is retried once, transparently, with
+        a fresh one, rather than surfacing as a spurious drain failure.
+        """
+        for attempt in range(2):
+            if self._conn is None:
+                self._conn = self._connect()
+            try:
+                self._conn.request("POST", path, body=payload, headers=headers)
+                response = self._conn.getresponse()
+                response.read()  # must drain the body to reuse the connection
+                return response.status, response.getheader("Retry-After"), None
+            except (http.client.HTTPException, OSError) as exc:
+                if self._conn is not None:
+                    self._conn.close()
+                self._conn = None
+                if attempt == 1:
+                    return None, None, str(exc)
+        return None, None, "unreachable"  # pragma: no cover - loop always returns
 
 
 # A missing/malformed Retry-After still has to back off *something* -- a

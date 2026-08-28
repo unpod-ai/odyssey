@@ -314,6 +314,13 @@ class _Server(ThreadingHTTPServer):
 class _Handler(BaseHTTPRequestHandler):
     server: _Server  # narrows the inherited Any for readability
 
+    # HTTP/1.1, not the stdlib default HTTP/1.0: without this every response
+    # closes the connection, defeating HttpSink's connection reuse (item
+    # 1.7's actual fix for cross-journey overhead -- see sinks.py). Safe
+    # because every response already sends Content-Length, HTTP/1.1
+    # keep-alive's one hard requirement.
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, *args: object) -> None:  # keep stdout quiet
         pass
 
