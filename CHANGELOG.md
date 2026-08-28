@@ -54,6 +54,13 @@ project has not yet made a versioned release, so entries accumulate under
   `on_chain_start`/`on_chain_end`/`on_llm_*`/`on_tool_*` callback tree the
   existing `OdysseyCallbackHandler()` already records, against real
   installed `langgraph`/`langchain-core`.
+- `services/collector`: project scoping (item 1.6) — a `projects` roster
+  (`--keys-file`/`ODYSSEY_COLLECTOR_KEYS_FILE`, JSON `{"projects":
+  [{"slug", "name", "api_key"}, ...]}`), mutually exclusive with the
+  existing single shared `api_key`. Each project's key writes into its own
+  `<data_dir>/<slug>/<date>/` partition — structural isolation, not just an
+  access check on shared storage. New `GET /projects` (any registered key)
+  lists `{slug, name}` for the roster, never keys.
 
 ### Removed
 

@@ -19,7 +19,13 @@ from odyssey.jsonl import read_events
 from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
 from odyssey.sinks import HttpSinkError
 
-from odyssey_collector.server import CollectorConfig, _safe_stem, resolve_config, serve
+from odyssey_collector.server import (
+    CollectorConfig,
+    Project,
+    _safe_stem,
+    resolve_config,
+    serve,
+)
 
 JID = "j_collector"
 FIXED_DATE = "2026-08-27"
@@ -297,6 +303,209 @@ def test_the_correct_key_is_accepted(guarded):
 def test_the_wrong_key_is_rejected(guarded):
     with pytest.raises(HttpSinkError, match="HTTP 401"):
         HttpSink(endpoint(guarded), api_key="sk-wrong").send(JID, evs())
+
+
+# --------------------------------------------------------------------------
+# Project scoping (item 1.6) — multiple registered keys, isolated storage
+# --------------------------------------------------------------------------
+
+
+ACME = Project(slug="proj_acme", name="Acme Corp", api_key="sk-acme")
+GLOBEX = Project(slug="proj_globex", name="Globex Inc", api_key="sk-globex")
+
+
+@pytest.fixture
+def scoped(tmp_path):
+    config = CollectorConfig(
+        host="127.0.0.1",
+        port=0,
+        data_dir=tmp_path / "data",
+        projects=(ACME, GLOBEX),
+        date_fn=lambda: FIXED_DATE,
+    )
+    server = serve(config)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+def project_path(server, slug, journey_id=JID):
+    return (
+        server.config.data_dir / slug / FIXED_DATE / f"{_safe_stem(journey_id)}.jsonl"
+    )
+
+
+def test_a_registered_key_lands_under_its_own_project(scoped):
+    sent = evs()
+    HttpSink(endpoint(scoped), api_key="sk-acme").send(JID, sent)
+    assert read_events(project_path(scoped, "proj_acme")).events == sent
+    assert not project_path(scoped, "proj_globex").exists()
+    # And nowhere unscoped either -- project mode always partitions by project.
+    assert not (scoped.config.data_dir / FIXED_DATE).exists()
+
+
+def test_two_projects_writing_the_same_journey_id_never_collide(scoped):
+    acme_events = evs()
+    globex_events = evs()[:1]
+    HttpSink(endpoint(scoped), api_key="sk-acme").send(JID, acme_events)
+    HttpSink(endpoint(scoped), api_key="sk-globex").send(JID, globex_events)
+
+    assert read_events(project_path(scoped, "proj_acme")).events == acme_events
+    assert read_events(project_path(scoped, "proj_globex")).events == globex_events
+
+
+def test_an_unregistered_key_is_rejected_and_nothing_is_written(scoped):
+    with pytest.raises(HttpSinkError, match="HTTP 401"):
+        HttpSink(endpoint(scoped), api_key="sk-not-registered").send(JID, evs())
+    assert not project_path(scoped, "proj_acme").exists()
+    assert not project_path(scoped, "proj_globex").exists()
+
+
+def test_a_missing_key_is_rejected_in_project_mode_too(scoped):
+    with pytest.raises(HttpSinkError, match="HTTP 401"):
+        HttpSink(endpoint(scoped)).send(JID, evs())
+
+
+def test_api_key_and_projects_are_mutually_exclusive():
+    with pytest.raises(ValueError, match="not both"):
+        CollectorConfig(api_key="sk-shared", projects=(ACME,))
+
+
+def test_a_malformed_keys_file_fails_fast_at_startup(tmp_path):
+    bad = tmp_path / "keys.json"
+    bad.write_text("not json")
+    with pytest.raises(json.JSONDecodeError):
+        resolve_config(data_dir=tmp_path / "data", keys_file=bad)
+
+
+def test_a_keys_file_missing_the_projects_key_is_rejected(tmp_path):
+    bad = tmp_path / "keys.json"
+    bad.write_text(json.dumps({"sk-a": "proj_a"}))  # the old flat-map shape
+    with pytest.raises(ValueError, match="keys file must be"):
+        resolve_config(data_dir=tmp_path / "data", keys_file=bad)
+
+
+def test_a_project_entry_missing_a_field_is_rejected(tmp_path):
+    bad = tmp_path / "keys.json"
+    bad.write_text(
+        json.dumps({"projects": [{"slug": "proj_a", "api_key": "sk-a"}]})  # no name
+    )
+    with pytest.raises(ValueError, match="slug.*name.*api_key"):
+        resolve_config(data_dir=tmp_path / "data", keys_file=bad)
+
+
+def test_a_duplicate_slug_is_rejected(tmp_path):
+    bad = tmp_path / "keys.json"
+    bad.write_text(
+        json.dumps(
+            {
+                "projects": [
+                    {"slug": "proj_a", "name": "A", "api_key": "sk-1"},
+                    {"slug": "proj_a", "name": "A Again", "api_key": "sk-2"},
+                ]
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="duplicate project slug"):
+        resolve_config(data_dir=tmp_path / "data", keys_file=bad)
+
+
+def test_a_duplicate_api_key_is_rejected(tmp_path):
+    bad = tmp_path / "keys.json"
+    bad.write_text(
+        json.dumps(
+            {
+                "projects": [
+                    {"slug": "proj_a", "name": "A", "api_key": "sk-shared"},
+                    {"slug": "proj_b", "name": "B", "api_key": "sk-shared"},
+                ]
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="same api_key"):
+        resolve_config(data_dir=tmp_path / "data", keys_file=bad)
+
+
+def test_a_valid_keys_file_round_trips_through_resolve_config(tmp_path):
+    keys_file = tmp_path / "keys.json"
+    keys_file.write_text(
+        json.dumps(
+            {"projects": [{"slug": "proj_a", "name": "A Corp", "api_key": "sk-a"}]}
+        )
+    )
+    config = resolve_config(data_dir=tmp_path / "data", keys_file=keys_file)
+    assert config.projects == (Project(slug="proj_a", name="A Corp", api_key="sk-a"),)
+
+
+def test_a_slug_cannot_traverse_out_of_data_dir(tmp_path):
+    """A keys file is operator-authored, but defence in depth is cheap --
+    the same journey_id traversal guard applies to a project's slug."""
+    evil = Project(slug="../../etc", name="Evil", api_key="sk-evil")
+    config = CollectorConfig(
+        host="127.0.0.1",
+        port=0,
+        data_dir=tmp_path / "data",
+        projects=(evil,),
+        date_fn=lambda: FIXED_DATE,
+    )
+    server = serve(config)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        HttpSink(endpoint(server), api_key="sk-evil").send(JID, evs())
+        escaped = (config.data_dir / ".." / "etc").resolve()
+        assert not escaped.exists()
+        written = list(config.data_dir.glob("**/*.jsonl"))
+        assert len(written) == 1
+        assert written[0].resolve().is_relative_to(config.data_dir.resolve())
+    finally:
+        server.shutdown()
+        thread.join()
+
+
+# --------------------------------------------------------------------------
+# GET /projects — the roster, names + slugs, never keys
+# --------------------------------------------------------------------------
+
+
+def _get_json(url, *, api_key=None):
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request) as resp:
+        return resp.status, json.loads(resp.read())
+
+
+def test_get_projects_lists_the_roster_by_slug_and_name(scoped):
+    status, body = _get_json(f"{endpoint(scoped)}/projects", api_key="sk-acme")
+    assert status == 200
+    assert body == {
+        "projects": [
+            {"slug": "proj_acme", "name": "Acme Corp"},
+            {"slug": "proj_globex", "name": "Globex Inc"},
+        ]
+    }
+
+
+def test_get_projects_never_includes_api_keys(scoped):
+    _, body = _get_json(f"{endpoint(scoped)}/projects", api_key="sk-acme")
+    assert "sk-acme" not in json.dumps(body)
+    assert "sk-globex" not in json.dumps(body)
+
+
+def test_get_projects_requires_a_registered_key(scoped):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _get_json(f"{endpoint(scoped)}/projects")
+    assert exc_info.value.code == 401
+
+
+def test_get_projects_is_404_outside_project_scoped_mode(running):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _get_json(f"{endpoint(running)}/projects")
+    assert exc_info.value.code == 404
 
 
 # --------------------------------------------------------------------------

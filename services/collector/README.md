@@ -39,8 +39,40 @@ Env-first, explicit argument wins — same precedence as `odyssey.config.resolve
 | `ODYSSEY_COLLECTOR_HOST` | `--host` | `127.0.0.1` | |
 | `ODYSSEY_COLLECTOR_PORT` | `--port` | `8787` | |
 | `ODYSSEY_COLLECTOR_DATA_DIR` | `--data-dir` | `./collector-data` | where `<date>/<journey_id>.jsonl` files land |
-| `ODYSSEY_COLLECTOR_API_KEY` | `--api-key` | unset (open) | if set, requires `Authorization: Bearer <key>` |
+| `ODYSSEY_COLLECTOR_API_KEY` | `--api-key` | unset (open) | one shared bearer token, unscoped. Mutually exclusive with `--keys-file` |
+| `ODYSSEY_COLLECTOR_KEYS_FILE` | `--keys-file` | unset | JSON `{"projects": [{"slug", "name", "api_key"}, ...]}` file (project scoping, below). Mutually exclusive with `--api-key` |
 | `ODYSSEY_COLLECTOR_TIMEZONE` | `--timezone` | `UTC` | IANA name (e.g. `Asia/Kolkata`); which day a batch's date-partition belongs to. Unrecognised names fall back to UTC |
+
+## Project scoping
+
+For more than one tenant, use `--keys-file` instead of `--api-key`:
+
+```json
+{
+  "projects": [
+    {"slug": "acme", "name": "Acme Corp", "api_key": "sk-acme-..."},
+    {"slug": "globex", "name": "Globex Inc", "api_key": "sk-globex-..."}
+  ]
+}
+```
+
+Each project's key writes into its own `<data_dir>/<slug>/<date>/` partition
+— isolation is structural (one caller's key can never resolve into another
+project's directory), not just an access check layered on shared storage.
+`slug` is what names the directory and every CLI/`prune.py` invocation;
+`name` exists for `GET /projects` and log/operator legibility.
+
+`GET /projects` (any registered key) returns the roster as `{slug, name}`
+pairs, never keys — a debugging/operator aid, not a privacy boundary between
+projects (storage partitioning already is that).
+
+This is a stopgap, not real multi-tenant infrastructure: the roster is a
+flat file loaded once at startup — edit it and restart the process to
+add/revoke a project. Real key/project management belongs to `services/api`
+once it exists (Step 8, not built).
+
+`prune.py` (below) is unaware of projects — point `--data-dir` at
+`<data_dir>/<slug>` once per project rather than at the root.
 
 ## Wire contract
 
@@ -57,6 +89,10 @@ Authorization: Bearer <api_key>          # only when the server requires one
 ```
 
 `GET /health` → `200 {"status": "ok"}`.
+
+`GET /projects` (project-scoped mode only, any registered key) →
+`200 {"projects": [{"slug": ..., "name": ...}, ...]}`; `404` outside
+project-scoped mode, `401` without a valid key.
 
 ## Storage
 
@@ -77,6 +113,7 @@ inside `_Handler._store`, the endpoint contract doesn't move.
 
 ## Not done here
 
-- Project scoping (multi-tenant auth beyond a single shared bearer token)
+- Real multi-tenant key/project management (the `--keys-file` roster above
+  is a flat-file stopgap, not a database)
 - Object-store backing (still local disk)
 - Any read path — that's `services/api`
