@@ -33,6 +33,10 @@ anthropic = ["anthropic>=0.40"]
 # Together, local vLLM/Ollama, ...) — they're driven through this same SDK
 # with a different base_url, not a separate client.
 openai = ["openai>=1.0"]
+# `odyssey.integrations.langchain` (item 0.10) imports this inside
+# OdysseyCallbackHandler(), never at module scope -- same discipline as
+# anthropic/openai above.
+langchain = ["langchain-core>=0.3"]
 
 # ADR 0003: cli/ owns the `odyssey` console script; core registers a plugin
 # instead of declaring its own [project.scripts]. `register` is called with a
