@@ -1,8 +1,9 @@
 """odyssey-api CLI plugin — mounts `api serve`/`api openapi`/`api routes`
-onto the odyssey CLI, per `docs/STRUCTURE.md`'s command surface. `sdk`/`db`
-groups named alongside it there are not mounted here — they belong to
-`sdk/python` (item 8.4, not built) and alembic migrations (not built, see
-README's "Not done here"), neither of which exists yet.
+onto the odyssey CLI, per `docs/STRUCTURE.md`'s command surface. The `db`
+group named alongside it there is not mounted here — it belongs to
+alembic migrations (not built, see README's "Not done here"). The `sdk`
+group is mounted by `sdk/python`'s own CLI plugin (item 8.4) — see its
+`odyssey_sdk.cli` module.
 """
 
 from __future__ import annotations
@@ -44,16 +45,31 @@ def register(app: Any) -> None:
         out: str = typer.Option(
             "services/api/openapi.json", "--out", help="where to write the schema"
         ),
+        check: bool = typer.Option(
+            False,
+            "--check",
+            help="don't write — exit 3 (ADR 0003's contract-violation code) if `out` is stale",
+        ),
     ) -> None:
         """Write `openapi.json` from the live app (item 8.3) — the single
-        contract `scripts/codegen` (item 8.7, not built) would regenerate
-        SDKs from."""
+        contract `scripts/codegen.sh` (item 8.7) regenerates SDKs from."""
+        from pathlib import Path
+
         from odyssey_api.main import create_app
 
         schema = create_app().openapi()
+        rendered = json.dumps(schema, indent=2, sort_keys=True) + "\n"
+
+        if check:
+            current = Path(out).read_text(encoding="utf-8") if Path(out).exists() else ""
+            if current != rendered:
+                print(f"{out} is stale — run `odyssey api openapi --out {out}`")
+                raise typer.Exit(code=3)
+            print(f"{out} is fresh")
+            return
+
         with open(out, "w", encoding="utf-8") as f:
-            json.dump(schema, f, indent=2, sort_keys=True)
-            f.write("\n")
+            f.write(rendered)
         print(f"wrote {out}")
 
     def routes() -> None:

@@ -1,0 +1,43 @@
+name: codegen-drift
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/api/**"
+      - "packages/odyssey-schemas/**"
+      - "sdk/python/**"
+      - ".github/workflows/codegen-drift.yml"
+  pull_request:
+    paths:
+      - "services/api/**"
+      - "packages/odyssey-schemas/**"
+      - "sdk/python/**"
+      - ".github/workflows/codegen-drift.yml"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Sync dependencies
+        run: uv sync --all-packages --extra dev
+
+      # docs/STRUCTURE.md's own exit-code rule: 3 = contract/lineage
+      # violation, "drifted openapi" named explicitly — CI greps on 3.
+      - name: services/api/openapi.json is fresh (item 8.3)
+        run: uv run odyssey api openapi --check --out services/api/openapi.json
+
+      - name: sdk/python's resources/*.py are fresh (item 8.4)
+        run: uv run odyssey sdk check-drift

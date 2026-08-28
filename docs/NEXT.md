@@ -1,5 +1,38 @@
 # odyssey — session handoff
 
+## Step 8 items 8.1-8.4, 8.6, 8.7 are now closed
+
+Built this session, on top of 8.1-8.3 below: `sdk/python`
+(`odyssey-sdk`) — hand-written `client.py`/`errors.py`/`models.py`/
+`codegen.py`, generated `resources/{journeys,datasets,models,runs,
+exports}.py` from `services/api/openapi.json`, stdlib-`urllib`-only
+transport (no runtime dependency on `odyssey-core`/`odyssey-api`). New
+`odyssey sdk codegen`/`check-drift` CLI commands, `odyssey api openapi
+--check`, `scripts/codegen.sh`, `codegen-drift.yml`/`ci-sdk.yml` CI
+(item 8.7). Then `apps/web` — a real Next.js 16 dashboard
+(`journeys/datasets/models/runs/exports`), server-rendered against
+`services/api`, verified via a live `uvicorn` instance + `curl` (no
+browser tool in this environment). The `odyssey-sdk` naming-collision
+flag is resolved by documentation, not a rename. `apps/web` uses its own
+temporary `src/lib/api/` client instead of `@odyssey/sdk` since
+`sdk/javascript` (8.5) wasn't in this session's scope — replace it the
+same commit 8.5 lands.
+
+**Only 8.5 (`sdk/javascript`, `@odyssey/sdk`) remains open in Step 8.**
+
+**Next up, in dependency order:**
+
+1. **9.4** — `NOTICE` copyright holder. Still the only remaining hard
+   blocker for public distribution, still needs a human, not more
+   engineering. LlamaIndex hooks (0.10) are still bundled with this item.
+2. **8.5** — `sdk/javascript` (`@odyssey/sdk`, pnpm member per
+   `docs/STRUCTURE.md` — this session used plain npm for `apps/web` since
+   pnpm isn't installed in this environment; confirm before assuming pnpm
+   for 8.5 too). Once built, `apps/web/src/lib/api/*` should be replaced
+   by `@odyssey/sdk` imports, not kept alongside it.
+
+---
+
 ## Step 8 items 8.1-8.3 (services/api) are now closed
 
 Built this session: two new workspace members, `packages/odyssey-schemas`

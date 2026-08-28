@@ -196,6 +196,44 @@ project has not yet made a versioned release, so entries accumulate under
   into FastAPI for no functional gain today. 25 new tests; full workspace
   (919 tests, 8 members) re-verified green.
 
+- **New `sdk/python` workspace member (`odyssey-sdk`), closing items
+  8.4/8.7.** `client.py`/`errors.py`/`models.py`/`codegen.py` are
+  hand-written; `resources/{journeys,datasets,models,runs,exports}.py`
+  are generated from `services/api/openapi.json` by `odyssey_sdk.codegen`
+  — one resource class per path group (`client.journeys.list()`/
+  `.get(id)`, etc.), each method returning an `odyssey_schemas` DTO
+  parsed via `.model_validate()`. `Transport` is stdlib `urllib` only
+  (mirrors `odyssey.sinks.HttpSink`'s own choice) — this package depends
+  on `odyssey-schemas` only at runtime, not `odyssey-core`/`odyssey-api`,
+  so it stays usable by someone with only network access to a deployed
+  `services/api`. New `odyssey sdk codegen`/`check-drift` CLI commands;
+  `services/api`'s own `odyssey api openapi` gained `--check` (exits 3 on
+  drift). New `scripts/codegen.sh` (regenerates both, in order) and
+  `codegen-drift.yml`/`ci-sdk.yml` CI workflows. The `docs/WORKING.md`
+  naming-collision flag (`odyssey-sdk` vs. "the SDK" people mean when
+  they say `odyssey-core`) is resolved by documentation
+  (`sdk/python/README.md`), not a rename — `STRUCTURE.md`'s names stay as
+  specified. 11 new tests (client tests run against a real live
+  `services/api` instance via `uvicorn`, not a mock); full workspace (926
+  tests, 9 members) green.
+
+- **New `apps/web` workspace (Next.js 16, App Router, TypeScript), closing
+  item 8.6.** Read-only dashboard over `services/api`:
+  `journeys`/`datasets`/`models`/`runs`/`exports` list pages plus a
+  journey-detail page, adapted from `docs/STRUCTURE.md`'s
+  `journeys/datasets/experiments/models/reports` page list to the
+  resources `services/api` actually exposes. Every page is a React Server
+  Component (`fetch(..., {cache: "no-store"})`, no client-side
+  data-fetching library). `src/lib/api/{types,client}.ts` is a
+  hand-written stand-in for `@odyssey/sdk` (`sdk/javascript`, item 8.5 —
+  not built this pass); `docs/STRUCTURE.md`'s "consumes `@odyssey/sdk`,
+  NOT its own generated client" rule is a documented, temporary scope cut
+  here, not the intended end state. New `ci-web.yml`. 3 new vitest unit
+  tests; verified end-to-end against a real `uvicorn`-served `services/api`
+  instance via `npm run dev` + `curl` (no browser tool available in this
+  environment — documented in `apps/web/README.md`'s "Tests" section,
+  `tests/e2e/` stays empty until one exists).
+
 ### Removed
 
 - `primitives.TelemetryEvent` (item 1.11) — dead code targeting a

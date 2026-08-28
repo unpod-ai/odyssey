@@ -42,9 +42,9 @@ those models, nothing more.
   broker/topic exists anywhere in this repo. See `src/odyssey_api/workers/README.md`.
 - **`migrations/` (alembic)** — no relational schema exists (filesystem
   only). See `migrations/README.md`.
-- **`odyssey sdk`/`odyssey db` CLI groups** — depend on `sdk/python` (item
-  8.4) and alembic migrations respectively, neither built yet. Only
-  `odyssey api serve|openapi|routes` is mounted here.
+- **`odyssey db` CLI group** — depends on alembic migrations, not built.
+  `odyssey sdk` (item 8.4) is mounted by `sdk/python`'s own CLI plugin, not
+  this member. Only `odyssey api serve|openapi|routes` is mounted here.
 
 ## Run it
 

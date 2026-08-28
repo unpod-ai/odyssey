@@ -5,8 +5,5 @@
 # glob: a directory that is scaffolded but has no pyproject.toml yet would break
 # `uv sync` if a glob picked it up.
 #
-# Add a member the same commit you add its pyproject.toml:
-#   sdk/python
-
 [tool.uv.workspace]
-members = ["packages/odyssey-core", "packages/odyssey-schemas", "services/collector", "services/api", "data_preparation", "cli", "training", "evaluation"]
+members = ["packages/odyssey-core", "packages/odyssey-schemas", "services/collector", "services/api", "data_preparation", "cli", "training", "evaluation", "sdk/python"]

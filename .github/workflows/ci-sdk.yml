@@ -1,34 +1,30 @@
-name: ci-cli
+name: ci-sdk
+
+# docs/STRUCTURE.md names this "sdk/** (py + js matrix)" — only the Python
+# leg exists today (sdk/python, item 8.4); add a js job here the same
+# commit sdk/javascript (item 8.5) lands, rather than a second workflow.
 
 on:
   push:
     branches: [main]
     paths:
-      - "cli/**"
-      - "packages/odyssey-core/**"
-      - "data_preparation/**"
-      - "training/**"
+      - "sdk/python/**"
       - "packages/odyssey-schemas/**"
       - "services/api/**"
-      - "sdk/python/**"
-      - ".github/workflows/ci-cli.yml"
+      - ".github/workflows/ci-sdk.yml"
   pull_request:
     paths:
-      - "cli/**"
-      - "packages/odyssey-core/**"
-      - "data_preparation/**"
-      - "training/**"
+      - "sdk/python/**"
       - "packages/odyssey-schemas/**"
       - "services/api/**"
-      - "sdk/python/**"
-      - ".github/workflows/ci-cli.yml"
+      - ".github/workflows/ci-sdk.yml"
 
 defaults:
   run:
-    working-directory: cli
+    working-directory: sdk/python
 
 jobs:
-  check:
+  python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +39,7 @@ jobs:
         with:
           python-version-file: ".python-version"
 
-      - name: Sync dependencies (whole workspace — this depends on odyssey-core and odyssey-dataprep)
+      - name: Sync dependencies (whole workspace — depends on odyssey-schemas, odyssey-api for tests)
         working-directory: .
         run: uv sync --all-packages --extra dev
 
@@ -61,6 +57,3 @@ jobs:
 
       - name: tests
         run: uv run pytest tests
-
-      - name: doctor (plugin discovery + cold-start sanity)
-        run: uv run odyssey doctor
