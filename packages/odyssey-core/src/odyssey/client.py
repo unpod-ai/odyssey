@@ -63,6 +63,7 @@ class Stats:
     events_recorded: int = 0
     events_dropped: int = 0
     journeys_started: int = 0
+    journeys_sampled_out: int = 0
     capture_errors: int = 0
     recent_errors: List[str] = field(default_factory=list)
 
@@ -157,6 +158,10 @@ class Client:
         with self._stats_lock:
             self.stats.journeys_started += 1
 
+    def count_journey_sampled_out(self) -> None:
+        with self._stats_lock:
+            self.stats.journeys_sampled_out += 1
+
     def note_error(self, label: str, exc: BaseException) -> None:
         """Record a swallowed failure. Re-raises when debug is on."""
         with self._stats_lock:
@@ -235,12 +240,14 @@ class Client:
                 events_recorded=self.stats.events_recorded,
                 events_dropped=self.stats.events_dropped,
                 journeys_started=self.stats.journeys_started,
+                journeys_sampled_out=self.stats.journeys_sampled_out,
                 capture_errors=self.stats.capture_errors,
                 recent_errors=list(self.stats.recent_errors),
             )
         journeys = self.allocator.tracked()
         return {
             "enabled": self.config.enabled,
+            "sample_rate": self.config.sample_rate,
             "writer_id": self.writer_id,
             "spool_dir": str(self.config.spool_dir),
             "out_dir": str(self.config.out_dir),
@@ -293,6 +300,7 @@ def init(
     redact_keys: Optional[frozenset] = None,
     fsync: bool = False,
     timezone: Optional[str] = None,
+    sample_rate: Optional[float] = None,
     force: bool = False,
 ) -> Client:
     """Start recording. Call once, as early as the process allows.
@@ -300,6 +308,11 @@ def init(
     Every argument has an ``ODYSSEY_*`` environment equivalent; explicit
     arguments win. ``drain_interval=None`` disables the background drain, in
     which case nothing leaves the spool until :func:`flush` or the CLI runs.
+
+    ``sample_rate`` (``ODYSSEY_SAMPLE_RATE``, default ``1.0``) is the
+    fraction of *journeys* recorded, decided once per journey at open time
+    — never per event, so a sampled-out journey never ends up partially
+    written. Clamped to ``[0.0, 1.0]``.
 
     ``timezone`` (``ODYSSEY_TIMEZONE``) is which day a shard rotation belongs
     to, not a display setting — UTC by default, so a shard's date means the
@@ -340,6 +353,7 @@ def init(
             redact_keys=redact_keys,
             timezone=timezone,
             fsync=fsync,
+            sample_rate=sample_rate,
         )
         client = Client(config, sink=sink)
         _client = client

@@ -23,11 +23,13 @@ ENV_ENABLED = "ODYSSEY_ENABLED"
 ENV_DRAIN_INTERVAL = "ODYSSEY_DRAIN_INTERVAL"
 ENV_DEBUG = "ODYSSEY_DEBUG"
 ENV_MAX_OPEN_SHARDS = "ODYSSEY_MAX_OPEN_SHARDS"
+ENV_SAMPLE_RATE = "ODYSSEY_SAMPLE_RATE"
 
 DEFAULT_SPOOL_DIR = ".odyssey"
 DEFAULT_OUT_DIR = "odyssey-out"
 DEFAULT_DRAIN_INTERVAL = 30.0
 DEFAULT_MAX_OPEN_SHARDS = 256
+DEFAULT_SAMPLE_RATE = 1.0
 
 _FALSEY = {"", "0", "false", "no", "off", "none"}
 
@@ -74,6 +76,9 @@ class Config:
     # spool._make_date_fn. Threaded through mainly so init(timezone=...) works
     # without touching the environment, same as every other knob here.
     timezone: Optional[str]
+    # Fraction of journeys to actually record, decided once per journey (see
+    # capture.journey()) so a sampled-out journey is never partially written.
+    sample_rate: float
 
 
 def resolve(
@@ -90,6 +95,7 @@ def resolve(
     redact_keys: Optional[frozenset] = None,
     fsync: bool = False,
     timezone: Optional[str] = None,
+    sample_rate: Optional[float] = None,
 ) -> Config:
     """Merge explicit arguments over environment over defaults.
 
@@ -126,4 +132,15 @@ def resolve(
         redact_keys=redact_keys if redact_keys is not None else DEFAULT_REDACT_KEYS,
         fsync=fsync,
         timezone=timezone,
+        sample_rate=min(
+            1.0,
+            max(
+                0.0,
+                (
+                    sample_rate
+                    if sample_rate is not None
+                    else _number(os.environ.get(ENV_SAMPLE_RATE), DEFAULT_SAMPLE_RATE)
+                ),
+            ),
+        ),
     )

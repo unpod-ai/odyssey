@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import random
 import time
 from contextlib import contextmanager
 from enum import Enum
@@ -129,6 +130,12 @@ def _emit(
         # terminal is never `complete`, so it would be untrainable noise in the
         # spool. Callers that want an implicit journey use `journey()`, which
         # joins an existing one or opens a real one.
+        client.count_dropped()
+        return None
+    if ctx.state.get("_sampled", True) is False:
+        # This journey lost the sampling coin-flip at open time (see
+        # journey()). Dropping here, before the spool/allocator are touched,
+        # is what keeps an unsampled journey cheap rather than merely unsent.
         client.count_dropped()
         return None
     try:
@@ -346,6 +353,14 @@ def journey(
     )
     if client is not None:
         client.count_journey()
+
+    # Decided once, here, at open — never per event. `_emit` reads this off
+    # `ctx.state` for every event including the terminal, so a sampled-out
+    # journey is either fully recorded or fully dropped, never partial.
+    sampled = client is None or random.random() < client.config.sample_rate
+    if client is not None and not sampled:
+        client.count_journey_sampled_out()
+    ctx.state["_sampled"] = sampled
 
     handle = JourneyHandle(ctx)
     token = set_current(ctx)

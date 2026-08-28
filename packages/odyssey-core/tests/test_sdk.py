@@ -663,6 +663,58 @@ def test_health_never_grows_the_error_ring_without_bound(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# sampling (item 0'.6)
+# --------------------------------------------------------------------------
+
+
+def test_sample_rate_zero_records_nothing(tmp_path):
+    client = start(tmp_path, sample_rate=0.0)
+    with odyssey.journey(id="j") as j:
+        j.message(Message(role="user", content="hi"))
+        j.signal("thumbs_up")
+        j.reward(1.0)
+
+    assert events("j") == []
+    assert client.stats.journeys_sampled_out == 1
+    assert client.stats.events_recorded == 0
+    assert client.spool.open_shard_count() == 0
+
+
+def test_sample_rate_one_is_the_default_and_changes_nothing(tmp_path):
+    client = start(tmp_path)
+    assert client.config.sample_rate == 1.0
+    with odyssey.journey(id="j") as j:
+        j.message(Message(role="user", content="hi"))
+
+    assert len(events("j")) == 2  # message + terminal
+    assert client.stats.journeys_sampled_out == 0
+
+
+def test_sampling_decision_is_made_once_per_journey_not_per_event(tmp_path):
+    """A journey that lost the coin-flip drops its terminal too -- never a
+    partial recording."""
+    client = start(tmp_path, sample_rate=0.0)
+    with odyssey.journey(id="j"):
+        pass
+    assert events("j") == []
+    assert client.stats.journeys_sampled_out == 1
+
+
+def test_sample_rate_is_clamped_to_zero_one(tmp_path):
+    client = start(tmp_path, sample_rate=5.0)
+    assert client.config.sample_rate == 1.0
+    odyssey.shutdown()
+    client = start(tmp_path, sample_rate=-1.0)
+    assert client.config.sample_rate == 0.0
+
+
+def test_sample_rate_env_var(tmp_path, monkeypatch):
+    monkeypatch.setenv("ODYSSEY_SAMPLE_RATE", "0.0")
+    client = start(tmp_path)
+    assert client.config.sample_rate == 0.0
+
+
+# --------------------------------------------------------------------------
 # The whole point, end to end
 # --------------------------------------------------------------------------
 
