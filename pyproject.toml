@@ -7,7 +7,7 @@
 #
 # Add a member the same commit you add its pyproject.toml:
 #   packages/odyssey-schemas · services/api
-#   evaluation · sdk/python
+#   sdk/python
 
 [tool.uv.workspace]
-members = ["packages/odyssey-core", "services/collector", "data_preparation", "cli", "training"]
+members = ["packages/odyssey-core", "services/collector", "data_preparation", "cli", "training", "evaluation"]

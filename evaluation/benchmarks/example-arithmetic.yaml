@@ -1,0 +1,16 @@
+# A tiny, real example benchmark suite (item 7.3) — exact-match on short
+# arithmetic answers. Deliberately trivial: the point is to pin the schema
+# `runner.load_benchmark` parses, not to be a serious eval.
+name: example-arithmetic
+description: Exact-match scoring on short arithmetic answers.
+metric: exact_match
+tasks:
+  - id: add-1
+    prompt: "What is 2 + 2?"
+    reference: "4"
+  - id: add-2
+    prompt: "What is 15 + 27?"
+    reference: "42"
+  - id: sub-1
+    prompt: "What is 100 - 37?"
+    reference: "63"

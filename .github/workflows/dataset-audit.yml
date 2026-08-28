@@ -1,0 +1,40 @@
+name: dataset-audit
+
+# Item 7.4 / docs/STRUCTURE.md's own naming: manifest sha256 + no-overlap
+# gate on datasets/**. See evaluation/src/odyssey_eval/audit.py's module
+# docstring for what "PII gate" here does and doesn't cover today.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "data_preparation/datasets/**"
+      - "evaluation/datasets/**"
+      - ".github/workflows/dataset-audit.yml"
+  pull_request:
+    paths:
+      - "data_preparation/datasets/**"
+      - "evaluation/datasets/**"
+      - ".github/workflows/dataset-audit.yml"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Sync dependencies
+        run: uv sync --all-packages --extra dev
+
+      - name: Manifest sha256 integrity audit (exits 3 on breach)
+        run: uv run --project evaluation python -m odyssey_eval.audit

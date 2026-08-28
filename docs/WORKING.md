@@ -470,16 +470,48 @@ conversion for serving remains a documented, deliberate scope cut.
 
 | # | Item | Status |
 |---|---|---|
-| 7.1 | `evaluation/src/odyssey_eval/` harness | ❌ `.gitkeep` |
-| 7.2 | Frozen eval sets, never trained on | ❌ |
-| 7.3 | Benchmarks + metric code | ❌ |
-| 7.4 | `dataset-audit.yml` no-overlap gate | ❌ |
-| 7.5 | Reports | ❌ dirs exist, empty |
+| 7.1 | `evaluation/src/odyssey_eval/` harness | ✅ `runner.py`/`harness.py`/`cli.py` |
+| 7.2 | Frozen eval sets, never trained on | ✅ `eval_datasets.py` (manifest/registry/card) |
+| 7.3 | Benchmarks + metric code | ✅ `benchmarks/*.yaml` + `metrics/*.py` (`exact_match`, `tool_call_accuracy`) |
+| 7.4 | `dataset-audit.yml` no-overlap gate | ✅ `overlap.py` + `audit.py`, wired into CI |
+| 7.5 | Reports | ✅ `reports/templates/`, gitignored `reports/` output |
 
-Journey-level metrics **are** computed today — `steps`, `num_tool_calls`,
-`num_tool_failures`, `tool_error_rate`, `num_tool_response_none`,
-`aggregated_reward`, `total_time` — and the Anthropic wrapper now feeds real
-`usage` into them. A head start on 7.3.
+`odyssey-eval` is a new uv workspace member (name `odyssey-eval`, pkg
+`odyssey_eval`), `odyssey eval run/compare/build-set/card/check-overlap`
+mounted via the standard entry-point plugin contract. **Offline scoring
+only** — no live model-serving path exists in this repo yet, so the harness
+takes a benchmark suite (`evaluation/benchmarks/*.yaml`: prompts +
+references + which metric) and a caller-produced completions JSONL, and
+scores the pairing; it never calls a model itself. `judges.py`
+(LLM-as-judge, named in `docs/STRUCTURE.md`) is deliberately **not built** —
+same explicit-deferral treatment items 0.11/3.5 got before a concrete
+consumer existed, documented in `harness.py`'s own docstring; the metric
+interface (`metrics/*.py`'s `score` function, loaded via `importlib`, not
+baked into the package) is designed so a future `judges.py` metric slots in
+with zero harness changes.
+
+7.2's `eval_datasets.py` mirrors `odyssey_dataprep.datasets`' manifest/
+registry/card shape exactly, minus `recipe_hash`/`curated_watermark` (those
+describe *how a training corpus was curated*, not applicable to a frozen or
+hand-built eval set). "Frozen" is enforced downstream by 7.4's
+`overlap.check_no_overlap`, which reuses `odyssey_dataprep.validation.
+check_leakage` directly (its generic `{split: [ids]}` shape already covers
+"eval vs train"), not by any write-protection in `eval_datasets.py` itself.
+7.4's `audit.py` additionally gates manifest `sha256` integrity for both
+registries (`data_preparation/datasets/registry.yaml` and `evaluation/
+datasets/registry.yaml`) — new `dataset-audit.yml` CI workflow, exits 3 on
+either kind of breach, the lineage-violation code CI already greps for
+(ADR 0003). Journey-level metrics that already existed pre-Step-7 —
+`steps`, `num_tool_calls`, `num_tool_failures`, `tool_error_rate`,
+`num_tool_response_none`, `aggregated_reward`, `total_time` — are consumed
+by `tool_call_accuracy` rather than re-derived.
+
+New `ci-eval.yml`, path-filtered on `evaluation/**` + `packages/odyssey-core/**`
++ `data_preparation/**` (the last because `overlap.py`/`audit.py` import
+`odyssey_dataprep`). 21 new tests, all passing; full workspace (894 tests
+across 6 members) re-verified green. Verified against a real end-to-end
+`odyssey eval run` (a hand-built 3-task arithmetic benchmark, 2/3 correct)
+and a real `check-overlap` breach/no-breach pair, not just unit tests.
 
 ---
 

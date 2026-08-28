@@ -1,0 +1,47 @@
+[project]
+name = "odyssey-eval"
+version = "0.1.0"
+description = "Offline evaluation harness (item 7): score caller-produced completions against frozen benchmark suites."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Unpod", email = "parvinder@unpod.ai" }]
+
+# odyssey-dataprep is a real dependency, not a phantom one: `overlap.py`
+# (item 7.4) reuses its `validation.check_leakage` directly rather than
+# re-deriving leakage logic. No LLM/torch dependency here -- this member
+# scores already-produced completions, it never calls a model itself (see
+# the "offline vs live scoring" decision in this module's own docs).
+dependencies = ["odyssey", "odyssey-dataprep", "pyyaml>=6"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "black==26.3.1",
+  "isort>=5.13",
+  "flake8>=7.3",
+  "pyrefly>=0.1",
+]
+
+[project.entry-points."odyssey.commands"]
+eval = "odyssey_eval.cli:register"
+
+[tool.uv.sources]
+odyssey = { workspace = true }
+odyssey-dataprep = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/odyssey_eval"]
+
+[tool.black]
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

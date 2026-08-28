@@ -1,5 +1,168 @@
 # odyssey — session handoff
 
+## Step 7 (evaluation harness) is now closed
+
+Built this session per the plan below (kept for reference — every item it
+names is now done, except the one it explicitly recommended deferring).
+`evaluation/` is a real uv workspace member (`odyssey-eval`), `odyssey eval
+run/compare/build-set/card/check-overlap` mounted, 21 new tests passing,
+full workspace (894 tests, 6 members) still green. `judges.py` was
+deliberately **not built** — documented deferral, see `evaluation/src/
+odyssey_eval/harness.py`'s module docstring.
+
+**Next up, in dependency order:**
+
+1. **9.4** — `NOTICE` copyright holder. Still the only remaining hard
+   blocker for public distribution, still needs a human, not more
+   engineering. LlamaIndex hooks (0.10) are still bundled with this item.
+2. **`services/api`** (8.1–8.3) — the next unbuilt major piece per
+   `docs/STRUCTURE.md`, now that Steps 0–7 are all closed. `odyssey-schemas`
+   + FastAPI + OpenAPI is the described shape; nothing started here yet.
+
+---
+
+## Step 7 — evaluation harness: the plan this session executed (historical)
+
+Interrupted before any code was written — this is a plan for the next session,
+not a status report. Steps 0–6 are now fully closed (see the 2026-08-28
+session summary below); Step 7 (`evaluation/`) is the next real gap. Do not
+start Step 8 (`services/api`) first — `docs/NEXT.md`'s own dependency-order
+note above previously said `services/api` was next, but the user redirected
+to Step 7 mid-session; re-confirm with the user if priorities have shifted
+again by the time this is picked up.
+
+### What already exists
+
+- `evaluation/` is scaffolded but empty — every subdirectory is a bare
+  `.gitkeep`: `src/odyssey_eval/`, `tests/`, `benchmarks/`, `metrics/`,
+  `datasets/`, `reports/templates/`. No `pyproject.toml` yet, so it is not a
+  uv workspace member (root `pyproject.toml`'s `[tool.uv.workspace] members`
+  list explicitly excludes it — the root file's own comment names
+  `evaluation · sdk/python` as "add the same commit as its pyproject.toml").
+- **Journey-level metrics are already computed** — `JourneyMetrics`
+  (`aggregated_reward`, `num_tool_calls`, `num_tool_failures`,
+  `tool_error_rate`, `num_tool_response_none`) and `ExecutionMetrics`
+  (`total_time`) in `packages/odyssey-core/src/odyssey/primitives.py`,
+  populated by `fold.py` from real signals/usage. This is explicitly called
+  out in `docs/WORKING.md` as "a head start on 7.3" — reuse, don't
+  reimplement.
+- `data_preparation/src/odyssey_dataprep/validation/__init__.py`'s
+  `check_leakage(splits: Dict[str, List[str]]) -> List[str]` is generic (just
+  named lists of ids, "any id in more than one split is a leak") — directly
+  reusable for 7.4's no-overlap gate: build `{"eval": [...eval journey
+  ids...], "train": [...training corpus journey ids...]}` and call it as-is,
+  no new leakage logic needed.
+- `data_preparation/src/odyssey_dataprep/datasets.py`'s
+  `next_version`/`build_manifest`/`write_manifest`/`update_registry`/
+  `write_card` is the exact shape `evaluation/datasets/`'s "TRACKED
+  manifests + cards only; frozen eval sets, never trained on" (per
+  `docs/STRUCTURE.md`) needs — mirror this module for eval sets rather than
+  inventing a new manifest schema. An eval set doesn't have a
+  `recipe_hash`/`curated_watermark` in the training-corpus sense, so the
+  mirrored version should drop those fields, not force them.
+- `docs/STRUCTURE.md` (search `evaluation/`) is the authoritative shape:
+  ```
+  evaluation/                       ← uv member. name "odyssey-eval", pkg odyssey_eval
+    pyproject.toml · src/odyssey_eval/{runner,judges,harness}.py
+    datasets/     TRACKED manifests + cards only; frozen eval sets, never trained on
+    benchmarks/   TRACKED suite defs yaml + task prompts
+    metrics/      TRACKED metric implementations (code, not numbers)
+    reports/      **ignored** generated html/json (.gitkeep); templates/ tracked
+  ```
+  CLI surface (STRUCTURE.md's "Command surface" section): `eval run · compare
+  · report`.
+
+### Open design decision to resolve first — what does the harness *run against*?
+
+There is no live model-serving path in this repo (`services/api` is Step 8,
+not built) and `training/` never runs inference itself (`soup-cli` is a
+config writer, item 5.6). Two options, and the offline one fits this repo's
+existing "real but narrow, no speculative heavy dependency" discipline far
+better:
+
+1. **Offline scoring (recommended)** — the harness takes a benchmark suite
+   (prompts + reference/rubric, `evaluation/benchmarks/*.yaml`) and a
+   caller-produced completions file (`{"id": ..., "response": ...}` JSONL,
+   generated however the caller likes — a `soup-cli`-trained model run
+   through any inference tool, a raw API call, whatever), and scores the
+   pairing. No live API calls from this repo, no new heavy dependency,
+   deterministic and unit-testable — the same shape `odyssey sft`/`odyssey
+   dpo` already have (operate on an already-produced shard, not a live
+   process).
+2. **Live provider calls** — the harness itself calls an Anthropic/OpenAI/
+   Gemini client to generate responses. Heavier (needs real API keys in CI,
+   network flakiness, cost), and this repo already has drop-in provider
+   wrappers (item 0.9) a harness could reuse for this *if* asked — but
+   nothing today names a concrete need for it. Do not build this speculatively;
+   if the user wants it, confirm first.
+
+`judges.py` (LLM-as-judge scoring, named in STRUCTURE.md's own file list) is
+a strong candidate for the **same explicit deferral treatment** items 0.11
+(OTel bridge) and 3.5 (LLM augmentation) already got: it needs a real LLM
+dependency in the loop with no concrete consumer named yet. Recommend
+building `runner.py`/`harness.py`/deterministic `metrics/` first, and
+documenting `judges.py` as scoped-out (not silently dropped) until someone
+names a real use.
+
+### Suggested phased plan
+
+1. **Scaffold the workspace member** — `evaluation/pyproject.toml` (name
+   `odyssey-eval`, pkg `odyssey_eval`, `dependencies = ["odyssey"]` — no
+   torch/transformers, this is scoring code not training code), `dev` extras
+   matching every other member's exact pin set (see `training/pyproject.toml`
+   for the reference list: pytest/black/isort/flake8/pyrefly). Add
+   `evaluation` to root `pyproject.toml`'s `[tool.uv.workspace] members`.
+   Copy `training/Taskfile.yml` verbatim (task fmt/lint/types/test/check is
+   identical across every member). New `.github/workflows/ci-eval.yml`
+   mirroring `ci-training.yml` exactly (path-filtered on `evaluation/**` +
+   `packages/odyssey-core/**`).
+2. **7.2 frozen eval sets** — mirror `datasets.py` into
+   `odyssey_eval/eval_datasets.py` (or similar name — avoid colliding with
+   the stdlib-shaped `datasets` name odyssey_dataprep already owns):
+   manifest + registry + card, no `recipe_hash`/`curated_watermark`. "Frozen"
+   is a property enforced by 7.4's gate (never appearing in a training
+   split), not by any write-protection in this module itself.
+3. **7.3 benchmarks + metric code** — `evaluation/benchmarks/*.yaml` (suite
+   defs: task prompts + reference answers or a rubric — decide the schema
+   against a real example benchmark, not speculatively). `metrics/` starts
+   with deterministic metrics only (exact-match, tool-call accuracy reusing
+   `JourneyMetrics`' existing fields when scoring captured journeys rather
+   than raw text) — no LLM-judge yet, see the deferral note above.
+   `src/odyssey_eval/harness.py`/`runner.py` orchestrate: load benchmark +
+   completions + metrics, write a report.
+4. **7.1 wire the CLI** — `odyssey eval run/compare/report`, new
+   `[project.entry-points."odyssey.commands"] eval = "odyssey_eval.cli:register"`
+   entry, following the exact `register(app)` pattern every other member
+   uses (`training/src/odyssey_training/cli.py` is the cleanest reference).
+5. **7.5 reports** — `evaluation/reports/templates/` tracked (a real
+   template, not a placeholder), `evaluation/reports/` itself gitignored
+   with `.gitkeep`, mirroring ADR 0002's treatment of `training/checkpoints/`
+   etc.
+6. **7.4 no-overlap gate** — build id-list overlap check reusing
+   `check_leakage` as described above, wire into a new `dataset-audit.yml`
+   CI workflow (STRUCTURE.md names this file explicitly) that exits non-zero
+   on a breach — match the exit-code-3 convention `odyssey data validate`
+   already established for lineage/contract violations, so CI can grep for
+   `3` specifically per STRUCTURE.md's own "Exit codes" rule.
+
+### Verification checklist (once built)
+
+- `task check` green in `evaluation/` (new member) and no regression in the
+  other 5 (`packages/odyssey-core`, `services/collector`, `data_preparation`,
+  `cli`, `training`).
+- `uv sync` at the repo root picks up the new member cleanly (workspace
+  members list + lockfile).
+- Real CLI smoke test: `uv run odyssey eval --help` and at least one real
+  `odyssey eval run` against a hand-built tiny benchmark + completions file,
+  not just unit tests — this repo's own convention (see how 5.9/6.1/6.4 were
+  each smoke-tested against a real filesystem path/registry before being
+  called done).
+- `docs/WORKING.md` Step 7 table, `docs/NEXT.md`, `CHANGELOG.md` updated with
+  real technical rationale per item, matching the level of detail already
+  set for Steps 5/6 in this file.
+
+---
+
 ## Session summary (2026-08-28)
 
 Closed all 8 of the "smaller, still open" items the 2026-08-27 handoff listed,

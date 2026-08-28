@@ -139,6 +139,37 @@ project has not yet made a versioned release, so entries accumulate under
   yet, the same scope cut 0.11/3.5 got before either had one. New
   `odyssey model card`/`promote`/`export` commands. Closes Step 6.
 
+- **New `evaluation/` workspace member (`odyssey-eval`), closing Step 7.**
+  Offline evaluation harness — item 7.1's `runner.py` (load a
+  `benchmarks/*.yaml` suite + a caller-produced completions JSONL + a
+  metric, score, aggregate) and `harness.py` (write `reports/*.json`/`*.md`
+  from `reports/templates/`). No live model-serving path exists in this
+  repo, so the harness never calls a model itself — same "operate on an
+  already-produced shard" shape `odyssey sft`/`odyssey dpo` already have.
+  `judges.py` (LLM-as-judge, named in `docs/STRUCTURE.md`) is deliberately
+  **not built** — same explicit-deferral treatment items 0.11/3.5 got
+  before a named consumer existed.
+- `eval_datasets.py` (item 7.2) — frozen eval set manifests/registry/cards,
+  mirroring `data_preparation`'s `datasets.py` shape minus
+  `recipe_hash`/`curated_watermark` (not applicable to a frozen/hand-built
+  eval set). "Frozen" is enforced by the no-overlap gate, not
+  write-protection here.
+- `metrics/exact_match.py` and `metrics/tool_call_accuracy.py` (item 7.3) —
+  tracked metric implementation code outside the installable package,
+  loaded dynamically by `runner.load_metric` so a new metric needs no
+  package release; `tool_call_accuracy` reuses `JourneyMetrics.
+  tool_error_rate` rather than re-deriving it.
+- `overlap.py`'s `check_no_overlap()` (item 7.4) — reuses
+  `odyssey_dataprep.validation.check_leakage` directly for the "an eval-set
+  journey id must never also appear in a training split" gate.
+  `audit.py`'s `audit_registry()` additionally verifies every registered
+  corpus/eval-set manifest's `sha256` still matches its on-disk file. New
+  `dataset-audit.yml` CI workflow runs the audit; exits 3 on either kind of
+  breach, same lineage-violation exit code `odyssey data validate`/`odyssey
+  eval check-overlap` use. New `ci-eval.yml`, path-filtered on
+  `evaluation/**` + `packages/odyssey-core/**` + `data_preparation/**`.
+  New `odyssey eval run/compare/build-set/card/check-overlap` CLI commands.
+
 ### Removed
 
 - `primitives.TelemetryEvent` (item 1.11) — dead code targeting a
