@@ -10,7 +10,10 @@ drain re-sends the same events. A returned boolean would be ignored.
 
 from __future__ import annotations
 
+import email.utils
+import gzip
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -85,6 +88,21 @@ class HttpSink:
     left untouched, and the next drain resends the same batch. No retry or
     backoff lives here — the spool already is the retry queue (see
     ``spool.py``).
+
+    **Compression** (item 1.7): the body is gzipped by default
+    (``compress=True``), stdlib ``gzip`` only — no new dependency. A
+    collector must decompress on ``Content-Encoding: gzip`` to stay in sync;
+    ``services/collector`` does.
+
+    **Backpressure** (item 1.7): a 429 response's own ``Retry-After`` header
+    (seconds or an HTTP-date) is honoured — this sink refuses to attempt
+    another request before that time, raising :class:`HttpSinkError`
+    immediately rather than making a network call the server already asked
+    it not to make. This is not a queueing system: cross-journey batching
+    (one POST for many journeys) is explicitly out of scope here, noted as
+    still-open in ``docs/WORKING.md`` — `drain()`'s per-journey
+    watermark/retry semantics would need a real redesign to batch safely
+    across a partial failure.
     """
 
     def __init__(
@@ -93,6 +111,7 @@ class HttpSink:
         *,
         api_key: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT,
+        compress: bool = True,
     ) -> None:
         resolved = endpoint if endpoint is not None else os.environ.get(ENV_ENDPOINT)
         if not resolved:
@@ -102,6 +121,10 @@ class HttpSink:
         self.endpoint = resolved.rstrip("/")
         self.api_key = api_key if api_key is not None else os.environ.get(ENV_API_KEY)
         self.timeout = timeout
+        self.compress = compress
+        # Set by a 429's Retry-After; checked before the next send() so a
+        # server that asked to be left alone is not immediately re-hit.
+        self._retry_after_until: float = 0.0
 
     def send(
         self,
@@ -109,17 +132,27 @@ class HttpSink:
         events: List[JourneyEvent],
         header: Optional[JourneyHeader] = None,
     ) -> None:
+        if time.monotonic() < self._retry_after_until:
+            wait = self._retry_after_until - time.monotonic()
+            raise HttpSinkError(
+                f"{journey_id}: backing off {wait:.0f}s more per the server's "
+                f"last Retry-After"
+            )
+
         body = header_line(header=header) + "\n"
         body += "".join(encode_event(e) + "\n" for e in events)
+        payload = body.encode("utf-8")
+        headers = {"Content-Type": "application/x-ndjson; charset=utf-8"}
+        if self.compress:
+            payload = gzip.compress(payload)
+            headers["Content-Encoding"] = "gzip"
+
         url = (
             f"{self.endpoint}/journeys/"
             f"{urllib.parse.quote(journey_id, safe='')}/events"
         )
         request = urllib.request.Request(
-            url,
-            data=body.encode("utf-8"),
-            method="POST",
-            headers={"Content-Type": "application/x-ndjson; charset=utf-8"},
+            url, data=payload, method="POST", headers=headers
         )
         if self.api_key:
             request.add_header("Authorization", f"Bearer {self.api_key}")
@@ -127,6 +160,10 @@ class HttpSink:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 status = response.status
         except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                self._retry_after_until = time.monotonic() + _parse_retry_after(
+                    exc.headers.get("Retry-After")
+                )
             raise HttpSinkError(
                 f"{journey_id}: HTTP {exc.code} from {self.endpoint}"
             ) from exc
@@ -140,3 +177,28 @@ class HttpSink:
             # defensive check costs nothing against a server that returns an
             # unusual 3xx without a Location header.
             raise HttpSinkError(f"{journey_id}: unexpected HTTP status {status}")
+
+
+# A missing/malformed Retry-After still has to back off *something* -- a
+# fixed floor rather than hammering the server with a 0-second retry, which
+# is what "unknown" would otherwise mean.
+_DEFAULT_RETRY_AFTER_SECONDS = 5.0
+
+
+def _parse_retry_after(raw: Optional[str]) -> float:
+    """RFC 9110 ``Retry-After``: either delay-seconds or an HTTP-date."""
+    if not raw:
+        return _DEFAULT_RETRY_AFTER_SECONDS
+    raw = raw.strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        pass
+    try:
+        when = email.utils.parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_RETRY_AFTER_SECONDS
+    if when is None:
+        return _DEFAULT_RETRY_AFTER_SECONDS
+    delta = when.timestamp() - time.time()
+    return max(0.0, delta)

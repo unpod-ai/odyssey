@@ -31,18 +31,26 @@ Wire contract (matches ``odyssey.sinks.HttpSink`` exactly)::
 
     POST /journeys/<url-encoded journey_id>/events
     Content-Type: application/x-ndjson; charset=utf-8
+    Content-Encoding: gzip                   # HttpSink's default (item 1.7); optional
     Authorization: Bearer <api_key>          # only when the server requires one
     <header line><event line>...             # exactly what a shard on disk holds
 
     200 {"journey_id": ..., "events_received": N}
-    400 malformed batch — not valid odyssey JSONL
+    400 malformed batch — not valid odyssey JSONL, or a bad gzip body
     401 missing/incorrect Authorization, when the server requires one
     500 storage failure
+
+No rate-limiting/backpressure lives here — ``HttpSink`` honours a 429's
+``Retry-After`` if this server (or something in front of it) ever sends one,
+but nothing here emits 429 itself; that is a deliberate scope cut (item 1.7),
+not an oversight — this stdlib server has no queue-depth signal to base one
+on.
 """
 
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import os
 import tempfile
@@ -206,6 +214,12 @@ class _Handler(BaseHTTPRequestHandler):
 
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
+        if self.headers.get("Content-Encoding", "").strip().lower() == "gzip":
+            try:
+                body = gzip.decompress(body)
+            except OSError as exc:
+                self._respond(400, {"error": f"bad gzip body: {exc}"})
+                return
 
         try:
             count = self._store(journey_id, body)

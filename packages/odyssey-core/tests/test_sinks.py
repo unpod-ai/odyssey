@@ -9,8 +9,10 @@ with ``read_events`` actually goes over the wire.
 
 from __future__ import annotations
 
+import gzip
 import http.server
 import threading
+import time
 
 import pytest
 
@@ -61,6 +63,9 @@ class _CapturingHandler(http.server.BaseHTTPRequestHandler):
             }
         )
         self.send_response(self.server.status_to_return)  # type: ignore[attr-defined]
+        retry_after = getattr(self.server, "retry_after", None)
+        if retry_after is not None:
+            self.send_header("Retry-After", retry_after)
         self.end_headers()
 
     def log_message(self, *args: object) -> None:  # keep test output quiet
@@ -72,6 +77,7 @@ def server():
     srv = http.server.HTTPServer(("127.0.0.1", 0), _CapturingHandler)
     srv.requests = []  # type: ignore[attr-defined]
     srv.status_to_return = 200  # type: ignore[attr-defined]
+    srv.retry_after = None  # type: ignore[attr-defined]
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
     try:
@@ -142,10 +148,11 @@ def test_send_url_escapes_the_journey_id(server):
 
 
 def test_send_body_round_trips_through_read_events(server, tmp_path):
-    """The body is exactly what a shard on disk would hold."""
+    """The (gzipped, by default) body decompresses to exactly what a shard on
+    disk would hold."""
     sent = evs()
     HttpSink(endpoint(server)).send(JID, sent, header=HEADER)
-    body = server.requests[0]["body"]
+    body = gzip.decompress(server.requests[0]["body"])
 
     p = tmp_path / "received.jsonl"
     p.write_bytes(body)
@@ -173,7 +180,8 @@ def test_the_api_key_is_sent_as_a_bearer_token(server):
 def test_send_works_with_no_header(server):
     """A v1.0-shaped caller with no header to declare still gets a valid batch."""
     HttpSink(endpoint(server)).send(JID, evs())
-    assert server.requests[0]["body"].startswith(b'{"odyssey_schema_version"')
+    body = gzip.decompress(server.requests[0]["body"])
+    assert body.startswith(b'{"odyssey_schema_version"')
 
 
 # --------------------------------------------------------------------------
@@ -191,6 +199,63 @@ def test_a_connection_failure_raises():
     """Nobody listening on this port — a transport failure, not a bad status."""
     with pytest.raises(HttpSinkError, match="could not reach"):
         HttpSink("http://127.0.0.1:1").send(JID, evs())
+
+
+# --------------------------------------------------------------------------
+# Compression and backpressure (item 1.7)
+# --------------------------------------------------------------------------
+
+
+def test_send_gzips_the_body_and_sets_content_encoding_by_default(server):
+    HttpSink(endpoint(server)).send(JID, evs())
+    req = server.requests[0]
+    assert req["headers"]["Content-Encoding"] == "gzip"
+    # A real gzip stream, not just the header claiming to be one.
+    gzip.decompress(req["body"])
+
+
+def test_compress_false_sends_a_plain_uncompressed_body(server):
+    HttpSink(endpoint(server), compress=False).send(JID, evs())
+    req = server.requests[0]
+    assert "Content-Encoding" not in req["headers"]
+    assert req["body"].startswith(b'{"odyssey_schema_version"')
+
+
+def test_a_429_sets_a_retry_after_backoff(server):
+    server.status_to_return = 429
+    server.retry_after = "1"
+    sink = HttpSink(endpoint(server))
+    with pytest.raises(HttpSinkError, match="HTTP 429"):
+        sink.send(JID, evs())
+
+    # The next attempt is refused locally -- no second request reaches the
+    # server before the Retry-After window elapses.
+    with pytest.raises(HttpSinkError, match="backing off"):
+        sink.send(JID, evs())
+    assert len(server.requests) == 1
+
+
+def test_retry_after_backoff_expires(server):
+    server.status_to_return = 429
+    server.retry_after = "0"
+    sink = HttpSink(endpoint(server))
+    with pytest.raises(HttpSinkError):
+        sink.send(JID, evs())
+
+    time.sleep(0.05)
+    server.status_to_return = 200
+    sink.send(JID, evs())  # does not raise -- backoff already elapsed
+    assert len(server.requests) == 2
+
+
+def test_a_malformed_retry_after_still_backs_off(server):
+    server.status_to_return = 429
+    server.retry_after = "not-a-number-or-a-date"
+    sink = HttpSink(endpoint(server))
+    with pytest.raises(HttpSinkError, match="HTTP 429"):
+        sink.send(JID, evs())
+    with pytest.raises(HttpSinkError, match="backing off"):
+        sink.send(JID, evs())
 
 
 # --------------------------------------------------------------------------

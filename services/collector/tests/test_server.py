@@ -284,6 +284,29 @@ def test_the_wrong_key_is_rejected(guarded):
 # --------------------------------------------------------------------------
 
 
+def test_a_bad_gzip_body_is_rejected_with_400(running):
+    request = urllib.request.Request(
+        f"{endpoint(running)}/journeys/{JID}/events",
+        data=b"not actually gzip",
+        method="POST",
+        headers={"Content-Encoding": "gzip"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(request)
+    assert exc_info.value.code == 400
+    assert not stored_path(running).exists()
+
+
+def test_an_uncompressed_body_is_still_accepted(running):
+    """compress=False callers (or anything predating item 1.7) still work —
+    Content-Encoding is optional, not required."""
+    sent = evs()
+    HttpSink(endpoint(running), compress=False).send(JID, sent, header=HEADER)
+    result = read_events(stored_path(running))
+    assert result.clean
+    assert result.events == sent
+
+
 def test_a_malformed_body_is_rejected_with_400_and_nothing_is_written(running):
     request = urllib.request.Request(
         f"{endpoint(running)}/journeys/{JID}/events",
