@@ -1,12 +1,12 @@
-import { api } from "@/lib/api/client";
+import { apiClient } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
-import type { ExportArtifactOut } from "@/lib/api/types";
+import type { ExportArtifactOut } from "@odyssey/sdk";
 
 export default async function ExportsPage() {
   let exportsList: ExportArtifactOut[] = [];
   let error: string | null = null;
   try {
-    exportsList = await api.listExports();
+    exportsList = await apiClient().exports.list();
   } catch (err) {
     error = (err as Error).message;
   }

@@ -1,12 +1,12 @@
-import { api } from "@/lib/api/client";
+import { apiClient } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
-import type { EvalRunOut } from "@/lib/api/types";
+import type { EvalRunOut } from "@odyssey/sdk";
 
 export default async function RunsPage() {
   let runs: EvalRunOut[] = [];
   let error: string | null = null;
   try {
-    runs = await api.listRuns();
+    runs = await apiClient().runs.list();
   } catch (err) {
     error = (err as Error).message;
   }

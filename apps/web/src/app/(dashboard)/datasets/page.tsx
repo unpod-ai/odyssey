@@ -1,12 +1,12 @@
-import { api } from "@/lib/api/client";
+import { apiClient } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
-import type { DatasetOut } from "@/lib/api/types";
+import type { DatasetOut } from "@odyssey/sdk";
 
 export default async function DatasetsPage() {
   let datasets: DatasetOut[] = [];
   let error: string | null = null;
   try {
-    datasets = await api.listDatasets();
+    datasets = await apiClient().datasets.list();
   } catch (err) {
     error = (err as Error).message;
   }

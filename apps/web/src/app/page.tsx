@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { api } from "@/lib/api/client";
+import { apiClient } from "@/lib/api";
 
 export default async function HomePage() {
   let status: string;
   try {
-    status = (await api.health()).status;
+    status = (await apiClient().health()).status;
   } catch (err) {
     status = `unreachable (${(err as Error).message})`;
   }

@@ -1,13 +1,13 @@
 import Link from "next/link";
-import { api } from "@/lib/api/client";
+import { apiClient } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
-import type { JourneySummaryOut } from "@/lib/api/types";
+import type { JourneySummaryOut } from "@odyssey/sdk";
 
 export default async function JourneysPage() {
   let journeys: JourneySummaryOut[] = [];
   let error: string | null = null;
   try {
-    journeys = await api.listJourneys();
+    journeys = await apiClient().journeys.list();
   } catch (err) {
     error = (err as Error).message;
   }

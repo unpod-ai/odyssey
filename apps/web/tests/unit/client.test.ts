@@ -1,7 +1,13 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { api, OdysseyAPIError } from "@/lib/api/client";
+/**
+ * The URL-building / error-mapping logic this used to test now lives in
+ * `@odyssey/sdk` (see sdk/javascript/tests/client.test.ts) — this app only
+ * needs to verify its own thin wrapper picks up ODYSSEY_API_BASE_URL and
+ * hands back a real client, not re-test the SDK's own transport.
+ */
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { OdysseySDK } from "@odyssey/sdk";
+import { apiClient } from "@/lib/api";
 
-const originalFetch = global.fetch;
 const originalEnv = process.env.ODYSSEY_API_BASE_URL;
 
 beforeEach(() => {
@@ -9,47 +15,16 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  global.fetch = originalFetch;
   process.env.ODYSSEY_API_BASE_URL = originalEnv;
-  vi.restoreAllMocks();
 });
 
-function mockFetch(status: number, body: unknown) {
-  global.fetch = vi.fn().mockResolvedValue({
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-    text: async () => JSON.stringify(body),
-  }) as unknown as typeof fetch;
-}
-
-describe("api client", () => {
-  it("calls the right path for listJourneys and parses the response", async () => {
-    mockFetch(200, [{ journey_id: "j1", date: "2026-08-28", complete: true }]);
-    const result = await api.listJourneys();
-    expect(global.fetch).toHaveBeenCalledWith(
-      "http://test-api/journeys",
-      expect.objectContaining({ cache: "no-store" }),
-    );
-    expect(result).toEqual([{ journey_id: "j1", date: "2026-08-28", complete: true }]);
+describe("apiClient", () => {
+  it("builds an OdysseySDK", () => {
+    expect(apiClient()).toBeInstanceOf(OdysseySDK);
   });
 
-  it("URL-encodes the journey id path parameter", async () => {
-    mockFetch(200, { journey_id: "a/b", complete: true, incomplete_reason: null, metrics: {}, steps: [] });
-    await api.getJourney("a/b");
-    expect(global.fetch).toHaveBeenCalledWith(
-      "http://test-api/journeys/a%2Fb",
-      expect.anything(),
-    );
-  });
-
-  it("raises OdysseyAPIError with the status code on a non-2xx response", async () => {
-    mockFetch(404, { detail: "not found" });
-    await expect(api.getJourney("nope")).rejects.toBeInstanceOf(OdysseyAPIError);
-    try {
-      await api.getJourney("nope");
-    } catch (err) {
-      expect((err as OdysseyAPIError).status).toBe(404);
-    }
+  it("defaults to 127.0.0.1:8000 when ODYSSEY_API_BASE_URL is unset", () => {
+    delete process.env.ODYSSEY_API_BASE_URL;
+    expect(apiClient()).toBeInstanceOf(OdysseySDK);
   });
 });

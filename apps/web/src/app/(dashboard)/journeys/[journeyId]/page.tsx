@@ -1,12 +1,12 @@
 import { notFound } from "next/navigation";
-import { api, OdysseyAPIError } from "@/lib/api/client";
-import type { JourneyDetailOut } from "@/lib/api/types";
+import { apiClient, OdysseyAPINotFoundError } from "@/lib/api";
+import type { JourneyDetailOut } from "@odyssey/sdk";
 
 async function loadJourney(journeyId: string): Promise<JourneyDetailOut> {
   try {
-    return await api.getJourney(journeyId);
+    return await apiClient().journeys.get(journeyId);
   } catch (err) {
-    if (err instanceof OdysseyAPIError && err.status === 404) {
+    if (err instanceof OdysseyAPINotFoundError) {
       notFound();
     }
     throw err;

@@ -1,12 +1,12 @@
-import { api } from "@/lib/api/client";
+import { apiClient } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
-import type { ModelOut } from "@/lib/api/types";
+import type { ModelOut } from "@odyssey/sdk";
 
 export default async function ModelsPage() {
   let models: ModelOut[] = [];
   let error: string | null = null;
   try {
-    models = await api.listModels();
+    models = await apiClient().models.list();
   } catch (err) {
     error = (err as Error).message;
   }
