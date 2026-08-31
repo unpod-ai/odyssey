@@ -26,6 +26,7 @@ code — see the phase/step checklists further down for what's still genuinely o
 | `infra`, `docs`, `openspec`, `scripts` | deployment, decisions, specs, repo tooling | scaffold |
 
 Full tree and the rules behind it: [`docs/STRUCTURE.md`](docs/STRUCTURE.md).
+What each app/service/package actually does today: [`docs/COMPONENTS.md`](docs/COMPONENTS.md).
 
 ## Artifacts are not in git
 
