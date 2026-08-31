@@ -1652,17 +1652,24 @@ or schedule a rewrite of `primitives.py`.
 ### Files referenced by docs but not written
 
 ```
-pnpm-workspace.yaml · package.json · pnpm-lock.yaml
 docker-compose.yml
-scripts/codegen.sh
-docs/architecture.md · docs/journey-schema.md
-models/registry.yaml
-services/api/openapi.json
 ```
 
-`.pre-commit-config.yaml`, `CHANGELOG.md`, `SECURITY.md`, `.github/CODEOWNERS`
-(9.7) and `datasets/registry.yaml` (4.6) are now written — moved off this
-list.
+Everything else previously on this list is now written:
+`pnpm-workspace.yaml`/`package.json`/`pnpm-lock.yaml` (item 8.5),
+`scripts/codegen.sh` (8.7), `services/api/openapi.json` (8.3),
+`.pre-commit-config.yaml`/`CHANGELOG.md`/`SECURITY.md`/`.github/CODEOWNERS`
+(9.7), `docs/architecture.md`/`docs/journey-schema.md`/
+`docs/data-contracts.md`/`docs/model-lifecycle.md` (this session).
+`datasets/registry.yaml`/`models/registry.yaml` are not files in the repo
+today — they're written on first real use (`odyssey data build-corpus`/
+`odyssey model register`), same as every other gitignored registry/report
+directory; nothing has run either command against real data yet.
+`docker-compose.yml` (local mongo/postgres/redis/kafka/minio/mlflow) has
+no concrete consumer yet — every repository this repo actually built is
+filesystem-backed (see each service's "Not done here" section in
+`COMPONENTS.md`), so standing up those containers now would be
+speculative.
 
 ### Toolchain
 

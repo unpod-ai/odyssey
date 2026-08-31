@@ -198,9 +198,15 @@ you are to need it first.
 
 **Start here**
 1. This README — layout, quickstart, how to run the whole stack
-2. [`docs/COMPONENTS.md`](docs/COMPONENTS.md) — what each app/service/package actually does
-3. [`docs/WORKING.md`](docs/WORKING.md) — item-by-item build scorecard (✅/❌), the source of truth for "is X done"
-4. [`docs/STRUCTURE.md`](docs/STRUCTURE.md) — the original proposed monorepo layout + the organiser rules everything else follows
+2. [`docs/architecture.md`](docs/architecture.md) — the two pipelines (capture→serve, train→evaluate), the design principles behind every member
+3. [`docs/COMPONENTS.md`](docs/COMPONENTS.md) — what each app/service/package actually does
+4. [`docs/WORKING.md`](docs/WORKING.md) — item-by-item build scorecard (✅/❌), the source of truth for "is X done"
+5. [`docs/STRUCTURE.md`](docs/STRUCTURE.md) — the original proposed monorepo layout + the organiser rules everything else follows
+
+**Data & models**
+1. [`docs/journey-schema.md`](docs/journey-schema.md) — the `JourneyEvent` wire format, field by field
+2. [`docs/data-contracts.md`](docs/data-contracts.md) — `odyssey_schemas` → `openapi.json` → both SDKs, the codegen/drift-check chain
+3. [`docs/model-lifecycle.md`](docs/model-lifecycle.md) — corpus → training config → checkpoint → registered model → evaluation, in sequence
 
 **Per-component**
 1. [`packages/odyssey-core/README.md`](packages/odyssey-core/README.md) — capture library: schema, fold, spool, builders

@@ -1,5 +1,30 @@
 # odyssey — session handoff
 
+## Documentation pass, continued — 4 new top-level docs + runnable SDK examples
+
+Still no engineering, docs only. Added `sdk/examples/{python,javascript}`
+— `basic_usage.py` / `basic-usage.mjs`, both actually run against a real
+`services/api` instance (verified locally, not just written). Added the
+four docs `docs/STRUCTURE.md`'s original plan named but nobody had
+written yet: `architecture.md` (system-level: the two pipelines +
+8 design principles), `journey-schema.md` (the `JourneyEvent` wire format
+field by field, cross-checked against `primitives.py`/`fold.py`),
+`data-contracts.md` (the codegen/drift-check chain + both SDK generators'
+shared narrowness rules), `model-lifecycle.md` (corpus → training →
+registry → eval as a sequence of real commands, cross-checked against
+`training/src/odyssey_training/{cli,model_cli}.py`). Deliberately did
+**not** write `docs/runbooks/*` or `sdk/docs/*` — no real deployment
+target exists for the former, and the latter's topics (pagination, SDK
+auth, a versioning policy) don't apply to anything built yet; both stay
+empty on purpose, same explicit-deferral pattern as everything else in
+this repo. Fixed a stale tracking list in `docs/WORKING.md` ("files
+referenced by docs but not written") that still listed several files
+that had shipped since it was written.
+
+**Next up:** still **9.4** — `NOTICE` copyright holder, unchanged.
+
+---
+
 ## Documentation pass — `docs/COMPONENTS.md` added, stale READMEs fixed
 
 No engineering this session, docs only. Added `docs/COMPONENTS.md` — one

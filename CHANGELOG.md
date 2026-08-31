@@ -276,6 +276,27 @@ project has not yet made a versioned release, so entries accumulate under
   since shipped. README's Phases checklist and layout table also updated
   to match `docs/WORKING.md`'s real Steps 3-8 scorecard (all ✅).
 
+- **Four new top-level docs**, closing the gap between `docs/STRUCTURE.md`'s
+  original plan and what actually got written: `docs/architecture.md`
+  (the two pipelines — capture→serve, train→evaluate — and the design
+  principles behind every member), `docs/journey-schema.md` (the
+  `JourneyEvent` wire format, field by field, cross-referenced against
+  `primitives.py`/`fold.py`), `docs/data-contracts.md` (the
+  `odyssey_schemas` → `openapi.json` → both SDKs codegen/drift-check
+  chain, including the narrowness both generators share), and
+  `docs/model-lifecycle.md` (corpus → training config → checkpoint →
+  registered model → evaluation, as a sequence of real `odyssey`
+  commands). Root `README.md`'s Documentation index and
+  `docs/COMPONENTS.md` both updated to link them.
+- **`sdk/examples/{python,javascript}` are runnable now**, closing the
+  README Phases checklist's last stub note. `basic_usage.py` and
+  `basic-usage.mjs` walk through the same sequence in both languages
+  (`health()`, `journeys.list()`/`.get()`, a 404, then
+  `datasets`/`models`/`runs`/`exports`) against a real `services/api`
+  instance, not mocked — both verified locally against a live `uvicorn`
+  instance before committing. `sdk/examples/README.md` covers setup;
+  linked from both SDKs' own READMEs.
+
 ### Fixed
 
 - `ci-web.yml` now builds `@odyssey/sdk` (`pnpm --filter @odyssey/sdk

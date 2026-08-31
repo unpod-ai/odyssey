@@ -376,9 +376,14 @@ shard data lives in an object store. Written by `data_preparation`'s
 - `scripts/codegen.sh` — the one script that regenerates the whole chain in
   order: `services/api/openapi.json` → `sdk/python` → `sdk/javascript`.
   `codegen-drift.yml` runs it in `--check` mode in CI.
-- `docs/` — this file, `STRUCTURE.md` (the original proposal),
-  `WORKING.md` (the real item-by-item scorecard), `NEXT.md` (session
-  handoff notes), `adr/` (numbered decisions), `runbooks/`.
+- `docs/` — this file, `architecture.md` (system-level design),
+  `journey-schema.md` (the wire format field by field),
+  `data-contracts.md` (the codegen/drift-check chain),
+  `model-lifecycle.md` (corpus → training → registry → eval, in
+  sequence), `STRUCTURE.md` (the original proposal), `WORKING.md` (the
+  real item-by-item scorecard), `NEXT.md` (session handoff notes), `adr/`
+  (numbered decisions), `runbooks/` (still empty — no concrete deployment
+  target to write a runbook against yet).
 - `infra/`, `openspec/` — scaffolding; no concrete deployment target yet
   (no k8s/terraform in use, no accepted `openspec` change proposals).
 
