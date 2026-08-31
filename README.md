@@ -8,31 +8,28 @@ code — see the phase/step checklists further down for what's still genuinely o
 
 ## Layout
 
-| Path | What it is | State |
-|---|---|---|
-| `packages/odyssey-core` | journey schema, fold, JSONL codec, spool, builders, CLI | **code, tested** |
-| `packages/odyssey-schemas` | pydantic DTOs shared by API and pipelines; source of OpenAPI | **code, tested** |
-| `cli` | the single `odyssey` entrypoint, lazy plugin dispatch | **code, tested** |
-| `services/api` | FastAPI backend; emits `openapi.json` | **code, tested** |
-| `services/collector` | high-write trace ingest, spool → object store | **code, tested** |
-| `apps/web` | Next.js dashboard, consumes `@odyssey/sdk` | **code, tested** |
-| `data_preparation` | collection → cleaning → normalization → annotation → augmentation → validation → splitting | **code, tested** |
-| `training` | soup/soup-cli adapter, configs, experiment manifests | **code, tested** |
-| `models` | model registry + cards. **Not** weight storage | **code, tested** |
-| `evaluation` | harness, benchmarks, metric code, frozen eval sets | **code, tested** |
-| `sdk/python`, `sdk/javascript` | generated clients over `openapi.json` | **code, tested** |
-| `datasets` | registry, cards, manifests — metadata only | **code, tested** |
-| `data` | local scratch, gitignored | — |
-| `infra`, `docs`, `openspec`, `scripts` | deployment, decisions, specs, repo tooling | scaffold |
+| Path | What it is |
+|---|---|
+| `packages/odyssey-core` | journey schema, fold, JSONL codec, spool, builders, CLI |
+| `packages/odyssey-schemas` | pydantic DTOs shared by API and pipelines; source of OpenAPI |
+| `cli` | the single `odyssey` entrypoint, lazy plugin dispatch |
+| `services/api` | FastAPI backend; emits `openapi.json` |
+| `services/collector` | high-write trace ingest, spool → object store |
+| `apps/web` | Next.js dashboard, consumes `@odyssey/sdk` |
+| `data_preparation` | collection → cleaning → normalization → annotation → augmentation → validation → splitting |
+| `training` | soup/soup-cli adapter, configs, experiment manifests |
+| `models` | model registry + cards. **Not** weight storage |
+| `evaluation` | harness, benchmarks, metric code, frozen eval sets |
+| `sdk/python`, `sdk/javascript` | generated clients over `openapi.json` |
+| `datasets` | registry, cards, manifests — metadata only |
+| `data` | local scratch, gitignored |
+| `infra`, `docs`, `openspec`, `scripts` | deployment, decisions, specs, repo tooling |
 
 Full tree and the rules behind it: [`docs/STRUCTURE.md`](docs/STRUCTURE.md).
 What each app/service/package actually does today: [`docs/COMPONENTS.md`](docs/COMPONENTS.md).
 
-## Artifacts are not in git
-
-Git holds the recipe and the hash; the object store holds the bytes. `training/checkpoints`,
-`training/logs`, `training/outputs`, `models/{pretrained,finetuned,exported}`, `evaluation/reports`
-and `data/` are tracked as empty directories only. See [`docs/adr/0002-artifacts-out-of-git.md`](docs/adr/0002-artifacts-out-of-git.md).
+Artifacts (weights, logs, corpora bytes) are deliberately not tracked in git — see
+[`docs/adr/0002-artifacts-out-of-git.md`](docs/adr/0002-artifacts-out-of-git.md).
 
 ## Lineage
 
