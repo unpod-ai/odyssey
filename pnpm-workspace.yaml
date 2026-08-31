@@ -1,0 +1,6 @@
+packages:
+  - "apps/*"
+  - "sdk/javascript"
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true

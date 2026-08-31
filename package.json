@@ -1,0 +1,5 @@
+{
+  "name": "odyssey",
+  "private": true,
+  "packageManager": "pnpm@11.24.0"
+}
