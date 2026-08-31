@@ -1,30 +1,30 @@
 name: ci-sdk
 
-# docs/STRUCTURE.md names this "sdk/** (py + js matrix)" — only the Python
-# leg exists today (sdk/python, item 8.4); add a js job here the same
-# commit sdk/javascript (item 8.5) lands, rather than a second workflow.
+# docs/STRUCTURE.md names this "sdk/** (py + js matrix)" — both legs now
+# exist: sdk/python (item 8.4) and sdk/javascript (item 8.5).
 
 on:
   push:
     branches: [main]
     paths:
       - "sdk/python/**"
+      - "sdk/javascript/**"
       - "packages/odyssey-schemas/**"
       - "services/api/**"
       - ".github/workflows/ci-sdk.yml"
   pull_request:
     paths:
       - "sdk/python/**"
+      - "sdk/javascript/**"
       - "packages/odyssey-schemas/**"
       - "services/api/**"
       - ".github/workflows/ci-sdk.yml"
 
-defaults:
-  run:
-    working-directory: sdk/python
-
 jobs:
   python:
+    defaults:
+      run:
+        working-directory: sdk/python
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,3 +57,48 @@ jobs:
 
       - name: tests
         run: uv run pytest tests
+
+  js:
+    defaults:
+      run:
+        working-directory: sdk/javascript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # tests spawn a real `uv run odyssey api serve` instance (see
+      # tests/client.test.ts), so this leg needs the Python workspace too.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Sync Python dependencies
+        working-directory: .
+        run: uv sync --all-packages --extra dev
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install JS dependencies
+        working-directory: .
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Tests
+        run: pnpm test
+
+      - name: Build (tsup, ESM+CJS+dts)
+        run: pnpm build

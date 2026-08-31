@@ -5,10 +5,14 @@ on:
     branches: [main]
     paths:
       - "apps/web/**"
+      - "sdk/javascript/**"
+      - "pnpm-lock.yaml"
       - ".github/workflows/ci-web.yml"
   pull_request:
     paths:
       - "apps/web/**"
+      - "sdk/javascript/**"
+      - "pnpm-lock.yaml"
       - ".github/workflows/ci-web.yml"
 
 defaults:
@@ -25,17 +29,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: ".nvmrc"
-          cache: "npm"
-          cache-dependency-path: apps/web/package-lock.json
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies (whole workspace — apps/web depends on @odyssey/sdk)
+        working-directory: .
+        run: pnpm install --frozen-lockfile
 
       - name: Lint
-        run: npm run lint
+        run: pnpm lint
 
       - name: Unit tests
-        run: npm run test
+        run: pnpm test
 
       - name: Build (also type-checks and prerenders every route)
-        run: npm run build
+        run: pnpm build
