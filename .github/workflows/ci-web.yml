@@ -37,6 +37,10 @@ jobs:
         working-directory: .
         run: pnpm install --frozen-lockfile
 
+      - name: Build @odyssey/sdk (apps/web imports its dist/ output)
+        working-directory: .
+        run: pnpm --filter @odyssey/sdk build
+
       - name: Lint
         run: pnpm lint
 
