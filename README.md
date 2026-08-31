@@ -172,11 +172,6 @@ don't sit on this request path.
 - [x] **5** `training` (soup adapter) + `models/registry.yaml` + `evaluation` harness
 - [x] **6** `apps/web` + `sdk/javascript` + `sdk/examples/{python,javascript}`
 
-Full item-by-item scorecard (0–9, including repo hygiene): [`docs/WORKING.md`](docs/WORKING.md).
-The only open item left in the whole roadmap is `NOTICE` copyright holder
-(9.4) — a governance decision, not engineering work; it blocks public
-release.
-
 ## Documentation
 
 Every doc in the repo, grouped by topic, each group ordered by how likely
