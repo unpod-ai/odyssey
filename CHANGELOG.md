@@ -262,6 +262,28 @@ project has not yet made a versioned release, so entries accumulate under
   a real `uvicorn`-served `services/api` + `pnpm dev` + `curl` against
   every route (including the 404 path), resolved SSR HTML inspected for
   real API data.
+- **New `docs/COMPONENTS.md`** — one page per app/service/package: what it
+  does, its real CLI/API surface (verified against each member's
+  `pyproject.toml` entry points and `cli.py` registrations, not just
+  README prose), how to run it, and its deliberate scope cuts. Root
+  `README.md` gained a "Run the whole stack" section (collector → api →
+  sdk → web, plus the training/eval pipeline) and a full "Documentation"
+  index linking every doc in the repo, topic-grouped and priority-ordered.
+  Fixed several member READMEs (`cli`, `data_preparation`, `evaluation`,
+  `packages/odyssey-schemas`, `sdk/python`, `services/collector`) that
+  still described an earlier, unbuilt state (e.g. "services/api not built
+  yet", "only normalization exists") even though those items had long
+  since shipped. README's Phases checklist and layout table also updated
+  to match `docs/WORKING.md`'s real Steps 3-8 scorecard (all ✅).
+
+### Fixed
+
+- `ci-web.yml` now builds `@odyssey/sdk` (`pnpm --filter @odyssey/sdk
+  build`) before apps/web's lint/test/build steps — `apps/web` imports
+  `@odyssey/sdk`'s `package.json` `exports`, which point at `dist/`,
+  never built in CI before this; `pnpm test` failed with "Failed to
+  resolve entry for package @odyssey/sdk". Reproduced locally
+  (`rm -rf sdk/javascript/dist`) before fixing.
 
 ### Removed
 

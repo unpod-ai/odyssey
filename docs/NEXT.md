@@ -1,5 +1,27 @@
 # odyssey — session handoff
 
+## Documentation pass — `docs/COMPONENTS.md` added, stale READMEs fixed
+
+No engineering this session, docs only. Added `docs/COMPONENTS.md` — one
+page per app/service/package (what it does, real CLI/API surface verified
+against `pyproject.toml` entry points and `cli.py` registrations, how to
+run it, deliberate scope cuts). Root `README.md` gained a "Run the whole
+stack" section and a full "Documentation" index (every doc in the repo,
+topic-grouped, priority-ordered within each group). Fixed the Phases
+checklist and layout table (both still said Steps 3-6 unbuilt/scaffold
+despite `docs/WORKING.md` having been fully ✅ there for a while) and six
+member READMEs (`cli`, `data_preparation`, `evaluation`,
+`packages/odyssey-schemas`, `sdk/python`, `services/collector`) that still
+described an earlier, unbuilt state. Also fixed a real CI bug found along
+the way: `ci-web.yml` ran apps/web's tests before building `@odyssey/sdk`,
+which apps/web imports via `dist/` — added a build step ahead of
+lint/test/build, reproduced locally first.
+
+**Next up:** still **9.4** — `NOTICE` copyright holder, unchanged by this
+session. No other open engineering items anywhere in `docs/WORKING.md`.
+
+---
+
 ## Step 8 is fully closed — item 8.5 (`sdk/javascript`) built this session
 
 Built `sdk/javascript` (`@odyssey/sdk`), the last open Step 8 item —
