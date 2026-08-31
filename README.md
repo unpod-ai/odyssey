@@ -31,20 +31,9 @@ What each app/service/package actually does today: [`docs/COMPONENTS.md`](docs/C
 Artifacts (weights, logs, corpora bytes) are deliberately not tracked in git — see
 [`docs/adr/0002-artifacts-out-of-git.md`](docs/adr/0002-artifacts-out-of-git.md).
 
-## Lineage
-
-```
-raw traces (immutable)
-  → data_preparation: collection → cleaning → normalization → annotation
-                      → augmentation → validation → splitting
-  → corpus         version = sha(recipe_hash + curated_watermark)
-  → training       config sha + corpus version → checkpoint
-  → models         registry entry: sha256 + base model + corpus version
-  → evaluation     frozen eval set → report
-  → services/api → sdk → apps/web
-```
-
-Every published artifact answers: which recipe, which corpus version, which config, which base model.
+Every published artifact answers: which recipe, which corpus version, which config, which base model —
+see [`docs/architecture.md`](docs/architecture.md) for the full data-flow diagram and
+[`docs/model-lifecycle.md`](docs/model-lifecycle.md) for the corpus → model → eval sequence.
 
 ## Quickstart
 
@@ -80,12 +69,9 @@ odyssey doctor           # plugin discovery + cold-start timing
 
 ## Run the whole stack
 
-One-time setup for everything (Python workspace + JS workspace):
-
-```bash
-task setup                          # uv sync --all-packages --extra dev
-pnpm install                        # root pnpm workspace: apps/web + sdk/javascript
-```
+One-time setup: `task setup` (above) for the Python side, plus
+`pnpm install` at the repo root for the JS side (`apps/web` +
+`sdk/javascript`, one pnpm workspace).
 
 Each piece below is independent — run only what you need. Ports/dirs shown
 are the defaults; every service is env-first (see each README for the full
@@ -231,9 +217,6 @@ you are to need it first.
 1. [`CONTRIBUTING.md`](CONTRIBUTING.md)
 2. [`SECURITY.md`](SECURITY.md)
 3. [`CHANGELOG.md`](CHANGELOG.md)
-4. [`docs/NEXT.md`](docs/NEXT.md) — session handoff notes; useful for picking up where a prior session left off, not a stable reference
-
-`docs/runbooks/` is still empty (`.gitkeep` only) — nothing to link yet.
 
 ## License
 
