@@ -194,6 +194,44 @@ The only open item left in the whole roadmap is `NOTICE` copyright holder
 (9.4) — a governance decision, not engineering work; it blocks public
 release.
 
+## Documentation
+
+Every doc in the repo, grouped by topic, each group ordered by how likely
+you are to need it first.
+
+**Start here**
+1. This README — layout, quickstart, how to run the whole stack
+2. [`docs/COMPONENTS.md`](docs/COMPONENTS.md) — what each app/service/package actually does
+3. [`docs/WORKING.md`](docs/WORKING.md) — item-by-item build scorecard (✅/❌), the source of truth for "is X done"
+4. [`docs/STRUCTURE.md`](docs/STRUCTURE.md) — the original proposed monorepo layout + the organiser rules everything else follows
+
+**Per-component**
+1. [`packages/odyssey-core/README.md`](packages/odyssey-core/README.md) — capture library: schema, fold, spool, builders
+2. [`packages/odyssey-schemas/README.md`](packages/odyssey-schemas/README.md) — the wire-contract DTOs
+3. [`cli/README.md`](cli/README.md) — the `odyssey` entrypoint, plugin dispatch
+4. [`services/collector/README.md`](services/collector/README.md) — ingest (write side)
+5. [`services/api/README.md`](services/api/README.md) — read API
+6. [`sdk/python/README.md`](sdk/python/README.md) — generated Python client
+7. [`sdk/javascript/README.md`](sdk/javascript/README.md) — generated TypeScript client
+8. [`apps/web/README.md`](apps/web/README.md) — the dashboard
+9. [`data_preparation/README.md`](data_preparation/README.md) — the 7-stage prep pipeline
+10. [`training/README.md`](training/README.md) — soup-cli adapter + models registry CLI
+11. [`evaluation/README.md`](evaluation/README.md) — offline eval harness
+
+**Decisions (ADRs)**
+1. [`docs/adr/0001-monorepo-layout.md`](docs/adr/0001-monorepo-layout.md)
+2. [`docs/adr/0002-artifacts-out-of-git.md`](docs/adr/0002-artifacts-out-of-git.md)
+3. [`docs/adr/0003-single-cli-entrypoint.md`](docs/adr/0003-single-cli-entrypoint.md)
+4. [`docs/adr/0004-capture-layer.md`](docs/adr/0004-capture-layer.md)
+
+**Project meta**
+1. [`CONTRIBUTING.md`](CONTRIBUTING.md)
+2. [`SECURITY.md`](SECURITY.md)
+3. [`CHANGELOG.md`](CHANGELOG.md)
+4. [`docs/NEXT.md`](docs/NEXT.md) — session handoff notes; useful for picking up where a prior session left off, not a stable reference
+
+`docs/runbooks/` is still empty (`.gitkeep` only) — nothing to link yet.
+
 ## License
 
 Apache-2.0. See `LICENSE` and `NOTICE` in `packages/odyssey-core`.
