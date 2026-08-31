@@ -3,26 +3,25 @@
 Training-data framework — agent traces in, training corpora out.
 
 Extracted from `super.ai/super @ odyssey-v1` (subdir `odyssey/`) with history preserved. The library
-that came across is at `packages/odyssey-core`. `services/collector`, `cli`, and `data_preparation`
-(normalization only) now have real code too; everything else in the tree is still scaffolding for the
-phases below.
+that came across is at `packages/odyssey-core`. Every member below the table now has real, tested
+code — see the phase/step checklists further down for what's still genuinely open.
 
 ## Layout
 
 | Path | What it is | State |
 |---|---|---|
 | `packages/odyssey-core` | journey schema, fold, JSONL codec, spool, builders, CLI | **code, tested** |
-| `packages/odyssey-schemas` | pydantic DTOs shared by API and pipelines; source of OpenAPI | scaffold |
+| `packages/odyssey-schemas` | pydantic DTOs shared by API and pipelines; source of OpenAPI | **code, tested** |
 | `cli` | the single `odyssey` entrypoint, lazy plugin dispatch | **code, tested** |
-| `services/api` | FastAPI backend; emits `openapi.json` | scaffold |
+| `services/api` | FastAPI backend; emits `openapi.json` | **code, tested** |
 | `services/collector` | high-write trace ingest, spool → object store | **code, tested** |
-| `apps/web` | Next.js dashboard, consumes `@odyssey/sdk` | scaffold |
-| `data_preparation` | collection → cleaning → normalization → annotation → augmentation → validation → splitting | normalization done; rest scaffold |
-| `training` | soup/soup-cli adapter, configs, experiment manifests | scaffold |
-| `models` | model registry + cards. **Not** weight storage | scaffold |
-| `evaluation` | harness, benchmarks, metric code, frozen eval sets | scaffold |
-| `sdk/python`, `sdk/javascript` | generated clients over `openapi.json` | scaffold |
-| `datasets` | registry, cards, manifests — metadata only | scaffold |
+| `apps/web` | Next.js dashboard, consumes `@odyssey/sdk` | **code, tested** |
+| `data_preparation` | collection → cleaning → normalization → annotation → augmentation → validation → splitting | **code, tested** |
+| `training` | soup/soup-cli adapter, configs, experiment manifests | **code, tested** |
+| `models` | model registry + cards. **Not** weight storage | **code, tested** |
+| `evaluation` | harness, benchmarks, metric code, frozen eval sets | **code, tested** |
+| `sdk/python`, `sdk/javascript` | generated clients over `openapi.json` | **code, tested** |
+| `datasets` | registry, cards, manifests — metadata only | **code, tested** |
 | `data` | local scratch, gitignored | — |
 | `infra`, `docs`, `openspec`, `scripts` | deployment, decisions, specs, repo tooling | scaffold |
 
@@ -184,10 +183,15 @@ don't sit on this request path.
 - [x] **0** extract `odyssey/` → `packages/odyssey-core`, history preserved
 - [x] **1** workspace root, gitignore contract, version pins, docs, ADRs
 - [x] **2** `cli/` — root app, plugin registry, `spool` group; core's console script moved here (ADR 0003)
-- [ ] **3** `packages/odyssey-schemas` + `services/api` + `openapi.json` + `sdk/python`
-- [ ] **4** `data_preparation` stages over the existing fold/builders + `datasets/` registry — `normalization` done
-- [ ] **5** `training` (soup adapter) + `models/registry.yaml` + `evaluation` harness
-- [ ] **6** `apps/web` + `sdk/javascript` + `sdk/examples`
+- [x] **3** `packages/odyssey-schemas` + `services/api` + `openapi.json` + `sdk/python`
+- [x] **4** `data_preparation` stages over the existing fold/builders + `datasets/` registry
+- [x] **5** `training` (soup adapter) + `models/registry.yaml` + `evaluation` harness
+- [x] **6** `apps/web` + `sdk/javascript` (`sdk/examples/{python,javascript}` stay stubs — not a tracked Step 8 item)
+
+Full item-by-item scorecard (0–9, including repo hygiene): [`docs/WORKING.md`](docs/WORKING.md).
+The only open item left in the whole roadmap is `NOTICE` copyright holder
+(9.4) — a governance decision, not engineering work; it blocks public
+release.
 
 ## License
 
