@@ -1,5 +1,28 @@
 # odyssey — session handoff
 
+## Step 8 is fully closed — item 8.5 (`sdk/javascript`) built this session
+
+Built `sdk/javascript` (`@odyssey/sdk`), the last open Step 8 item —
+mirrors `sdk/python` 1:1 (`client.ts`/`errors.ts`/`codegen.ts`
+hand-written, `types.generated.ts` + `resources/*.ts` generated from
+`services/api/openapi.json`, `tsup` build to ESM+CJS+`.d.ts`). Converted
+the whole JS side of the repo to a single root `pnpm-workspace.yaml` +
+`pnpm-lock.yaml` (pnpm is available via corepack; `apps/web`'s prior
+npm/`package-lock.json` setup is gone). Then rewired `apps/web` onto
+`@odyssey/sdk`: deleted `src/lib/api/{types,client}.ts`, every page now
+imports `@odyssey/sdk` types + a one-function `apiClient()` wrapper.
+`ci-web.yml`, `ci-sdk.yml` (both matrix legs now), and
+`codegen-drift.yml` updated accordingly. Verified end to end the same
+way 8.6 was: real `uvicorn`-served `services/api` + `pnpm dev` + `curl`
+against every route including the 404 path, resolved SSR HTML inspected
+for real API data. **Step 8 (`api → sdk → web`) has no open items.**
+
+**Next up:** **9.4** — `NOTICE` copyright holder. The only remaining
+hard blocker for public distribution; needs a human, not more
+engineering.
+
+---
+
 ## Step 8 items 8.1-8.4, 8.6, 8.7 are now closed
 
 Built this session, on top of 8.1-8.3 below: `sdk/python`

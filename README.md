@@ -81,6 +81,104 @@ odyssey data normalize --raw ./raw_exports --format openai_chat --data-source de
 odyssey doctor           # plugin discovery + cold-start timing
 ```
 
+## Run the whole stack
+
+One-time setup for everything (Python workspace + JS workspace):
+
+```bash
+task setup                          # uv sync --all-packages --extra dev
+pnpm install                        # root pnpm workspace: apps/web + sdk/javascript
+```
+
+Each piece below is independent — run only what you need. Ports/dirs shown
+are the defaults; every service is env-first (see each README for the full
+var table).
+
+### 1. Collector — ingest (`services/collector`)
+
+Where `odyssey.HttpSink` posts traces. Start this if you're capturing data:
+
+```bash
+cd services/collector
+uv sync --extra dev
+uv run odyssey-collector --data-dir ./collector-data     # http://127.0.0.1:8787
+```
+
+```python
+import odyssey
+odyssey.init(sink=odyssey.HttpSink("http://127.0.0.1:8787"))
+```
+
+### 2. API — read (`services/api`)
+
+Serves journeys/datasets/models/runs/exports read from the same
+`<data_dir>/<date>/<journey_id>.jsonl` files the collector writes:
+
+```bash
+cd services/api
+uv sync --extra dev
+uv run uvicorn odyssey_api.main:app --host 127.0.0.1 --port 8000
+# or: odyssey api serve --port 8000
+```
+
+Regenerate `openapi.json` + both SDKs from it in one shot after any schema
+change: `./scripts/codegen.sh` (also gate-checked in CI via `codegen-drift.yml`).
+
+### 3. SDKs — `sdk/python`, `sdk/javascript`
+
+Generated clients over `services/api`'s `openapi.json`. Nothing to "run" —
+install and call:
+
+```python
+# sdk/python — pip install odyssey-sdk, or uv sync in this workspace
+from odyssey_sdk import OdysseySDK
+client = OdysseySDK("http://127.0.0.1:8000")
+client.journeys.list()
+```
+
+```ts
+// sdk/javascript — pnpm add @odyssey/sdk (workspace:* inside this repo)
+import { OdysseySDK } from "@odyssey/sdk";
+const client = new OdysseySDK("http://127.0.0.1:8000");
+await client.journeys.list();
+```
+
+### 4. Web dashboard (`apps/web`)
+
+Next.js UI over the API, via `@odyssey/sdk` — needs the API running first:
+
+```bash
+ODYSSEY_API_BASE_URL=http://127.0.0.1:8000 pnpm --filter @odyssey/web dev
+# http://localhost:3000
+```
+
+### 5. Training / evaluation — the "AI" pipeline (`training`, `evaluation`)
+
+No live model-serving in this repo — `training` writes a `soup.yaml` config
+for [soup-cli](https://trysoup.dev) to actually run (GPU box, separate
+step), and `evaluation` scores completions you already produced. Both are
+CLI-driven, nothing to leave running:
+
+```bash
+# turn an odyssey corpus into a soup-cli config, then train elsewhere
+odyssey train sft-config --base meta-llama/Llama-3.1-8B-Instruct --shard sft.jsonl --out soup.yaml
+soup train --config soup.yaml                 # on the GPU machine, separately
+
+# score a completions file against a frozen benchmark (run from evaluation/)
+odyssey eval run --benchmark benchmarks/example-arithmetic.yaml \
+  --completions completions.jsonl
+```
+
+### All together
+
+```
+odyssey.init(HttpSink) → services/collector (:8787) → services/api (:8000)
+                                                            ↓
+                                     sdk/python, sdk/javascript ← apps/web (:3000)
+```
+`training`/`evaluation` read corpora and write reports independently — they
+don't sit on this request path.
+
 ## Phases
 
 - [x] **0** extract `odyssey/` → `packages/odyssey-core`, history preserved

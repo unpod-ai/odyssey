@@ -234,6 +234,35 @@ project has not yet made a versioned release, so entries accumulate under
   environment — documented in `apps/web/README.md`'s "Tests" section,
   `tests/e2e/` stays empty until one exists).
 
+- **New `sdk/javascript` workspace member (`@odyssey/sdk`), closing item
+  8.5 — Step 8 (`api → sdk → web`) has no open items left.** Mirrors
+  `sdk/python` 1:1: `client.ts`/`errors.ts`/`codegen.ts` are hand-written,
+  `types.generated.ts` + `resources/{journeys,datasets,models,runs,
+  exports}.ts` are generated from `services/api/openapi.json` by
+  `src/codegen.ts` — same narrowness as the Python generator (`GET`-only,
+  ≤1 path param, one object/array-of-object response). `tsup` builds
+  ESM+CJS+`.d.ts`. Converted the whole JS side of the repo to a single
+  root `pnpm-workspace.yaml`/`pnpm-lock.yaml` (`apps/web` and
+  `sdk/javascript` as members), replacing `apps/web`'s prior standalone
+  npm setup — pnpm is available via corepack in this environment, closing
+  the deviation `docs/WORKING.md`/`docs/NEXT.md` had flagged. New
+  `pnpm --filter @odyssey/sdk codegen`/`codegen:check` CLI entry points;
+  `scripts/codegen.sh` and `codegen-drift.yml` now regenerate/check all
+  three codegen'd artifacts (openapi.json, sdk/python, sdk/javascript) in
+  sequence. `ci-sdk.yml` gained the `js` matrix leg `docs/STRUCTURE.md`
+  names ("sdk/** (py + js matrix)"). 7 new tests (client tests run
+  against a real `uv run odyssey api serve` child process, not a mocked
+  `fetch`).
+- **`apps/web` now consumes `@odyssey/sdk` directly**, closing the scope
+  cut from item 8.6 — `src/lib/api/{types,client}.ts` (hand-written
+  stand-in) is gone; `src/lib/api/index.ts` is now a single `apiClient()`
+  wrapping `OdysseySDK`, and every page imports `@odyssey/sdk`'s own
+  types. `ci-web.yml` installs via the root pnpm workspace instead of
+  `npm ci`. Re-verified end to end the same way item 8.6 originally was:
+  a real `uvicorn`-served `services/api` + `pnpm dev` + `curl` against
+  every route (including the 404 path), resolved SSR HTML inspected for
+  real API data.
+
 ### Removed
 
 - `primitives.TelemetryEvent` (item 1.11) — dead code targeting a
