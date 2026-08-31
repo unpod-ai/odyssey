@@ -61,7 +61,9 @@ def register(app: Any) -> None:
         rendered = json.dumps(schema, indent=2, sort_keys=True) + "\n"
 
         if check:
-            current = Path(out).read_text(encoding="utf-8") if Path(out).exists() else ""
+            current = (
+                Path(out).read_text(encoding="utf-8") if Path(out).exists() else ""
+            )
             if current != rendered:
                 print(f"{out} is stale — run `odyssey api openapi --out {out}`")
                 raise typer.Exit(code=3)
