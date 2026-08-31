@@ -1,7 +1,8 @@
 # odyssey-collector
 
 The ingest endpoint `odyssey.HttpSink` posts to. Not the read API
-(`services/api`, not built yet) — this is a receiver, not a query surface.
+(`services/api`, which reads the exact files this service writes) — this
+is a receiver, not a query surface.
 
 ## Why stdlib, not FastAPI
 
@@ -68,8 +69,9 @@ projects (storage partitioning already is that).
 
 This is a stopgap, not real multi-tenant infrastructure: the roster is a
 flat file loaded once at startup — edit it and restart the process to
-add/revoke a project. Real key/project management belongs to `services/api`
-once it exists (Step 8, not built).
+add/revoke a project. `services/api` (Step 8) is a read-only service and
+does not manage collector keys/projects either — real key/project
+management is still unbuilt anywhere in this repo.
 
 `prune.py` (below) is unaware of projects — point `--data-dir` at
 `<data_dir>/<slug>` once per project rather than at the root.

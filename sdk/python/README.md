@@ -58,11 +58,11 @@ job (item 8.3) — `scripts/codegen.sh` runs both in sequence.
 
 ## Not done here
 
-- **`sdk/javascript`** (item 8.5, `@odyssey/sdk`) — separate package, not
-  started this pass.
-- Only `GET` endpoints are supported by the generator today, matching
-  `services/api`'s actual surface (item 8.2) — see `codegen.py`'s
-  module docstring for the exact narrowness this implies.
+Only `GET` endpoints are supported by the generator today, matching
+`services/api`'s actual surface (item 8.2) — see `codegen.py`'s
+module docstring for the exact narrowness this implies. The JS twin of
+this package is `sdk/javascript` (`@odyssey/sdk`, item 8.5) — a separate
+package, generated the same way from the same `openapi.json`.
 
 ## Tests
 

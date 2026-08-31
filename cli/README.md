@@ -44,19 +44,29 @@ calls `odyssey_dataprep.normalization`'s functions directly instead.
 
 ## Commands today
 
+Every group `docs/STRUCTURE.md` planned is now registered — one entry point
+per member, discovered lazily:
+
 ```
-odyssey spool {push,export,sft,dpo,status,show,health}   # from odyssey-core
-odyssey data normalize                                    # from odyssey-dataprep
-odyssey doctor                                             # plugin discovery + cold-start timing
-odyssey push / odyssey status                              # deprecated aliases, warn to stderr
+odyssey spool {push,export,sft,dpo,status,show,health}      # odyssey-core
+odyssey data {normalize,collect,clean,queue,apply-reviews,  # odyssey-dataprep
+              augment,validate,split,recipe-hash,
+              corpus-version,build-corpus,card}
+odyssey train {sft-config,dpo-config,grpo-config,           # odyssey-training
+               record-experiment,upload-checkpoint}
+odyssey model {register,card,promote,export}                # odyssey-training
+odyssey eval {run,compare,build-set,card,check-overlap}      # odyssey-eval
+odyssey api {serve,openapi,routes}                            # odyssey-api
+odyssey sdk {codegen,check-drift}                             # odyssey-sdk (python)
+odyssey doctor                                                # plugin discovery + cold-start timing
+odyssey push / odyssey status                                 # deprecated aliases, warn to stderr
 odyssey --version
 ```
 
-Nothing else in `docs/STRUCTURE.md`'s planned surface (`train`, `model`,
-`eval`, `api`, `sdk`, `db`) is built — those wait on the members they'd
-delegate to (`training`, `services/api`, ...), which don't exist yet. Adding
-one later is adding an entry point in that member's own `pyproject.toml`;
-this package does not change.
+`db` (alembic passthrough) is the one group named in `docs/STRUCTURE.md`
+that's still unbuilt — it waits on `services/api/migrations/`, which has no
+relational schema to migrate yet. Adding a group is adding an entry point
+in that member's own `pyproject.toml`; this package does not change.
 
 ## Run it
 

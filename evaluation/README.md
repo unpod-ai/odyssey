@@ -5,9 +5,10 @@ caller-produced completions against a frozen benchmark suite.
 
 ## What this is not
 
-This member never calls a model. There is no live model-serving path in
-this repo yet (`services/api` is Step 8, not built), so the harness takes a
-benchmark (`benchmarks/*.yaml`: task prompts + references) and a
+This member never calls a model. `services/api` (Step 8) is a read-only
+API over already-produced results, not a model-serving path — there is
+still no live inference endpoint anywhere in this repo — so the harness
+takes a benchmark (`benchmarks/*.yaml`: task prompts + references) and a
 completions file the caller produced however they like (a `soup-cli`
 -trained model run through any inference tool, a raw API call, whatever),
 and scores the pairing. See `src/odyssey_eval/harness.py`'s module

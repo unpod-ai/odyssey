@@ -12,11 +12,10 @@ has one real source of truth elsewhere in the monorepo — a dataclass in
 
 ## Why a separate package, not just classes inside `services/api`
 
-Per `docs/STRUCTURE.md`, this is the shape a generated OpenAPI client
-(`sdk/python`, item 8.4 — not built yet) and, eventually, `apps/web`'s
-TypeScript codegen both need to point at independently of the FastAPI
-service itself — a client library must not depend on a deployable's
-`fastapi`/`uvicorn` dependencies just to get the DTOs.
+Per `docs/STRUCTURE.md`, this is the shape both generated OpenAPI clients
+(`sdk/python`, `sdk/javascript`) need to point at independently of the
+FastAPI service itself — a client library must not depend on a
+deployable's `fastapi`/`uvicorn` dependencies just to get the DTOs.
 
 ## Run it
 
