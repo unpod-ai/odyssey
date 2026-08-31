@@ -184,7 +184,7 @@ don't sit on this request path.
 - [x] **3** `packages/odyssey-schemas` + `services/api` + `openapi.json` + `sdk/python`
 - [x] **4** `data_preparation` stages over the existing fold/builders + `datasets/` registry
 - [x] **5** `training` (soup adapter) + `models/registry.yaml` + `evaluation` harness
-- [x] **6** `apps/web` + `sdk/javascript` (`sdk/examples/{python,javascript}` stay stubs — not a tracked Step 8 item)
+- [x] **6** `apps/web` + `sdk/javascript` + `sdk/examples/{python,javascript}`
 
 Full item-by-item scorecard (0–9, including repo hygiene): [`docs/WORKING.md`](docs/WORKING.md).
 The only open item left in the whole roadmap is `NOTICE` copyright holder

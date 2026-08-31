@@ -46,6 +46,9 @@ client.exports.list()
 A 404 raises `OdysseyAPINotFoundError` (a subclass of `OdysseyAPIError`,
 raised for every other non-2xx response).
 
+Full runnable walkthrough: [`sdk/examples/python/basic_usage.py`](../examples/python/basic_usage.py)
+(`sdk/examples/README.md` has the setup steps).
+
 ## Regenerating `resources/*.py`
 
 ```bash

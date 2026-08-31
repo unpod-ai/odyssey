@@ -244,6 +244,16 @@ not a mocked `fetch`.
 
 ---
 
+## sdk/examples — runnable samples for both SDKs
+
+`sdk/examples/python/basic_usage.py` and
+`sdk/examples/javascript/basic-usage.mjs` — the same walkthrough in both
+languages (`health()`, `journeys.list()`/`.get()`, a 404, then
+`datasets`/`models`/`runs`/`exports`), run against a real `services/api`,
+not mocked. `sdk/examples/README.md` has the setup steps.
+
+---
+
 ## apps/web — the dashboard (`@odyssey/web`, live · :3000)
 
 Read-only Next.js 16 (App Router, TypeScript) dashboard over
