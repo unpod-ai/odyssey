@@ -7,6 +7,7 @@
 #   sinks       — drain destinations: FileSink, HttpSink over stdlib HTTP
 #   context     — ambient journey context and seq allocation
 #   project     — auto-detected "project" tag: env, git remote, dirname fallback
+#   metrics     — opt-in host telemetry: snapshot fields, background reporter
 #   sdk         — init(), journey(), observe(), health(); capture never raises
 #   integrations— provider capture: Anthropic + OpenAI + Gemini drop-in/patch, no duplicates
 #   langchain   — LangChain (+ LangGraph) callback handler (items 0.10/0'.2)
@@ -50,6 +51,9 @@ case "$MODULE" in
     ;;
   project)
     uv run pytest tests/test_project.py "$@"
+    ;;
+  metrics)
+    uv run pytest tests/test_metrics.py "$@"
     ;;
   sdk)
     uv run pytest tests/test_sdk.py "$@"
