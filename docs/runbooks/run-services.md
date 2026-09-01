@@ -64,6 +64,44 @@ systemctl status odyssey-collector
 journalctl -u odyssey-collector -f
 ```
 
+### Switching to project-scoped mode (`--keys-file`)
+
+**Create the roster file before flipping the `Environment=` line** — do
+not skip this step. `_load_keys_file` (`services/collector/server.py`)
+deliberately refuses to start with a missing, empty, or malformed keys
+file, on purpose: this repo will not auto-generate one, because a
+silently-created empty or placeholder roster is functionally identical
+to "every future POST gets a 401 with no explanation" — the exact
+failure mode fail-fast startup exists to prevent. There is no way around
+supplying real `slug`/`name`/`api_key` values for every project that
+will actually authenticate against this collector; nobody but the
+operator running this deployment has those.
+
+```bash
+sudo install -d -m 0750 -o odyssey -g odyssey /etc/odyssey
+sudo tee /etc/odyssey/collector-keys.json > /dev/null <<'EOF'
+{
+  "projects": [
+    {"slug": "acme", "name": "Acme Corp", "api_key": "REPLACE-WITH-A-REAL-SECRET"}
+  ]
+}
+EOF
+sudo chown odyssey:odyssey /etc/odyssey/collector-keys.json
+sudo chmod 0640 /etc/odyssey/collector-keys.json
+```
+
+Replace `REPLACE-WITH-A-REAL-SECRET` (and add one entry per real project)
+before starting the service — an unedited placeholder key is a real
+credential nobody rotated. Then, in the unit file: comment out
+`ODYSSEY_COLLECTOR_API_KEY`, uncomment
+`ODYSSEY_COLLECTOR_KEYS_FILE=/etc/odyssey/collector-keys.json`, and:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart odyssey-collector
+journalctl -u odyssey-collector -n 20   # confirm it started clean, not a FileNotFoundError
+```
+
 Every collector CLI flag (`--host`/`--port`/`--data-dir`/`--api-key`/
 `--keys-file`/`--timezone`) has an `ODYSSEY_COLLECTOR_*` env equivalent —
 see `services/collector/README.md`'s config table. Set them as
