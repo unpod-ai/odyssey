@@ -41,8 +41,15 @@ await client.exports.list();
 A 404 rejects with `OdysseyAPINotFoundError` (a subclass of
 `OdysseyAPIError`, thrown for every other non-2xx response).
 
-Full runnable walkthrough: [`sdk/examples/javascript/basic-usage.mjs`](../examples/javascript/basic-usage.mjs)
-(`sdk/examples/README.md` has the setup steps).
+Full runnable walkthrough: [`sdk/examples/javascript/basic-usage.mjs`](../examples/javascript/basic-usage.mjs).
+Build first because the example imports `dist/`:
+
+```bash
+pnpm --filter @odyssey/sdk build
+node sdk/examples/javascript/basic-usage.mjs [base_url]
+```
+
+[`sdk/examples/README.md`](../examples/README.md) has the full setup steps.
 
 ## Regenerating `types.generated.ts` / `resources/*.ts`
 

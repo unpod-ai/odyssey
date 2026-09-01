@@ -35,9 +35,13 @@ built yet.
 
 ## CLI
 
-```
-odyssey eval run --benchmark benchmarks/example-arithmetic.yaml --completions completions.jsonl
-odyssey eval compare --a reports/a.json --b reports/b.json
+Run these from the repo root so the default `evaluation/metrics` and
+`evaluation/reports` paths resolve correctly. Completions JSONL rows use the
+key `response` for the model output.
+
+```bash
+odyssey eval run --benchmark evaluation/benchmarks/example-arithmetic.yaml --completions completions.jsonl
+odyssey eval compare --a evaluation/reports/a.json --b evaluation/reports/b.json
 odyssey eval build-set --name my-eval --shard journeys/
 odyssey eval card --name my-eval --license ... --intended-use ... --provenance ...
 odyssey eval check-overlap --eval-journeys evaluation/datasets/.../journeys --train-journeys data_preparation/.../train

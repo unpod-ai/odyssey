@@ -69,9 +69,14 @@ odyssey doctor           # plugin discovery + cold-start timing
 
 ## Run the whole stack
 
-One-time setup: `task setup` (above) for the Python side, plus
-`pnpm install` at the repo root for the JS side (`apps/web` +
-`sdk/javascript`, one pnpm workspace).
+One-time setup: `task setup` (above) for the Python side. For the JS side,
+use Node 22 first (`.nvmrc`), then install from the repo root
+(`apps/web` + `sdk/javascript`, one pnpm workspace):
+
+```bash
+nvm use
+pnpm install
+```
 
 Each piece below is independent — run only what you need. Ports/dirs shown
 are the defaults; every service is env-first (see each README for the full
@@ -126,6 +131,13 @@ const client = new OdysseySDK("http://127.0.0.1:8000");
 await client.journeys.list();
 ```
 
+To run the checked-in JavaScript example in this repo, build the SDK first:
+
+```bash
+pnpm --filter @odyssey/sdk build
+node sdk/examples/javascript/basic-usage.mjs [base_url]
+```
+
 ### 4. Web dashboard (`apps/web`)
 
 Next.js UI over the API, via `@odyssey/sdk` — needs the API running first:
@@ -147,8 +159,9 @@ CLI-driven, nothing to leave running:
 odyssey train sft-config --base meta-llama/Llama-3.1-8B-Instruct --shard sft.jsonl --out soup.yaml
 soup train --config soup.yaml                 # on the GPU machine, separately
 
-# score a completions file against a frozen benchmark (run from evaluation/)
-odyssey eval run --benchmark benchmarks/example-arithmetic.yaml \
+# score a completions file against a frozen benchmark (run from the repo root)
+# JSONL rows use the key "response" for the model output.
+odyssey eval run --benchmark evaluation/benchmarks/example-arithmetic.yaml \
   --completions completions.jsonl
 ```
 
