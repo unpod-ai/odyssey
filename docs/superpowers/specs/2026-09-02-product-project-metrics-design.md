@@ -1,6 +1,6 @@
 # Product/Project rename + opt-in server metrics — design
 
-Status: approved (design), not yet planned/implemented.
+Status: implemented — see git log for the commits.
 
 ## Problem
 

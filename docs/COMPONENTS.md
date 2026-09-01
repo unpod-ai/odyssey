@@ -40,6 +40,15 @@ in the dependency graph can leak into it.
   `SeqAllocator` (disk-seeded, so a restart never reissues a `seq`).
 - `client.py` / `config.py` — `odyssey.init()`.
 - `capture.py` — `@observe` decorator, `with odyssey.journey(...)`.
+- `project.py` — `resolve_project()`: auto-detects which repo/codebase a
+  capturing process belongs to (`ODYSSEY_PROJECT` env → git `origin`
+  remote → cwd dirname), tags `JourneyHeader.journey_metadata["project"]`.
+  Purely descriptive — not an auth boundary (that's `services/collector`'s
+  unrelated `Product` concept, below).
+- `metrics.py` — opt-in, off-by-default host telemetry (`collect_metrics`/
+  `ODYSSEY_COLLECT_METRICS`). A background thread posts an OS/CPU/mem/disk
+  snapshot to `POST /metrics` on the collector every `metrics_interval`
+  seconds; no code in this module runs unless explicitly enabled.
 - `integrations/` — drop-in capture wrappers for Anthropic, OpenAI (also
   covers OpenAI-compatible providers — Groq, Together, local vLLM/Ollama —
   for free, same SDK shape), and Gemini (own parser, different message
@@ -124,21 +133,26 @@ persist bytes), not a routing/validation/DTO problem.
 - `POST /batch/events` — cross-journey batching in one request (optional
   gzip); always `200` once the envelope parses, each journey validated and
   stored independently so one bad journey never blocks the rest.
-- `GET /health`, `GET /projects` (project-scoped mode only).
+- `POST /metrics` — opt-in, off-by-default host telemetry ingest (its own
+  channel, independent of journey capture); adds `public_ip` server-side
+  from the real TCP peer address. SDK side: `odyssey/metrics.py`.
+- `GET /health`, `GET /products` (product-scoped mode only).
 - Storage: local disk, date-partitioned —
-  `<data_dir>/<YYYY-MM-DD>/<journey_id>.jsonl` (project-scoped:
-  `<data_dir>/<slug>/<date>/...`), written through the same
-  `odyssey.jsonl` codec `FileSink` uses — one wire-format parser, not two.
+  `<data_dir>/<YYYY-MM-DD>/<journey_id>.jsonl` (product-scoped:
+  `<data_dir>/<slug>/<date>/...`; metrics: `<data_dir>/[<slug>/]metrics/<date>.jsonl`),
+  written through the same `odyssey.jsonl` codec `FileSink` uses — one
+  wire-format parser, not two.
 - Auth: single shared bearer token (`--api-key`) **or** a multi-tenant
-  `--keys-file` roster (`{"projects": [{"slug","name","api_key"}]}`) —
-  mutually exclusive. Project scoping is structural (each key's directory
+  `--products-file` roster of `Product`s (`{"products": [{"slug","name","api_key"}]}`)
+  — mutually exclusive. Product scoping is structural (each key's directory
   partition), not just an access check.
 
 **Run it**: `cd services/collector && uv sync --extra dev && uv run odyssey-collector --data-dir ./collector-data`
 
-**Not done here**: real multi-tenant key management (the keys-file is a
+**Not done here**: real multi-tenant key management (the products-file is a
 flat-file stopgap, edited + process-restarted to change), object-store
-backing (still local disk only), any read path (that's `services/api`).
+backing (still local disk only), any read path (that's `services/api`),
+retention/pruning for `metrics/` (`prune.py` is unaware of it in this pass).
 
 ---
 

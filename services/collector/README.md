@@ -40,17 +40,17 @@ Env-first, explicit argument wins — same precedence as `odyssey.config.resolve
 | `ODYSSEY_COLLECTOR_HOST` | `--host` | `127.0.0.1` | |
 | `ODYSSEY_COLLECTOR_PORT` | `--port` | `8787` | |
 | `ODYSSEY_COLLECTOR_DATA_DIR` | `--data-dir` | `./collector-data` | where `<date>/<journey_id>.jsonl` files land |
-| `ODYSSEY_COLLECTOR_API_KEY` | `--api-key` | unset (open) | one shared bearer token, unscoped. Mutually exclusive with `--keys-file` |
-| `ODYSSEY_COLLECTOR_KEYS_FILE` | `--keys-file` | unset | JSON `{"projects": [{"slug", "name", "api_key"}, ...]}` file (project scoping, below). Mutually exclusive with `--api-key` |
+| `ODYSSEY_COLLECTOR_API_KEY` | `--api-key` | unset (open) | one shared bearer token, unscoped. Mutually exclusive with `--products-file` |
+| `ODYSSEY_COLLECTOR_PRODUCTS_FILE` | `--products-file` | unset | JSON `{"products": [{"slug", "name", "api_key"}, ...]}` file (product scoping, below). Mutually exclusive with `--api-key` |
 | `ODYSSEY_COLLECTOR_TIMEZONE` | `--timezone` | `UTC` | IANA name (e.g. `Asia/Kolkata`); which day a batch's date-partition belongs to. Unrecognised names fall back to UTC |
 
-## Project scoping
+## Product scoping
 
-For more than one tenant, use `--keys-file` instead of `--api-key`:
+For more than one tenant, use `--products-file` instead of `--api-key`:
 
 ```json
 {
-  "projects": [
+  "products": [
     {"slug": "acme", "name": "Acme Corp", "api_key": "sk-acme-..."},
     {"slug": "globex", "name": "Globex Inc", "api_key": "sk-globex-..."}
   ]
@@ -60,42 +60,42 @@ For more than one tenant, use `--keys-file` instead of `--api-key`:
 ### Bootstrapping the file
 
 `odyssey-collector` deliberately refuses to start on a missing, empty, or
-malformed `--keys-file` — a silently-created empty roster would be
+malformed `--products-file` — a silently-created empty roster would be
 indistinguishable from "no keys configured", and every request would
-just 401 with no explanation. `--init-keys-file` is the safe way to
+just 401 with no explanation. `--init-products-file` is the safe way to
 create a real starting one instead: run once, by hand, before starting
 the server (never as a side effect of `serve`, and never via an env var
 — see `docs/runbooks/run-services.md` for why):
 
 ```bash
-odyssey-collector --init-keys-file ./collector-keys.json \
-  --project-slug acme --project-name "Acme Corp"
+odyssey-collector --init-products-file ./collector-products.json \
+  --product-slug acme --product-name "Acme Corp"
 ```
 
-Writes one project with a fresh `secrets.token_urlsafe(32)` `api_key` —
+Writes one product with a fresh `secrets.token_urlsafe(32)` `api_key` —
 a real secret, not a placeholder — and prints it once. Refuses to
-overwrite an existing file. Add more projects by editing the file
-directly (same as any other keys-file edit — restart the server to pick
-it up).
+overwrite an existing file. Add more products by editing the file
+directly (same as any other products-file edit — restart the server to
+pick it up).
 
-Each project's key writes into its own `<data_dir>/<slug>/<date>/` partition
+Each product's key writes into its own `<data_dir>/<slug>/<date>/` partition
 — isolation is structural (one caller's key can never resolve into another
-project's directory), not just an access check layered on shared storage.
+product's directory), not just an access check layered on shared storage.
 `slug` is what names the directory and every CLI/`prune.py` invocation;
-`name` exists for `GET /projects` and log/operator legibility.
+`name` exists for `GET /products` and log/operator legibility.
 
-`GET /projects` (any registered key) returns the roster as `{slug, name}`
+`GET /products` (any registered key) returns the roster as `{slug, name}`
 pairs, never keys — a debugging/operator aid, not a privacy boundary between
-projects (storage partitioning already is that).
+products (storage partitioning already is that).
 
 This is a stopgap, not real multi-tenant infrastructure: the roster is a
 flat file loaded once at startup — edit it and restart the process to
-add/revoke a project. `services/api` (Step 8) is a read-only service and
-does not manage collector keys/projects either — real key/project
+add/revoke a product. `services/api` (Step 8) is a read-only service and
+does not manage collector keys/products either — real key/product
 management is still unbuilt anywhere in this repo.
 
-`prune.py` (below) is unaware of projects — point `--data-dir` at
-`<data_dir>/<slug>` once per project rather than at the root.
+`prune.py` (below) is unaware of products — point `--data-dir` at
+`<data_dir>/<slug>` once per product rather than at the root.
 
 ## Wire contract
 
@@ -113,9 +113,9 @@ Authorization: Bearer <api_key>          # only when the server requires one
 
 `GET /health` → `200 {"status": "ok"}`.
 
-`GET /projects` (project-scoped mode only, any registered key) →
-`200 {"projects": [{"slug": ..., "name": ...}, ...]}`; `404` outside
-project-scoped mode, `401` without a valid key.
+`GET /products` (product-scoped mode only, any registered key) →
+`200 {"products": [{"slug": ..., "name": ...}, ...]}`; `404` outside
+product-scoped mode, `401` without a valid key.
 
 ### Cross-journey batching (item 1.7)
 
@@ -143,6 +143,38 @@ same request. `odyssey`'s own `drain(..., batch_size=N)` /
 `odyssey.init(drain_batch_size=N)` opt into sending batches this size;
 default `batch_size=1` never calls `send_batch` at all.
 
+## Opt-in metrics
+
+```
+POST /metrics
+Content-Type: application/json; charset=utf-8
+Authorization: Bearer <api_key>          # only when the server requires one
+
+{"ts": ..., "hostname": ..., "os": ..., "cpu_count": ..., ...}
+
+200 {"ok": true}
+400 malformed body
+401 missing/incorrect Authorization
+500 storage failure
+```
+
+Its own channel, independent of journey capture — same auth rules as
+every other POST (`--api-key` or a `--products-file` key), but its own
+storage subdirectory, never mixed into a journey shard file:
+`<data_dir>/<product_slug>/metrics/<YYYY-MM-DD>.jsonl` in product-scoped
+mode, `<data_dir>/metrics/<YYYY-MM-DD>.jsonl` in single-shared-key mode.
+
+`public_ip` is added here, server-side, from `self.client_address[0]` —
+the real TCP peer address of the connection — never trusted as client
+input; the SDK never sends it and never could authoritatively know it.
+
+The SDK side is opt-in and off by default: `odyssey.init(collect_metrics=True,
+metrics_interval=300)` (or `ODYSSEY_COLLECT_METRICS`/`ODYSSEY_METRICS_INTERVAL`)
+starts a background thread that POSTs one OS/CPU/mem/disk snapshot per
+interval — see `packages/odyssey-core/src/odyssey/metrics.py`. `prune.py`
+is unaware of `metrics/` in this pass — same "not done here" treatment as
+product scoping above.
+
 ## Storage
 
 Today: a local directory, partitioned by the date a batch was received (UTC
@@ -162,7 +194,7 @@ inside `_Handler._store`, the endpoint contract doesn't move.
 
 ## Not done here
 
-- Real multi-tenant key/project management (the `--keys-file` roster above
+- Real multi-tenant key/product management (the `--products-file` roster above
   is a flat-file stopgap, not a database)
 - Object-store backing (still local disk)
 - Any read path — that's `services/api`

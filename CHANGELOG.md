@@ -8,6 +8,24 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Changed
 
+- **BREAKING**: `services/collector`'s `Project` auth concept renamed to
+  `Product` — `--keys-file`/`ODYSSEY_COLLECTOR_KEYS_FILE` →
+  `--products-file`/`ODYSSEY_COLLECTOR_PRODUCTS_FILE`, the JSON shape's
+  `"projects"` key → `"products"`, `--init-keys-file`/`--project-slug`/
+  `--project-name` → `--init-products-file`/`--product-slug`/
+  `--product-name`, `GET /projects` → `GET /products`,
+  `config.project_for_key()` → `config.product_for_key()`. A clean rename,
+  no alias for the old names — nothing outside this repo has integrated
+  against them yet (see
+  `docs/superpowers/specs/2026-09-02-product-project-metrics-design.md`).
+  Storage layout (`<data_dir>/<slug>/<date>/...`) is unchanged, `slug`
+  just belongs to a `Product` now. `--api-key` (single-shared-key mode)
+  is untouched — it was never project/product-scoped.
+- `packages/odyssey-core/src/odyssey/sinks.py`'s `HttpSink` transport
+  extracted into a standalone `HttpTransport` class (connection reuse,
+  gzip, backoff/retry-after handling) — no behavior change for `HttpSink`
+  itself, but it's now reusable by other stdlib-`http.client` senders in
+  this package (the new metrics reporter below is the first).
 - **BREAKING**: `SCHEMA_VERSION` bumped `1.1` → `2.0` (item 0′.4). Added a new
   `"voice"` `EventKind` and `VoiceEvent` payload (`voice_kind`, `text`,
   `confidence`, `latency_ms`, `metadata`) for STT/TTS/barge-in/latency
@@ -36,6 +54,41 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Added
 
+- **`odyssey.init(project=...)`** (`packages/odyssey-core/src/odyssey/project.py`,
+  `resolve_project()`) — tags `JourneyHeader.journey_metadata["project"]`
+  with which repo/codebase a capturing process belongs to: explicit
+  argument wins, then `ODYSSEY_PROJECT`, then `.git/config`'s
+  `[remote "origin"]` URL (parsed with stdlib `configparser`, no `git`
+  subprocess), then the cwd's directory name as the always-succeeding
+  fallback. `odyssey.init(project=None)` explicitly opts out (no `project`
+  key written at all) — same `_UNSET` sentinel trick `drain_interval_set`
+  already uses to distinguish "not given" from "given as `None`". Purely
+  descriptive metadata, never an auth boundary — unrelated to
+  `services/collector`'s `Product` concept below despite the similar word
+  (see `docs/environment-variables.md`'s "Naming collision" section).
+- **`odyssey.init(collect_metrics=..., metrics_interval=...)`**
+  (`packages/odyssey-core/src/odyssey/metrics.py`, `MetricsReporter`) —
+  opt-in, off-by-default host telemetry. When enabled
+  (`ODYSSEY_COLLECT_METRICS`/`collect_metrics=True`, default `False`), a
+  background daemon thread modeled directly on `spool.IntervalDrainer`
+  posts one OS/CPU/mem/disk snapshot (`build_snapshot()` — stdlib
+  `platform`/`os.cpu_count`/`shutil.disk_usage`, plus Linux-only memory
+  from `/proc/meminfo`, simply omitted elsewhere) to `POST /metrics` on
+  the collector every `metrics_interval` seconds (`ODYSSEY_METRICS_INTERVAL`,
+  default `300`). Reuses the new `HttpTransport` extraction above for
+  connection reuse/gzip/backoff. Failures are counted (`Client.stats`),
+  never raised — a metrics POST failure never crashes the host (ADR
+  0004). When disabled, no code in this module runs and nothing leaves
+  the process.
+- **`POST /metrics`** on `services/collector` — the server side of the
+  opt-in metrics channel above. Same auth path as every other POST
+  (`--api-key` or a `--products-file` key); adds `public_ip` server-side
+  from `self.client_address[0]` (the real TCP peer address — the SDK
+  never sends or determines its own public IP). Stores one line per
+  snapshot at `<data_dir>/<product_slug>/metrics/<date>.jsonl` in
+  product-scoped mode, `<data_dir>/metrics/<date>.jsonl` in
+  single-shared-key mode — its own subdirectory, never mixed into a
+  journey shard file. `prune.py` is unaware of `metrics/` in this pass.
 - **`docs/environment-variables.md`** — every `ODYSSEY_*` variable in the
   repo, grouped by which process reads it (capture layer,
   `services/collector`, `services/api`, `apps/web`), with the

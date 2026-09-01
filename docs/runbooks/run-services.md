@@ -44,7 +44,7 @@ Environment=ODYSSEY_COLLECTOR_PORT=8787
 Environment=ODYSSEY_COLLECTOR_DATA_DIR=/var/lib/odyssey/collector-data
 # one of these two, never both — see services/collector/README.md
 Environment=ODYSSEY_COLLECTOR_API_KEY=change-me
-# Environment=ODYSSEY_COLLECTOR_KEYS_FILE=/etc/odyssey/collector-keys.json
+# Environment=ODYSSEY_COLLECTOR_PRODUCTS_FILE=/etc/odyssey/collector-products.json
 ExecStart=/opt/odyssey/.venv/bin/odyssey-collector
 Restart=on-failure
 RestartSec=2
@@ -64,32 +64,32 @@ systemctl status odyssey-collector
 journalctl -u odyssey-collector -f
 ```
 
-### Switching to project-scoped mode (`--keys-file`)
+### Switching to product-scoped mode (`--products-file`)
 
 **Create the roster file before flipping the `Environment=` line** — do
-not skip this step. `_load_keys_file` (`services/collector/server.py`)
-deliberately refuses to start with a missing, empty, or malformed keys
+not skip this step. `_load_products_file` (`services/collector/server.py`)
+deliberately refuses to start with a missing, empty, or malformed products
 file, on purpose: a silently-created empty or placeholder roster would be
 functionally identical to "every future POST gets a 401 with no
 explanation" — the exact failure mode fail-fast startup exists to
 prevent.
 
-`odyssey-collector --init-keys-file` bootstraps a real one: one project,
-a fresh cryptographically random `api_key` (a genuine secret, not a
-placeholder you're expected to remember to replace), refuses to
+`odyssey-collector --init-products-file` bootstraps a real one: one
+product, a fresh cryptographically random `api_key` (a genuine secret,
+not a placeholder you're expected to remember to replace), refuses to
 overwrite a file that already exists.
 
 ```bash
 sudo install -d -m 0750 -o odyssey -g odyssey /etc/odyssey
 sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
-  --init-keys-file /etc/odyssey/collector-keys.json \
-  --project-slug acme --project-name "Acme Corp"
+  --init-products-file /etc/odyssey/collector-products.json \
+  --product-slug acme --product-name "Acme Corp"
 ```
 
 This prints the generated `api_key` once — save it now, it's also in the
 file in plaintext but won't be echoed back to you again. Then, in the
 unit file: comment out `ODYSSEY_COLLECTOR_API_KEY`, uncomment
-`ODYSSEY_COLLECTOR_KEYS_FILE=/etc/odyssey/collector-keys.json`, and:
+`ODYSSEY_COLLECTOR_PRODUCTS_FILE=/etc/odyssey/collector-products.json`, and:
 
 ```bash
 sudo systemctl daemon-reload
@@ -97,7 +97,7 @@ sudo systemctl restart odyssey-collector
 journalctl -u odyssey-collector -n 20   # confirm it started clean, not a FileNotFoundError
 ```
 
-**`--init-keys-file`/`--project-slug`/`--project-name` have no
+**`--init-products-file`/`--product-slug`/`--product-name` have no
 `ODYSSEY_COLLECTOR_*` env var equivalent, deliberately.** They're a
 one-shot bootstrap action, not persistent server config — giving them an
 env var would mean a stray `Environment=` line in the unit file makes
@@ -107,10 +107,10 @@ just exit 1 and restart-loop forever). Run it once, by hand, separately
 from `serve`.
 
 Every other collector CLI flag (`--host`/`--port`/`--data-dir`/
-`--api-key`/`--keys-file`/`--timezone`) has an `ODYSSEY_COLLECTOR_*` env
-equivalent — see `services/collector/README.md`'s config table. Set them as
-`Environment=` lines (or `EnvironmentFile=/etc/odyssey/collector.env` for
-a real deployment, kept out of git).
+`--api-key`/`--products-file`/`--timezone`) has an `ODYSSEY_COLLECTOR_*`
+env equivalent — see `services/collector/README.md`'s config table. Set
+them as `Environment=` lines (or `EnvironmentFile=/etc/odyssey/collector.env`
+for a real deployment, kept out of git).
 
 ## `services/api` — FastAPI/ASGI, two supported ways to run it
 

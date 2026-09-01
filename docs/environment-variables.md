@@ -19,6 +19,17 @@ same value on the two ends of one connection. Neither is related to
 `services/api` (the read API), which has no API-key auth of its own
 today — see its `README.md`'s "Not done here".
 
+**`ODYSSEY_PROJECT`** (capture side, below) and **`Product`/`products`**
+(`services/collector`'s `ODYSSEY_COLLECTOR_PRODUCTS_FILE`/`--products-file`
+roster, below) are unrelated concepts despite the similar words: `project`
+is a purely descriptive metadata tag (`JourneyHeader.journey_metadata["project"]`,
+"which repo/codebase did this capture come from") with no auth meaning at
+all, while `Product` is the collector's multi-tenant auth boundary (a
+unique `api_key` per top-level tenant, previously — and confusingly —
+named `Project` before this rename). See
+`docs/superpowers/specs/2026-09-02-product-project-metrics-design.md` for
+the full rationale.
+
 ---
 
 ## Capture (`packages/odyssey-core` — `odyssey.init()`, `HttpSink`)
@@ -40,6 +51,9 @@ Source: `packages/odyssey-core/src/odyssey/config.py`,
 | `ODYSSEY_TIMEZONE` | `UTC` | IANA name (e.g. `Asia/Kolkata`) — which day a spool shard's rotation/date-partition belongs to. Unrecognised names fall back to UTC |
 | `ODYSSEY_ENDPOINT` | unset | `HttpSink`'s target URL when constructed with no explicit `endpoint` — e.g. `http://127.0.0.1:8787` for a local `services/collector` |
 | `ODYSSEY_API_KEY` | unset | The bearer token `HttpSink` sends as `Authorization: Bearer <key>` — see "Naming collision" above |
+| `ODYSSEY_PROJECT` | unset (auto-detected) | Explicit override for `odyssey.init(project=...)`'s auto-detect chain (`ODYSSEY_PROJECT` → `.git/config`'s `origin` remote → cwd dirname). Tags `JourneyHeader.journey_metadata["project"]` — descriptive only, see "Naming collision" above |
+| `ODYSSEY_COLLECT_METRICS` | `false` | Opt-in, off-by-default host telemetry (hostname, OS, CPU count, disk usage, Linux-only memory). When truthy, starts a background thread posting one snapshot per `ODYSSEY_METRICS_INTERVAL` to `POST /metrics` on the configured `HttpSink` endpoint. See `packages/odyssey-core/src/odyssey/metrics.py` |
+| `ODYSSEY_METRICS_INTERVAL` | `300` (seconds) | How often the metrics background thread posts a snapshot, when `ODYSSEY_COLLECT_METRICS` is enabled |
 
 ## `services/collector` — ingest
 
@@ -49,15 +63,18 @@ Source: `services/collector/src/odyssey_collector/server.py`.
 |---|---|---|---|
 | `ODYSSEY_COLLECTOR_HOST` | `--host` | `127.0.0.1` | Bind host |
 | `ODYSSEY_COLLECTOR_PORT` | `--port` | `8787` | Bind port |
-| `ODYSSEY_COLLECTOR_DATA_DIR` | `--data-dir` | `./collector-data` | Where `<date>/<journey_id>.jsonl` (or `<slug>/<date>/...` in project-scoped mode) files land |
-| `ODYSSEY_COLLECTOR_API_KEY` | `--api-key` | unset (open) | One shared bearer token, unscoped. Mutually exclusive with `ODYSSEY_COLLECTOR_KEYS_FILE` |
-| `ODYSSEY_COLLECTOR_KEYS_FILE` | `--keys-file` | unset | Path to a `{"projects": [{"slug", "name", "api_key"}, ...]}` roster (project scoping). Mutually exclusive with `ODYSSEY_COLLECTOR_API_KEY`. `odyssey-collector --init-keys-file` bootstraps this file — see `services/collector/README.md` |
+| `ODYSSEY_COLLECTOR_DATA_DIR` | `--data-dir` | `./collector-data` | Where `<date>/<journey_id>.jsonl` (or `<slug>/<date>/...` in product-scoped mode) files land |
+| `ODYSSEY_COLLECTOR_API_KEY` | `--api-key` | unset (open) | One shared bearer token, unscoped. Mutually exclusive with `ODYSSEY_COLLECTOR_PRODUCTS_FILE` |
+| `ODYSSEY_COLLECTOR_PRODUCTS_FILE` | `--products-file` | unset | Path to a `{"products": [{"slug", "name", "api_key"}, ...]}` roster (product scoping). Mutually exclusive with `ODYSSEY_COLLECTOR_API_KEY`. `odyssey-collector --init-products-file` bootstraps this file — see `services/collector/README.md` |
 | `ODYSSEY_COLLECTOR_TIMEZONE` | `--timezone` | `UTC` | Which day a batch's date-partition belongs to |
 
-`--init-keys-file`/`--project-slug`/`--project-name` (the bootstrap
+`--init-products-file`/`--product-slug`/`--product-name` (the bootstrap
 command) have **no** env var equivalents, deliberately — see
-`docs/runbooks/run-services.md`'s "Switching to project-scoped mode"
-section for why.
+`docs/runbooks/run-services.md`'s "Switching to product-scoped mode"
+section for why. `services/collector` also accepts `POST /metrics` (an
+opt-in metrics channel, see `services/collector/README.md`'s "Opt-in
+metrics") — it has no env var of its own; it's a route, not a config
+knob.
 
 ## `services/api` — read API
 
@@ -105,7 +122,7 @@ itself; nothing here does today.
 - `data_preparation`, `training`, `evaluation` — every knob is a CLI flag
   (`odyssey data ...`, `odyssey train ...`, `odyssey eval ...`), no
   `ODYSSEY_DATAPREP_*`/`ODYSSEY_TRAIN_*`/`ODYSSEY_EVAL_*` variables exist.
-- `odyssey-collector --init-keys-file` — see above; a one-shot bootstrap
+- `odyssey-collector --init-products-file` — see above; a one-shot bootstrap
   action deliberately kept CLI-only.
 - `cli/`'s own planned `--profile`/`~/.odyssey/config.toml` scoped config
   — not built yet (see `cli/README.md`'s "Not done here").
