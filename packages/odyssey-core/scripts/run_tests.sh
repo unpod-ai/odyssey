@@ -6,6 +6,7 @@
 #   spool       — local append-only capture, watermark, drain, handle cache
 #   sinks       — drain destinations: FileSink, HttpSink over stdlib HTTP
 #   context     — ambient journey context and seq allocation
+#   project     — auto-detected "project" tag: env, git remote, dirname fallback
 #   sdk         — init(), journey(), observe(), health(); capture never raises
 #   integrations— provider capture: Anthropic + OpenAI + Gemini drop-in/patch, no duplicates
 #   langchain   — LangChain (+ LangGraph) callback handler (items 0.10/0'.2)
@@ -46,6 +47,9 @@ case "$MODULE" in
     ;;
   context)
     uv run pytest tests/test_context.py "$@"
+    ;;
+  project)
+    uv run pytest tests/test_project.py "$@"
     ;;
   sdk)
     uv run pytest tests/test_sdk.py "$@"
