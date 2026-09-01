@@ -21,8 +21,8 @@ from odyssey.sinks import HttpSinkError
 
 from odyssey_collector.server import (
     CollectorConfig,
-    Project,
-    _init_keys_file,
+    Product,
+    _init_products_file,
     _safe_stem,
     resolve_config,
     serve,
@@ -307,12 +307,12 @@ def test_the_wrong_key_is_rejected(guarded):
 
 
 # --------------------------------------------------------------------------
-# Project scoping (item 1.6) — multiple registered keys, isolated storage
+# Product scoping — multiple registered keys, isolated storage
 # --------------------------------------------------------------------------
 
 
-ACME = Project(slug="proj_acme", name="Acme Corp", api_key="sk-acme")
-GLOBEX = Project(slug="proj_globex", name="Globex Inc", api_key="sk-globex")
+ACME = Product(slug="proj_acme", name="Acme Corp", api_key="sk-acme")
+GLOBEX = Product(slug="proj_globex", name="Globex Inc", api_key="sk-globex")
 
 
 @pytest.fixture
@@ -321,7 +321,7 @@ def scoped(tmp_path):
         host="127.0.0.1",
         port=0,
         data_dir=tmp_path / "data",
-        projects=(ACME, GLOBEX),
+        products=(ACME, GLOBEX),
         date_fn=lambda: FIXED_DATE,
     )
     server = serve(config)
@@ -334,36 +334,36 @@ def scoped(tmp_path):
         thread.join()
 
 
-def project_path(server, slug, journey_id=JID):
+def product_path(server, slug, journey_id=JID):
     return (
         server.config.data_dir / slug / FIXED_DATE / f"{_safe_stem(journey_id)}.jsonl"
     )
 
 
-def test_a_registered_key_lands_under_its_own_project(scoped):
+def test_a_registered_key_lands_under_its_own_product(scoped):
     sent = evs()
     HttpSink(endpoint(scoped), api_key="sk-acme").send(JID, sent)
-    assert read_events(project_path(scoped, "proj_acme")).events == sent
-    assert not project_path(scoped, "proj_globex").exists()
+    assert read_events(product_path(scoped, "proj_acme")).events == sent
+    assert not product_path(scoped, "proj_globex").exists()
     # And nowhere unscoped either -- project mode always partitions by project.
     assert not (scoped.config.data_dir / FIXED_DATE).exists()
 
 
-def test_two_projects_writing_the_same_journey_id_never_collide(scoped):
+def test_two_products_writing_the_same_journey_id_never_collide(scoped):
     acme_events = evs()
     globex_events = evs()[:1]
     HttpSink(endpoint(scoped), api_key="sk-acme").send(JID, acme_events)
     HttpSink(endpoint(scoped), api_key="sk-globex").send(JID, globex_events)
 
-    assert read_events(project_path(scoped, "proj_acme")).events == acme_events
-    assert read_events(project_path(scoped, "proj_globex")).events == globex_events
+    assert read_events(product_path(scoped, "proj_acme")).events == acme_events
+    assert read_events(product_path(scoped, "proj_globex")).events == globex_events
 
 
 def test_an_unregistered_key_is_rejected_and_nothing_is_written(scoped):
     with pytest.raises(HttpSinkError, match="HTTP 401"):
         HttpSink(endpoint(scoped), api_key="sk-not-registered").send(JID, evs())
-    assert not project_path(scoped, "proj_acme").exists()
-    assert not project_path(scoped, "proj_globex").exists()
+    assert not product_path(scoped, "proj_acme").exists()
+    assert not product_path(scoped, "proj_globex").exists()
 
 
 def test_a_missing_key_is_rejected_in_project_mode_too(scoped):
@@ -371,32 +371,32 @@ def test_a_missing_key_is_rejected_in_project_mode_too(scoped):
         HttpSink(endpoint(scoped)).send(JID, evs())
 
 
-def test_api_key_and_projects_are_mutually_exclusive():
+def test_api_key_and_products_are_mutually_exclusive():
     with pytest.raises(ValueError, match="not both"):
-        CollectorConfig(api_key="sk-shared", projects=(ACME,))
+        CollectorConfig(api_key="sk-shared", products=(ACME,))
 
 
-def test_a_malformed_keys_file_fails_fast_at_startup(tmp_path):
+def test_a_malformed_products_file_fails_fast_at_startup(tmp_path):
     bad = tmp_path / "keys.json"
     bad.write_text("not json")
     with pytest.raises(json.JSONDecodeError):
-        resolve_config(data_dir=tmp_path / "data", keys_file=bad)
+        resolve_config(data_dir=tmp_path / "data", products_file=bad)
 
 
-def test_a_keys_file_missing_the_projects_key_is_rejected(tmp_path):
+def test_a_products_file_missing_the_products_key_is_rejected(tmp_path):
     bad = tmp_path / "keys.json"
     bad.write_text(json.dumps({"sk-a": "proj_a"}))  # the old flat-map shape
-    with pytest.raises(ValueError, match="keys file must be"):
-        resolve_config(data_dir=tmp_path / "data", keys_file=bad)
+    with pytest.raises(ValueError, match="products file must be"):
+        resolve_config(data_dir=tmp_path / "data", products_file=bad)
 
 
-def test_a_project_entry_missing_a_field_is_rejected(tmp_path):
+def test_a_product_entry_missing_a_field_is_rejected(tmp_path):
     bad = tmp_path / "keys.json"
     bad.write_text(
-        json.dumps({"projects": [{"slug": "proj_a", "api_key": "sk-a"}]})  # no name
+        json.dumps({"products": [{"slug": "proj_a", "api_key": "sk-a"}]})  # no name
     )
     with pytest.raises(ValueError, match="slug.*name.*api_key"):
-        resolve_config(data_dir=tmp_path / "data", keys_file=bad)
+        resolve_config(data_dir=tmp_path / "data", products_file=bad)
 
 
 def test_a_duplicate_slug_is_rejected(tmp_path):
@@ -404,15 +404,15 @@ def test_a_duplicate_slug_is_rejected(tmp_path):
     bad.write_text(
         json.dumps(
             {
-                "projects": [
+                "products": [
                     {"slug": "proj_a", "name": "A", "api_key": "sk-1"},
                     {"slug": "proj_a", "name": "A Again", "api_key": "sk-2"},
                 ]
             }
         )
     )
-    with pytest.raises(ValueError, match="duplicate project slug"):
-        resolve_config(data_dir=tmp_path / "data", keys_file=bad)
+    with pytest.raises(ValueError, match="duplicate product slug"):
+        resolve_config(data_dir=tmp_path / "data", products_file=bad)
 
 
 def test_a_duplicate_api_key_is_rejected(tmp_path):
@@ -420,7 +420,7 @@ def test_a_duplicate_api_key_is_rejected(tmp_path):
     bad.write_text(
         json.dumps(
             {
-                "projects": [
+                "products": [
                     {"slug": "proj_a", "name": "A", "api_key": "sk-shared"},
                     {"slug": "proj_b", "name": "B", "api_key": "sk-shared"},
                 ]
@@ -428,63 +428,63 @@ def test_a_duplicate_api_key_is_rejected(tmp_path):
         )
     )
     with pytest.raises(ValueError, match="same api_key"):
-        resolve_config(data_dir=tmp_path / "data", keys_file=bad)
+        resolve_config(data_dir=tmp_path / "data", products_file=bad)
 
 
-def test_a_valid_keys_file_round_trips_through_resolve_config(tmp_path):
+def test_a_valid_products_file_round_trips_through_resolve_config(tmp_path):
     keys_file = tmp_path / "keys.json"
     keys_file.write_text(
         json.dumps(
-            {"projects": [{"slug": "proj_a", "name": "A Corp", "api_key": "sk-a"}]}
+            {"products": [{"slug": "proj_a", "name": "A Corp", "api_key": "sk-a"}]}
         )
     )
-    config = resolve_config(data_dir=tmp_path / "data", keys_file=keys_file)
-    assert config.projects == (Project(slug="proj_a", name="A Corp", api_key="sk-a"),)
+    config = resolve_config(data_dir=tmp_path / "data", products_file=keys_file)
+    assert config.products == (Product(slug="proj_a", name="A Corp", api_key="sk-a"),)
 
 
-def test_init_keys_file_writes_a_loadable_roster(tmp_path):
-    """The bootstrap path (`odyssey-collector --init-keys-file`) writes
-    exactly the shape `resolve_config`/`_load_keys_file` already accept --
+def test_init_products_file_writes_a_loadable_roster(tmp_path):
+    """The bootstrap path (`odyssey-collector --init-products-file`) writes
+    exactly the shape `resolve_config`/`_load_products_file` already accept --
     no second parser, no drift between "what writes it" and "what reads it".
     """
     path = tmp_path / "keys.json"
-    written = _init_keys_file(path, slug="acme", name="Acme Corp")
+    written = _init_products_file(path, slug="acme", name="Acme Corp")
 
     assert written.slug == "acme"
     assert written.name == "Acme Corp"
     assert len(written.api_key) >= 32  # a real secret, not a short placeholder
 
-    config = resolve_config(data_dir=tmp_path / "data", keys_file=path)
-    assert config.projects == (written,)
+    config = resolve_config(data_dir=tmp_path / "data", products_file=path)
+    assert config.products == (written,)
 
 
-def test_init_keys_file_refuses_to_overwrite_an_existing_file(tmp_path):
+def test_init_products_file_refuses_to_overwrite_an_existing_file(tmp_path):
     path = tmp_path / "keys.json"
-    first = _init_keys_file(path, slug="acme", name="Acme Corp")
+    first = _init_products_file(path, slug="acme", name="Acme Corp")
 
     with pytest.raises(FileExistsError):
-        _init_keys_file(path, slug="acme", name="Acme Corp")
+        _init_products_file(path, slug="acme", name="Acme Corp")
 
     # the real roster on disk must be untouched by the failed second call
-    config = resolve_config(data_dir=tmp_path / "data", keys_file=path)
-    assert config.projects == (first,)
+    config = resolve_config(data_dir=tmp_path / "data", products_file=path)
+    assert config.products == (first,)
 
 
-def test_init_keys_file_generates_a_different_key_each_time(tmp_path):
-    a = _init_keys_file(tmp_path / "a.json", slug="acme", name="Acme")
-    b = _init_keys_file(tmp_path / "b.json", slug="acme", name="Acme")
+def test_init_products_file_generates_a_different_key_each_time(tmp_path):
+    a = _init_products_file(tmp_path / "a.json", slug="acme", name="Acme")
+    b = _init_products_file(tmp_path / "b.json", slug="acme", name="Acme")
     assert a.api_key != b.api_key
 
 
 def test_a_slug_cannot_traverse_out_of_data_dir(tmp_path):
     """A keys file is operator-authored, but defence in depth is cheap --
     the same journey_id traversal guard applies to a project's slug."""
-    evil = Project(slug="../../etc", name="Evil", api_key="sk-evil")
+    evil = Product(slug="../../etc", name="Evil", api_key="sk-evil")
     config = CollectorConfig(
         host="127.0.0.1",
         port=0,
         data_dir=tmp_path / "data",
-        projects=(evil,),
+        products=(evil,),
         date_fn=lambda: FIXED_DATE,
     )
     server = serve(config)
@@ -503,7 +503,7 @@ def test_a_slug_cannot_traverse_out_of_data_dir(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# GET /projects — the roster, names + slugs, never keys
+# GET /products — the roster, names + slugs, never keys
 # --------------------------------------------------------------------------
 
 
@@ -514,32 +514,32 @@ def _get_json(url, *, api_key=None):
         return resp.status, json.loads(resp.read())
 
 
-def test_get_projects_lists_the_roster_by_slug_and_name(scoped):
-    status, body = _get_json(f"{endpoint(scoped)}/projects", api_key="sk-acme")
+def test_get_products_lists_the_roster_by_slug_and_name(scoped):
+    status, body = _get_json(f"{endpoint(scoped)}/products", api_key="sk-acme")
     assert status == 200
     assert body == {
-        "projects": [
+        "products": [
             {"slug": "proj_acme", "name": "Acme Corp"},
             {"slug": "proj_globex", "name": "Globex Inc"},
         ]
     }
 
 
-def test_get_projects_never_includes_api_keys(scoped):
-    _, body = _get_json(f"{endpoint(scoped)}/projects", api_key="sk-acme")
+def test_get_products_never_includes_api_keys(scoped):
+    _, body = _get_json(f"{endpoint(scoped)}/products", api_key="sk-acme")
     assert "sk-acme" not in json.dumps(body)
     assert "sk-globex" not in json.dumps(body)
 
 
-def test_get_projects_requires_a_registered_key(scoped):
+def test_get_products_requires_a_registered_key(scoped):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
-        _get_json(f"{endpoint(scoped)}/projects")
+        _get_json(f"{endpoint(scoped)}/products")
     assert exc_info.value.code == 401
 
 
-def test_get_projects_is_404_outside_project_scoped_mode(running):
+def test_get_products_is_404_outside_product_scoped_mode(running):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
-        _get_json(f"{endpoint(running)}/projects")
+        _get_json(f"{endpoint(running)}/products")
     assert exc_info.value.code == 404
 
 
@@ -617,13 +617,13 @@ def test_a_batch_requires_authorization_in_guarded_mode(guarded):
     assert not stored_path(guarded, "j_a").exists()
 
 
-def test_a_batch_is_project_scoped_like_single_sends(scoped):
+def test_a_batch_is_product_scoped_like_single_sends(scoped):
     sent_a, sent_b = evs(), evs()
     HttpSink(endpoint(scoped), api_key="sk-acme").send_batch(
         [("j_a", sent_a, None), ("j_b", sent_b, None)]
     )
-    assert read_events(project_path(scoped, "proj_acme", "j_a")).events == sent_a
-    assert read_events(project_path(scoped, "proj_acme", "j_b")).events == sent_b
+    assert read_events(product_path(scoped, "proj_acme", "j_a")).events == sent_a
+    assert read_events(product_path(scoped, "proj_acme", "j_b")).events == sent_b
 
 
 def test_a_malformed_batch_envelope_is_rejected_with_400(running):

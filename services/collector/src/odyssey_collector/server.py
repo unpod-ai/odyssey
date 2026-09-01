@@ -67,37 +67,33 @@ but nothing here emits 429 itself; that is a deliberate scope cut (item 1.7),
 not an oversight — this stdlib server has no queue-depth signal to base one
 on.
 
-**Project scoping (item 1.6).** Two mutually exclusive auth modes:
+**Product scoping.** Two mutually exclusive auth modes:
 
 - ``api_key`` (``--api-key``/``ODYSSEY_COLLECTOR_API_KEY``) — one shared
-  key, unscoped, exactly the pre-1.6 behavior: any caller with the key
-  writes into the flat ``<data_dir>/<date>/`` layout below. Unchanged, for
-  the single-tenant case this was always meant for.
-- ``projects`` (``--keys-file``/``ODYSSEY_COLLECTOR_KEYS_FILE``, a JSON file
-  shaped ``{"projects": [{"slug": ..., "name": ..., "api_key": ...}, ...]}``)
-  — a small registered-tenant roster, each with a unique ``api_key`` and a
-  unique ``slug``. Storage becomes
+  key, unscoped: any caller with the key writes into the flat
+  ``<data_dir>/<date>/`` layout below. The simple single-tenant mode.
+- ``products`` (``--products-file``/``ODYSSEY_COLLECTOR_PRODUCTS_FILE``, a
+  JSON file shaped ``{"products": [{"slug": ..., "name": ..., "api_key":
+  ...}, ...]}``) — a small registered-tenant roster, each with a unique
+  ``api_key`` and a unique ``slug``. Storage becomes
   ``<data_dir>/<slug>/<date>/<journey_id>.jsonl``, so isolation is
-  structural (one caller's key can never resolve into another project's
+  structural (one caller's key can never resolve into another product's
   directory), not just an access check layered on shared storage. ``name``
-  exists purely for operator legibility — logs, `GET /projects`, reading the
-  keys file — the ``slug`` is what actually names the directory and every
-  invocation. This is a stopgap, not real multi-tenant infrastructure: the
-  roster is a flat file loaded once at startup (edit it and restart the
-  process to add/revoke a project), not a database. Real key/project
-  management is ``services/api``'s job once it exists (Step 8, not built) —
-  this is enough to stop one caller from seeing another's data in the
-  meantime, not a replacement for that.
+  exists purely for operator legibility — logs, `GET /products`, reading
+  the products file — the ``slug`` is what actually names the directory
+  and every invocation. This is a stopgap, not real multi-tenant
+  infrastructure: the roster is a flat file loaded once at startup (edit
+  it and restart the process to add/revoke a product), not a database.
 
-Passing both ``api_key`` and ``projects`` raises at construction — picking a
-mode is explicit, not a silent precedence rule. In project-scoped mode,
-``GET /projects`` (any registered key) lists ``{slug, name}`` for the whole
-roster — never keys — as a debugging/operator aid.
+Passing both ``api_key`` and ``products`` raises at construction — picking
+a mode is explicit, not a silent precedence rule. In product-scoped mode,
+``GET /products`` (any registered key) lists ``{slug, name}`` for the
+whole roster — never keys — as a debugging/operator aid.
 
 Retention (``prune.py``, items 1.12/2.14) is unchanged and unaware of
-projects: it deletes date-named directories directly under whatever
-``--data-dir`` it is pointed at. In project-scoped mode that means running
-it once per project directory (``--data-dir <data_dir>/<slug>``), not once
+products: it deletes date-named directories directly under whatever
+``--data-dir`` it is pointed at. In product-scoped mode that means running
+it once per product directory (``--data-dir <data_dir>/<slug>``), not once
 against the root.
 """
 
@@ -130,7 +126,7 @@ ENV_HOST = "ODYSSEY_COLLECTOR_HOST"
 ENV_PORT = "ODYSSEY_COLLECTOR_PORT"
 ENV_DATA_DIR = "ODYSSEY_COLLECTOR_DATA_DIR"
 ENV_API_KEY = "ODYSSEY_COLLECTOR_API_KEY"
-ENV_KEYS_FILE = "ODYSSEY_COLLECTOR_KEYS_FILE"
+ENV_PRODUCTS_FILE = "ODYSSEY_COLLECTOR_PRODUCTS_FILE"
 ENV_TIMEZONE = "ODYSSEY_COLLECTOR_TIMEZONE"
 
 DEFAULT_HOST = "127.0.0.1"
@@ -192,9 +188,13 @@ def _existing_event_ids(dest: Path) -> set[str]:
 
 
 @dataclass(frozen=True)
-class Project:
-    """One registered tenant (item 1.6): a human-readable ``name`` plus the
-    ``slug`` that actually names its storage partition and its ``api_key``.
+class Product:
+    """One registered tenant: a human-readable ``name`` plus the ``slug``
+    that actually names its storage partition and its ``api_key`` -- the
+    top-level, unique-key-per-tenant auth boundary. (Not to be confused
+    with the unrelated ``project`` tag packages/odyssey-core's capture
+    side can attach to a journey -- see odyssey/project.py -- which is
+    purely descriptive and never an auth concept.)
 
     ``slug`` rather than an opaque id, because it is what shows up in
     ``<data_dir>/<slug>/...`` and in every log line and CLI invocation —
@@ -207,57 +207,58 @@ class Project:
     api_key: str
 
 
-def _load_keys_file(path: Path | str) -> Tuple[Project, ...]:
-    """Parse a JSON ``{"projects": [{"slug", "name", "api_key"}, ...]}`` file.
+def _load_products_file(path: Path | str) -> Tuple[Product, ...]:
+    """Parse a JSON ``{"products": [{"slug", "name", "api_key"}, ...]}`` file.
 
     Fails loudly and immediately — at startup, not on the first mismatched
-    request — if the file is missing or malformed, or if two projects share a
+    request — if the file is missing or malformed, or if two products share a
     slug or a key. A silently-empty or ambiguous roster would look identical
-    to "no keys configured" or "which project does this key belong to?" and
+    to "no keys configured" or "which product does this key belong to?" and
     quietly misroute or reopen the server.
     """
     raw = json.loads(Path(path).read_text())
-    entries = raw.get("projects") if isinstance(raw, dict) else None
+    entries = raw.get("products") if isinstance(raw, dict) else None
     if not isinstance(entries, list) or not entries:
         raise ValueError(
-            f"{path}: keys file must be a JSON object shaped "
-            '{"projects": [{"slug": ..., "name": ..., "api_key": ...}, ...]}'
+            f"{path}: products file must be a JSON object shaped "
+            '{"products": [{"slug": ..., "name": ..., "api_key": ...}, ...]}'
         )
 
-    projects = []
+    products = []
     for i, entry in enumerate(entries):
         if not isinstance(entry, dict) or not all(
             isinstance(entry.get(k), str) and entry.get(k)
             for k in ("slug", "name", "api_key")
         ):
             raise ValueError(
-                f"{path}: projects[{i}] must have non-empty string "
+                f"{path}: products[{i}] must have non-empty string "
                 "'slug', 'name', and 'api_key' fields"
             )
-        projects.append(
-            Project(slug=entry["slug"], name=entry["name"], api_key=entry["api_key"])
+        products.append(
+            Product(slug=entry["slug"], name=entry["name"], api_key=entry["api_key"])
         )
 
-    slugs = [p.slug for p in projects]
+    slugs = [p.slug for p in products]
     if len(set(slugs)) != len(slugs):
-        raise ValueError(f"{path}: duplicate project slug in {sorted(slugs)}")
-    keys = [p.api_key for p in projects]
+        raise ValueError(f"{path}: duplicate product slug in {sorted(slugs)}")
+    keys = [p.api_key for p in products]
     if len(set(keys)) != len(keys):
-        raise ValueError(f"{path}: the same api_key is registered to two projects")
+        raise ValueError(f"{path}: the same api_key is registered to two products")
 
-    return tuple(projects)
+    return tuple(products)
 
 
-def _init_keys_file(path: Path | str, slug: str, name: str) -> Project:
-    """Bootstrap a starter ``--keys-file`` roster (``odyssey-collector
-    --init-keys-file``, never a side effect of a normal ``serve`` startup).
+def _init_products_file(path: Path | str, slug: str, name: str) -> Product:
+    """Bootstrap a starter ``--products-file`` roster (``odyssey-collector
+    --init-products-file``, never a side effect of a normal ``serve``
+    startup).
 
-    ``_load_keys_file`` deliberately refuses to start the server on a
-    missing/empty/malformed keys file (see its own docstring) — an
+    ``_load_products_file`` deliberately refuses to start the server on a
+    missing/empty/malformed products file (see its own docstring) — an
     auto-created *empty* roster would be indistinguishable from "no keys
     configured" and every future request would just 401 with no
     explanation. This is the safe version of "create it automatically": a
-    human runs it once, on purpose, and it writes exactly one project with
+    human runs it once, on purpose, and it writes exactly one product with
     a cryptographically random ``api_key`` — a real secret, not a
     fabricated placeholder — printed once so the operator can save it
     before it scrolls off. Refuses to overwrite an existing file, the same
@@ -266,16 +267,16 @@ def _init_keys_file(path: Path | str, slug: str, name: str) -> Project:
     path = Path(path)
     if path.exists():
         raise FileExistsError(f"{path} already exists — not overwriting a real roster")
-    project = Project(slug=slug, name=name, api_key=secrets.token_urlsafe(32))
+    product = Product(slug=slug, name=name, api_key=secrets.token_urlsafe(32))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            {"projects": [{"slug": slug, "name": name, "api_key": project.api_key}]},
+            {"products": [{"slug": slug, "name": name, "api_key": product.api_key}]},
             indent=2,
         )
         + "\n"
     )
-    return project
+    return product
 
 
 class BatchRejected(ValueError):
@@ -288,13 +289,13 @@ class CollectorConfig:
     port: int = DEFAULT_PORT
     data_dir: Path = Path(DEFAULT_DATA_DIR)
     # None means open: no Authorization header is required. Set to require one.
-    # Mutually exclusive with projects — see the module docstring's
-    # "Project scoping" section.
+    # Mutually exclusive with products — see the module docstring's
+    # "Product scoping" section.
     api_key: Optional[str] = None
     # The registered tenant roster. When set, storage is partitioned per
-    # project (<data_dir>/<slug>/<date>/...) and only a key belonging to a
-    # registered project is accepted. Mutually exclusive with api_key.
-    projects: Optional[Tuple[Project, ...]] = None
+    # product (<data_dir>/<slug>/<date>/...) and only a key belonging to a
+    # registered product is accepted. Mutually exclusive with api_key.
+    products: Optional[Tuple[Product, ...]] = None
     # Explicit wins over ODYSSEY_COLLECTOR_TIMEZONE, which wins over UTC.
     timezone: Optional[str] = None
     # Injectable for tests that need a fixed date rather than the real one.
@@ -304,20 +305,20 @@ class CollectorConfig:
     def __post_init__(self) -> None:
         if self.timezone is not None:
             object.__setattr__(self, "date_fn", _make_date_fn(self.timezone))
-        if self.api_key is not None and self.projects is not None:
+        if self.api_key is not None and self.products is not None:
             raise ValueError(
                 "CollectorConfig: pass either api_key (single shared key, "
-                "unscoped) or projects (multi-tenant, project-scoped "
+                "unscoped) or products (multi-tenant, product-scoped "
                 "storage), not both — picking an auth mode is explicit here, "
                 "not a silent precedence rule"
             )
 
-    def project_for_key(self, api_key: str) -> Optional[Project]:
-        if not self.projects or not api_key:
+    def product_for_key(self, api_key: str) -> Optional[Product]:
+        if not self.products or not api_key:
             return None
-        for project in self.projects:
-            if project.api_key == api_key:
-                return project
+        for product in self.products:
+            if product.api_key == api_key:
+                return product
         return None
 
 
@@ -327,13 +328,15 @@ def resolve_config(
     port: Optional[int] = None,
     data_dir: Optional[Path | str] = None,
     api_key: Optional[str] = None,
-    keys_file: Optional[Path | str] = None,
+    products_file: Optional[Path | str] = None,
     timezone: Optional[str] = None,
 ) -> CollectorConfig:
     """Explicit arguments win over ``ODYSSEY_COLLECTOR_*`` env vars — the same
     precedence ``odyssey.config.resolve()`` uses on the recording side."""
-    resolved_keys_file = (
-        keys_file if keys_file is not None else os.environ.get(ENV_KEYS_FILE)
+    resolved_products_file = (
+        products_file
+        if products_file is not None
+        else os.environ.get(ENV_PRODUCTS_FILE)
     )
     return CollectorConfig(
         host=host if host is not None else os.environ.get(ENV_HOST, DEFAULT_HOST),
@@ -344,7 +347,11 @@ def resolve_config(
             else os.environ.get(ENV_DATA_DIR, DEFAULT_DATA_DIR)
         ),
         api_key=api_key if api_key is not None else os.environ.get(ENV_API_KEY),
-        projects=(_load_keys_file(resolved_keys_file) if resolved_keys_file else None),
+        products=(
+            _load_products_file(resolved_products_file)
+            if resolved_products_file
+            else None
+        ),
         timezone=timezone,
     )
 
@@ -381,21 +388,21 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._respond(200, {"status": "ok"})
             return
-        if self.path == "/projects":
-            self._get_projects()
+        if self.path == "/products":
+            self._get_products()
             return
         self._respond(404, {"error": "not found"})
 
-    def _get_projects(self) -> None:
-        """The registered roster, in project-scoped mode only — 404 rather
+    def _get_products(self) -> None:
+        """The registered roster, in product-scoped mode only — 404 rather
         than an empty list when the server isn't running that mode, so a
-        caller can tell "no projects" apart from "not a thing this server
+        caller can tell "no products" apart from "not a thing this server
         does". Any registered key may list the roster (names + slugs, never
         keys) — this is an operator/debugging aid, not a privacy boundary
-        between projects, which is what storage partitioning already is.
+        between products, which is what storage partitioning already is.
         """
         config = self.server.config
-        if config.projects is None:
+        if config.products is None:
             self._respond(404, {"error": "not found"})
             return
         authorized, _ = self._authenticate()
@@ -404,7 +411,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._respond(
             200,
-            {"projects": [{"slug": p.slug, "name": p.name} for p in config.projects]},
+            {"products": [{"slug": p.slug, "name": p.name} for p in config.products]},
         )
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib method name
@@ -427,7 +434,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._respond(400, {"error": "journey_id must not be empty"})
             return
 
-        authorized, project_slug = self._authenticate()
+        authorized, product_slug = self._authenticate()
         if not authorized:
             self._respond(401, {"error": "missing or invalid Authorization"})
             return
@@ -438,7 +445,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         try:
-            count = self._store(journey_id, body, project_slug)
+            count = self._store(journey_id, body, product_slug)
         except (MalformedHeaderError, SchemaVersionError, BatchRejected) as exc:
             self._respond(400, {"error": str(exc)})
             return
@@ -456,7 +463,7 @@ class _Handler(BaseHTTPRequestHandler):
         others in the same request — the envelope is a transport
         optimisation, not a new all-or-nothing write.
         """
-        authorized, project_slug = self._authenticate()
+        authorized, product_slug = self._authenticate()
         if not authorized:
             self._respond(401, {"error": "missing or invalid Authorization"})
             return
@@ -486,7 +493,7 @@ class _Handler(BaseHTTPRequestHandler):
                 }
                 continue
             try:
-                count = self._store(journey_id, blob.encode("utf-8"), project_slug)
+                count = self._store(journey_id, blob.encode("utf-8"), product_slug)
             except (MalformedHeaderError, SchemaVersionError, BatchRejected) as exc:
                 results[journey_id] = {"ok": False, "error": str(exc)}
                 continue
@@ -510,23 +517,23 @@ class _Handler(BaseHTTPRequestHandler):
         return body, None
 
     def _authenticate(self) -> Tuple[bool, Optional[str]]:
-        """Returns ``(authorized, project_slug)``. ``project_slug`` is
-        ``None`` except in project-scoped mode, where it names the directory
+        """Returns ``(authorized, product_slug)``. ``product_slug`` is
+        ``None`` except in product-scoped mode, where it names the directory
         the caller's key resolved to.
         """
         config = self.server.config
         presented = self.headers.get("Authorization", "")
-        if config.projects is not None:
+        if config.products is not None:
             token = (
                 presented[len("Bearer ") :] if presented.startswith("Bearer ") else ""
             )
-            project = config.project_for_key(token)
-            return (project is not None, project.slug if project else None)
+            product = config.product_for_key(token)
+            return (product is not None, product.slug if product else None)
         if not config.api_key:
             return (True, None)
         return (presented == f"Bearer {config.api_key}", None)
 
-    def _store(self, journey_id: str, body: bytes, project_slug: Optional[str]) -> int:
+    def _store(self, journey_id: str, body: bytes, product_slug: Optional[str]) -> int:
         """Parse the posted batch through the real codec, then append it.
 
         Round-tripping through :func:`read_events` rather than trusting the
@@ -556,8 +563,8 @@ class _Handler(BaseHTTPRequestHandler):
 
         base = self.server.config.data_dir
         date_dir = (
-            (base / _safe_stem(project_slug) / self.server.config.date_fn())
-            if project_slug is not None
+            (base / _safe_stem(product_slug) / self.server.config.date_fn())
+            if product_slug is not None
             else (base / self.server.config.date_fn())
         )
         dest = date_dir / f"{_safe_stem(journey_id)}.jsonl"
@@ -594,13 +601,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--api-key",
         default=None,
         help="require this single shared bearer token, unscoped; default: open. "
-        "Mutually exclusive with --keys-file",
+        "Mutually exclusive with --products-file",
     )
     parser.add_argument(
-        "--keys-file",
+        "--products-file",
         default=None,
-        help='JSON {"projects": [{"slug", "name", "api_key"}, ...]} file '
-        "(item 1.6) -- each project writes into its own <data_dir>/<slug>/ "
+        help='JSON {"products": [{"slug", "name", "api_key"}, ...]} file '
+        "-- each product writes into its own <data_dir>/<slug>/ "
         "partition. Mutually exclusive with --api-key",
     )
     parser.add_argument(
@@ -609,39 +616,40 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="IANA name for date-partition boundaries; default: UTC",
     )
     parser.add_argument(
-        "--init-keys-file",
+        "--init-products-file",
         default=None,
         metavar="PATH",
-        help="bootstrap a starter --keys-file roster at PATH (one project, "
-        "a fresh random api_key) and exit -- does not start the server. "
-        "Refuses to overwrite an existing file. See --project-slug/--project-name",
+        help="bootstrap a starter --products-file roster at PATH (one "
+        "product, a fresh random api_key) and exit -- does not start the "
+        "server. Refuses to overwrite an existing file. See "
+        "--product-slug/--product-name",
     )
     parser.add_argument(
-        "--project-slug",
+        "--product-slug",
         default="default",
-        help="with --init-keys-file (default: default)",
+        help="with --init-products-file (default: default)",
     )
     parser.add_argument(
-        "--project-name",
+        "--product-name",
         default="Default",
-        help="with --init-keys-file (default: Default)",
+        help="with --init-products-file (default: Default)",
     )
     args = parser.parse_args(argv)
 
-    if args.init_keys_file is not None:
+    if args.init_products_file is not None:
         try:
-            project = _init_keys_file(
-                args.init_keys_file, args.project_slug, args.project_name
+            product = _init_products_file(
+                args.init_products_file, args.product_slug, args.product_name
             )
         except FileExistsError as exc:
             print(str(exc), file=sys.stderr)
             return 1
-        print(f"wrote {args.init_keys_file}")
-        print(f"project: slug={project.slug!r} name={project.name!r}")
-        print(f"api_key={project.api_key}")
+        print(f"wrote {args.init_products_file}")
+        print(f"product: slug={product.slug!r} name={product.name!r}")
+        print(f"api_key={product.api_key}")
         print(
             f"save this key now -- it will not be printed again "
-            f"(it's also in {args.init_keys_file} in plaintext)",
+            f"(it's also in {args.init_products_file} in plaintext)",
             file=sys.stderr,
         )
         return 0
@@ -651,7 +659,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         port=args.port,
         data_dir=args.data_dir,
         api_key=args.api_key,
-        keys_file=args.keys_file,
+        products_file=args.products_file,
         timezone=args.timezone,
     )
     server = serve(config)
