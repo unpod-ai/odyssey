@@ -203,7 +203,8 @@ you are to need it first.
 3. [`docs/model-lifecycle.md`](docs/model-lifecycle.md) — corpus → training config → checkpoint → registered model → evaluation, in sequence
 
 **Deployment**
-1. [`docs/runbooks/run-services.md`](docs/runbooks/run-services.md) — `services/api`/`services/collector` under gunicorn/uvicorn + systemd
+1. [`docs/environment-variables.md`](docs/environment-variables.md) — every `ODYSSEY_*` variable, grouped by which process reads it
+2. [`docs/runbooks/run-services.md`](docs/runbooks/run-services.md) — `services/api`/`services/collector` under gunicorn/uvicorn + systemd
 
 **Per-component**
 1. [`packages/odyssey-core/README.md`](packages/odyssey-core/README.md) — capture library: schema, fold, spool, builders

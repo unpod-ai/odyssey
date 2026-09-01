@@ -36,6 +36,20 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Added
 
+- **`docs/environment-variables.md`** — every `ODYSSEY_*` variable in the
+  repo, grouped by which process reads it (capture layer,
+  `services/collector`, `services/api`, `apps/web`), with the
+  `ODYSSEY_API_KEY` (client, sent to a collector) vs
+  `ODYSSEY_COLLECTOR_API_KEY` (server, required by a collector) naming
+  collision called out explicitly. Also documents a real finding:
+  `ODYSSEY_DRAIN_INTERVAL` is declared but not currently reachable
+  through `odyssey.init()`'s public API (`init()`'s own `drain_interval`
+  parameter always defaults to a concrete `30.0`, so `resolve()`'s
+  env-var branch never runs) — verified by setting the env var and
+  calling `resolve()` with no arguments. Notes `ODYSSEY_WIRE_DIR`/
+  `ODYSSEY_ALL_STEPS`/`ODYSSEY_SYSTEM_PROMPT` (named in `docs/WORKING.md`)
+  belong to a LiveKit deployment in the separate `super` repo, not to
+  anything implemented here — confirmed via repo-wide grep, zero hits.
 - **`odyssey-collector --init-keys-file`** — bootstraps a real
   `--keys-file` roster (one project, a fresh `secrets.token_urlsafe(32)`
   `api_key`, printed once) and exits without starting the server. A

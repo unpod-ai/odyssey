@@ -380,9 +380,11 @@ shard data lives in an object store. Written by `data_preparation`'s
   `journey-schema.md` (the wire format field by field),
   `data-contracts.md` (the codegen/drift-check chain),
   `model-lifecycle.md` (corpus → training → registry → eval, in
-  sequence), `STRUCTURE.md` (the original proposal), `WORKING.md` (the
-  real item-by-item scorecard), `NEXT.md` (session handoff notes), `adr/`
-  (numbered decisions), `runbooks/run-services.md` (gunicorn/systemd for
+  sequence), `environment-variables.md` (every `ODYSSEY_*` var, grouped
+  by which process reads it), `STRUCTURE.md` (the original proposal),
+  `WORKING.md` (the real item-by-item scorecard), `NEXT.md` (session
+  handoff notes), `adr/` (numbered decisions),
+  `runbooks/run-services.md` (gunicorn/systemd for
   `services/api`/`services/collector` — the one runbook this repo has;
   the rest of `docs/STRUCTURE.md`'s named runbooks stay unwritten, no
   concrete backfill/release process exists yet).
