@@ -27,6 +27,7 @@ from uuid import uuid4
 
 from odyssey.config import UNSET, Config, resolve
 from odyssey.context import SeqAllocator
+from odyssey.metrics import MetricsReporter
 from odyssey.primitives import TerminationReason
 from odyssey.sinks import FileSink
 from odyssey.spool import DrainResult, IntervalDrainer, Sink, Spool, SpoolConfig
@@ -110,6 +111,18 @@ class Client:
                 batch_size=config.drain_batch_size,
             )
             self.drainer.start()
+
+        self.metrics_reporter: Optional[MetricsReporter] = None
+        if config.collect_metrics:
+            try:
+                self.metrics_reporter = MetricsReporter(
+                    interval_seconds=config.metrics_interval,
+                    project=config.project,
+                    on_error=lambda exc: self.note_error("metrics", exc),
+                )
+                self.metrics_reporter.start()
+            except Exception as exc:  # noqa: BLE001 - never crash the host
+                self.note_error("metrics", exc)
 
         # Recorders holding an open journey. Weak on purpose: the session keeps
         # its recorder alive through the bound handlers it registered, so
@@ -235,6 +248,9 @@ class Client:
         """
         self.close_open_journeys()
         result = self.flush()
+        if self.metrics_reporter is not None:
+            self.metrics_reporter.stop()
+            self.metrics_reporter = None
         self.spool.close()
         self._closed = True
         return result
@@ -259,6 +275,7 @@ class Client:
             "drain_interval": self.config.drain_interval,
             "drain_batch_size": self.config.drain_batch_size,
             "drainer_running": self.drainer is not None,
+            "metrics_reporter_running": self.metrics_reporter is not None,
             "debug": self.config.debug,
             "closed": self._closed,
             "open_shards": self.spool.open_shard_count(),
@@ -309,6 +326,8 @@ def init(
     timezone: Optional[str] = None,
     sample_rate: Optional[float] = None,
     project: Any = UNSET,
+    collect_metrics: Optional[bool] = None,
+    metrics_interval: Optional[float] = None,
     force: bool = False,
 ) -> Client:
     """Start recording. Call once, as early as the process allows.
@@ -335,6 +354,16 @@ def init(
     Pass ``project=None`` explicitly to disable the tag entirely, which is
     different from not passing it at all (which runs the auto-detect
     chain) -- see ``odyssey.project.resolve_project``.
+
+    ``collect_metrics`` (``ODYSSEY_COLLECT_METRICS``, default ``False``)
+    opts into a background reporter that posts one host snapshot
+    (hostname, OS, CPU count, disk usage) to ``{endpoint}/metrics`` every
+    ``metrics_interval`` seconds (``ODYSSEY_METRICS_INTERVAL``, default
+    ``300``). Off by default -- when off, nothing in ``odyssey.metrics``
+    ever runs and no host metadata leaves the process. Uses the same
+    ``endpoint``/``api_key`` resolution ``HttpSink`` does
+    (``ODYSSEY_ENDPOINT``/``ODYSSEY_API_KEY``) -- there is no separate
+    metrics-specific endpoint setting.
 
     ``timezone`` (``ODYSSEY_TIMEZONE``) is which day a shard rotation belongs
     to, not a display setting — UTC by default, so a shard's date means the
@@ -378,6 +407,8 @@ def init(
             fsync=fsync,
             sample_rate=sample_rate,
             project=project,
+            collect_metrics=collect_metrics,
+            metrics_interval=metrics_interval,
         )
         client = Client(config, sink=sink)
         _client = client

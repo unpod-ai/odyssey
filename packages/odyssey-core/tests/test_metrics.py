@@ -102,3 +102,77 @@ def test_metrics_reporter_rejects_zero_interval():
 def test_metrics_reporter_rejects_negative_interval():
     with pytest.raises(ValueError):
         MetricsReporter(interval_seconds=-1, endpoint="http://127.0.0.1:1")
+
+
+from odyssey.config import resolve
+
+
+def test_collect_metrics_defaults_to_false():
+    assert resolve().collect_metrics is False
+
+
+def test_collect_metrics_env_var(monkeypatch):
+    monkeypatch.setenv("ODYSSEY_COLLECT_METRICS", "1")
+    assert resolve().collect_metrics is True
+
+
+def test_collect_metrics_explicit_beats_env(monkeypatch):
+    monkeypatch.setenv("ODYSSEY_COLLECT_METRICS", "1")
+    assert resolve(collect_metrics=False).collect_metrics is False
+
+
+def test_metrics_interval_default_is_300(monkeypatch):
+    monkeypatch.delenv("ODYSSEY_METRICS_INTERVAL", raising=False)
+    assert resolve().metrics_interval == 300.0
+
+
+def test_metrics_interval_env_var(monkeypatch):
+    monkeypatch.setenv("ODYSSEY_METRICS_INTERVAL", "60")
+    assert resolve().metrics_interval == 60.0
+
+
+import odyssey
+
+
+def test_init_with_collect_metrics_starts_a_reporter(tmp_path, monkeypatch):
+    monkeypatch.setenv("ODYSSEY_ENDPOINT", "http://127.0.0.1:1")  # never has to connect
+    client = odyssey.init(
+        spool_dir=tmp_path / "spool",
+        out_dir=tmp_path / "out",
+        collect_metrics=True,
+        metrics_interval=5,
+        drain_interval=None,
+        force=True,
+    )
+    try:
+        assert client.metrics_reporter is not None
+    finally:
+        client.shutdown()
+
+
+def test_init_without_collect_metrics_starts_no_reporter(tmp_path):
+    client = odyssey.init(
+        spool_dir=tmp_path / "spool",
+        out_dir=tmp_path / "out",
+        drain_interval=None,
+        force=True,
+    )
+    try:
+        assert client.metrics_reporter is None
+    finally:
+        client.shutdown()
+
+
+def test_shutdown_stops_the_metrics_reporter(tmp_path, monkeypatch):
+    monkeypatch.setenv("ODYSSEY_ENDPOINT", "http://127.0.0.1:1")
+    client = odyssey.init(
+        spool_dir=tmp_path / "spool",
+        out_dir=tmp_path / "out",
+        collect_metrics=True,
+        drain_interval=None,
+        force=True,
+    )
+    reporter = client.metrics_reporter
+    client.shutdown()
+    assert reporter is not None
+    assert reporter._thread is None  # stop() cleared it

@@ -26,6 +26,8 @@ ENV_DEBUG = "ODYSSEY_DEBUG"
 ENV_MAX_OPEN_SHARDS = "ODYSSEY_MAX_OPEN_SHARDS"
 ENV_SAMPLE_RATE = "ODYSSEY_SAMPLE_RATE"
 ENV_DRAIN_BATCH_SIZE = "ODYSSEY_DRAIN_BATCH_SIZE"
+ENV_COLLECT_METRICS = "ODYSSEY_COLLECT_METRICS"
+ENV_METRICS_INTERVAL = "ODYSSEY_METRICS_INTERVAL"
 
 # Distinguishes "the caller didn't pass this argument, run the normal
 # resolution chain" from "the caller explicitly passed None" -- the same
@@ -44,6 +46,7 @@ DEFAULT_SAMPLE_RATE = 1.0
 # batching (sink.send_batch()) is opt-in, not a default -- a plain Sink with
 # no send_batch is unaffected by this value regardless.
 DEFAULT_DRAIN_BATCH_SIZE = 1
+DEFAULT_METRICS_INTERVAL = 300.0
 
 _FALSEY = {"", "0", "false", "no", "off", "none"}
 
@@ -100,6 +103,10 @@ class Config:
     # which is different from "not specified" -- see resolve()'s
     # project=UNSET default.
     project: Optional[str]
+    # Opt-in, off by default -- see odyssey/metrics.py. When False, nothing
+    # in that module ever runs and no host metadata leaves the process.
+    collect_metrics: bool
+    metrics_interval: float
 
 
 def resolve(
@@ -119,6 +126,8 @@ def resolve(
     timezone: Optional[str] = None,
     sample_rate: Optional[float] = None,
     project: Any = UNSET,
+    collect_metrics: Optional[bool] = None,
+    metrics_interval: Optional[float] = None,
 ) -> Config:
     """Merge explicit arguments over environment over defaults.
 
@@ -171,4 +180,14 @@ def resolve(
             ),
         ),
         project=(project if project is not UNSET else resolve_project()),
+        collect_metrics=(
+            collect_metrics
+            if collect_metrics is not None
+            else _flag(os.environ.get(ENV_COLLECT_METRICS), False)
+        ),
+        metrics_interval=(
+            metrics_interval
+            if metrics_interval is not None
+            else _number(os.environ.get(ENV_METRICS_INTERVAL), DEFAULT_METRICS_INTERVAL)
+        ),
     )
