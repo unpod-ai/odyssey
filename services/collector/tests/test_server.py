@@ -644,6 +644,93 @@ def test_batch_events_path_rejects_get(running):
 
 
 # --------------------------------------------------------------------------
+# POST /metrics — opt-in host telemetry, its own channel, own storage
+# --------------------------------------------------------------------------
+
+
+def test_a_metrics_snapshot_is_accepted_and_stored(running):
+    payload = json.dumps({"hostname": "box-1", "os": "Linux-test"}).encode()
+    request = urllib.request.Request(
+        f"{endpoint(running)}/metrics", data=payload, method="POST"
+    )
+    with urllib.request.urlopen(request) as resp:
+        assert resp.status == 200
+        assert json.loads(resp.read()) == {"ok": True}
+
+    stored = list((running.config.data_dir / "metrics").glob("*.jsonl"))
+    assert len(stored) == 1
+    line = json.loads(stored[0].read_text().splitlines()[0])
+    assert line["hostname"] == "box-1"
+    assert line["os"] == "Linux-test"
+
+
+def test_a_metrics_snapshot_records_the_real_peer_public_ip(running):
+    payload = json.dumps({"hostname": "box-1"}).encode()
+    request = urllib.request.Request(
+        f"{endpoint(running)}/metrics", data=payload, method="POST"
+    )
+    with urllib.request.urlopen(request):
+        pass
+
+    stored = list((running.config.data_dir / "metrics").glob("*.jsonl"))
+    line = json.loads(stored[0].read_text().splitlines()[0])
+    # A local test client always connects from loopback -- this proves the
+    # server derived it from the real socket, not from anything the client
+    # could have claimed in the payload itself.
+    assert line["public_ip"] in ("127.0.0.1", "::1")
+
+
+def test_a_metrics_snapshot_requires_authorization_when_guarded(guarded):
+    payload = json.dumps({"hostname": "box-1"}).encode()
+    request = urllib.request.Request(
+        f"{endpoint(guarded)}/metrics", data=payload, method="POST"
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(request)
+    assert exc_info.value.code == 401
+    assert not list((guarded.config.data_dir / "metrics").glob("*.jsonl"))
+
+
+def test_a_metrics_snapshot_lands_under_its_product_when_scoped(scoped):
+    payload = json.dumps({"hostname": "box-1"}).encode()
+    request = urllib.request.Request(
+        f"{endpoint(scoped)}/metrics",
+        data=payload,
+        method="POST",
+        headers={"Authorization": "Bearer sk-acme"},
+    )
+    with urllib.request.urlopen(request):
+        pass
+
+    stored = list((scoped.config.data_dir / "proj_acme" / "metrics").glob("*.jsonl"))
+    assert len(stored) == 1
+    assert not list(
+        (scoped.config.data_dir / "proj_globex" / "metrics").glob("*.jsonl")
+    )
+
+
+def test_a_malformed_metrics_body_is_rejected_with_400(running):
+    request = urllib.request.Request(
+        f"{endpoint(running)}/metrics", data=b"not json", method="POST"
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(request)
+    assert exc_info.value.code == 400
+    assert not list((running.config.data_dir / "metrics").glob("*.jsonl"))
+
+
+def test_a_non_object_metrics_body_is_rejected_with_400(running):
+    request = urllib.request.Request(
+        f"{endpoint(running)}/metrics",
+        data=json.dumps([1, 2, 3]).encode(),
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(request)
+    assert exc_info.value.code == 400
+
+
+# --------------------------------------------------------------------------
 # Malformed input — a validating ingest point, not a dumb pipe
 # --------------------------------------------------------------------------
 

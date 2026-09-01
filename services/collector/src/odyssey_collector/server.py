@@ -418,6 +418,9 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path.strip("/") == "batch/events":
             self._do_batch_post()
             return
+        if self.path.strip("/") == "metrics":
+            self._do_metrics_post()
+            return
 
         parts = self.path.strip("/").split("/")
         if len(parts) != 3 or parts[0] != "journeys" or parts[2] != "events":
@@ -503,6 +506,51 @@ class _Handler(BaseHTTPRequestHandler):
             results[journey_id] = {"ok": True, "events_received": count}
 
         self._respond(200, {"results": results})
+
+    def _do_metrics_post(self) -> None:
+        """``POST /metrics`` — an opt-in, off-by-default host telemetry
+        snapshot from a capturing process (see packages/odyssey-core's
+        odyssey/metrics.py). Independent of journey capture: its own
+        auth check (same rules), its own storage subdirectory, never
+        mixed into a journey shard file. ``public_ip`` is added here,
+        server-side, from the real TCP peer address -- the SDK never
+        reports its own public IP (see the design spec's "Public IP
+        source" decision).
+        """
+        authorized, product_slug = self._authenticate()
+        if not authorized:
+            self._respond(401, {"error": "missing or invalid Authorization"})
+            return
+
+        body, error = self._read_body()
+        if error is not None:
+            self._respond(400, {"error": error})
+            return
+
+        try:
+            snapshot = json.loads(body)
+        except json.JSONDecodeError as exc:
+            self._respond(400, {"error": f"malformed metrics body: {exc}"})
+            return
+        if not isinstance(snapshot, dict):
+            self._respond(400, {"error": "metrics body must be a JSON object"})
+            return
+
+        snapshot["public_ip"] = self.client_address[0]
+
+        base = self.server.config.data_dir
+        metrics_dir = (
+            (base / _safe_stem(product_slug) / "metrics")
+            if product_slug is not None
+            else (base / "metrics")
+        )
+        with self.server.write_lock:
+            metrics_dir.mkdir(parents=True, exist_ok=True)
+            dest = metrics_dir / f"{self.server.config.date_fn()}.jsonl"
+            with dest.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(snapshot) + "\n")
+
+        self._respond(200, {"ok": True})
 
     def _read_body(self) -> Tuple[bytes, Optional[str]]:
         """The request body, gzip-decompressed if ``Content-Encoding`` says
