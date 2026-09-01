@@ -25,9 +25,6 @@ from typing import Any, Callable, Dict, Optional
 
 from odyssey.sinks import HttpSinkError, HttpTransport
 
-MIN_METRICS_INTERVAL = 5.0
-MAX_METRICS_INTERVAL = 86400.0
-
 
 def _read_meminfo() -> Dict[str, int]:
     """Linux-only: total/available memory in bytes from ``/proc/meminfo``.
@@ -120,17 +117,14 @@ class MetricsReporter:
         api_key: Optional[str] = None,
         on_error: Optional[Callable[[BaseException], None]] = None,
     ) -> None:
-        # Not clamped to MIN_METRICS_INTERVAL/MAX_METRICS_INTERVAL here --
-        # those are documentation of the intended production range;
-        # callers (and tests) that pass a smaller/larger interval get
-        # exactly what they asked for.
+        if interval_seconds <= 0:
+            raise ValueError(
+                f"interval_seconds must be positive, got {interval_seconds}"
+            )
         self._interval = interval_seconds
         self._project = project
         self._on_error = on_error
-        # A snapshot is a small, plain JSON object -- gzip's fixed overhead
-        # isn't worth it here the way it is for a journey's event stream,
-        # so this transport doesn't compress by default.
-        self._transport = _MetricsTransport(endpoint, api_key=api_key, compress=False)
+        self._transport = _MetricsTransport(endpoint, api_key=api_key)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import threading
 import time
@@ -32,6 +33,8 @@ class _CapturingHandler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
+        if self.headers.get("Content-Encoding", "").strip().lower() == "gzip":
+            body = gzip.decompress(body)
         type(self).received.append(json.loads(body))
         self.send_response(200)
         self.send_header("Content-Length", "0")
@@ -89,3 +92,13 @@ def test_metrics_reporter_stop_is_idempotent(capturing_server):
     reporter.start()
     reporter.stop()
     reporter.stop()  # must not raise
+
+
+def test_metrics_reporter_rejects_zero_interval():
+    with pytest.raises(ValueError):
+        MetricsReporter(interval_seconds=0, endpoint="http://127.0.0.1:1")
+
+
+def test_metrics_reporter_rejects_negative_interval():
+    with pytest.raises(ValueError):
+        MetricsReporter(interval_seconds=-1, endpoint="http://127.0.0.1:1")
