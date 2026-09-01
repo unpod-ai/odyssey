@@ -107,6 +107,8 @@ import argparse
 import gzip
 import json
 import os
+import secrets
+import sys
 import tempfile
 import threading
 from dataclasses import dataclass, field
@@ -244,6 +246,36 @@ def _load_keys_file(path: Path | str) -> Tuple[Project, ...]:
         raise ValueError(f"{path}: the same api_key is registered to two projects")
 
     return tuple(projects)
+
+
+def _init_keys_file(path: Path | str, slug: str, name: str) -> Project:
+    """Bootstrap a starter ``--keys-file`` roster (``odyssey-collector
+    --init-keys-file``, never a side effect of a normal ``serve`` startup).
+
+    ``_load_keys_file`` deliberately refuses to start the server on a
+    missing/empty/malformed keys file (see its own docstring) — an
+    auto-created *empty* roster would be indistinguishable from "no keys
+    configured" and every future request would just 401 with no
+    explanation. This is the safe version of "create it automatically": a
+    human runs it once, on purpose, and it writes exactly one project with
+    a cryptographically random ``api_key`` — a real secret, not a
+    fabricated placeholder — printed once so the operator can save it
+    before it scrolls off. Refuses to overwrite an existing file, the same
+    way a real secret-issuing tool would.
+    """
+    path = Path(path)
+    if path.exists():
+        raise FileExistsError(f"{path} already exists — not overwriting a real roster")
+    project = Project(slug=slug, name=name, api_key=secrets.token_urlsafe(32))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {"projects": [{"slug": slug, "name": name, "api_key": project.api_key}]},
+            indent=2,
+        )
+        + "\n"
+    )
+    return project
 
 
 class BatchRejected(ValueError):
@@ -576,7 +608,43 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default=None,
         help="IANA name for date-partition boundaries; default: UTC",
     )
+    parser.add_argument(
+        "--init-keys-file",
+        default=None,
+        metavar="PATH",
+        help="bootstrap a starter --keys-file roster at PATH (one project, "
+        "a fresh random api_key) and exit -- does not start the server. "
+        "Refuses to overwrite an existing file. See --project-slug/--project-name",
+    )
+    parser.add_argument(
+        "--project-slug",
+        default="default",
+        help="with --init-keys-file (default: default)",
+    )
+    parser.add_argument(
+        "--project-name",
+        default="Default",
+        help="with --init-keys-file (default: Default)",
+    )
     args = parser.parse_args(argv)
+
+    if args.init_keys_file is not None:
+        try:
+            project = _init_keys_file(
+                args.init_keys_file, args.project_slug, args.project_name
+            )
+        except FileExistsError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"wrote {args.init_keys_file}")
+        print(f"project: slug={project.slug!r} name={project.name!r}")
+        print(f"api_key={project.api_key}")
+        print(
+            f"save this key now -- it will not be printed again "
+            f"(it's also in {args.init_keys_file} in plaintext)",
+            file=sys.stderr,
+        )
+        return 0
 
     config = resolve_config(
         host=args.host,

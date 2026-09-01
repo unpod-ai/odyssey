@@ -36,6 +36,23 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Added
 
+- **`odyssey-collector --init-keys-file`** — bootstraps a real
+  `--keys-file` roster (one project, a fresh `secrets.token_urlsafe(32)`
+  `api_key`, printed once) and exits without starting the server. A
+  deployment following `docs/runbooks/run-services.md` hit
+  `_load_keys_file`'s `FileNotFoundError` on startup after pointing
+  `ODYSSEY_COLLECTOR_KEYS_FILE` at a path that was never created;
+  `_load_keys_file` deliberately still refuses to start on a missing,
+  empty, or malformed roster (a silently-created empty/placeholder file
+  would look identical to "no keys configured" and every request would
+  just 401 with no explanation), so this adds a safe, explicit, one-shot
+  way to create a real one instead — never a side effect of `serve`, and
+  deliberately with **no** `ODYSSEY_COLLECTOR_*` env var equivalent
+  (giving it one would make every `Restart=on-failure` restart re-run the
+  bootstrap and restart-loop once the file exists). Refuses to overwrite
+  an existing file. 3 new tests; verified end to end against a real
+  server (bootstrap → start with `--keys-file` → the generated key
+  authenticates, a wrong key doesn't).
 - **`docs/runbooks/run-services.md`** — how to run `services/collector`
   and `services/api` in production: a systemd unit for the collector
   (stdlib `ThreadingHTTPServer`, not WSGI/ASGI — gunicorn does not apply

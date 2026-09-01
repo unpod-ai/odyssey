@@ -22,6 +22,7 @@ from odyssey.sinks import HttpSinkError
 from odyssey_collector.server import (
     CollectorConfig,
     Project,
+    _init_keys_file,
     _safe_stem,
     resolve_config,
     serve,
@@ -439,6 +440,40 @@ def test_a_valid_keys_file_round_trips_through_resolve_config(tmp_path):
     )
     config = resolve_config(data_dir=tmp_path / "data", keys_file=keys_file)
     assert config.projects == (Project(slug="proj_a", name="A Corp", api_key="sk-a"),)
+
+
+def test_init_keys_file_writes_a_loadable_roster(tmp_path):
+    """The bootstrap path (`odyssey-collector --init-keys-file`) writes
+    exactly the shape `resolve_config`/`_load_keys_file` already accept --
+    no second parser, no drift between "what writes it" and "what reads it".
+    """
+    path = tmp_path / "keys.json"
+    written = _init_keys_file(path, slug="acme", name="Acme Corp")
+
+    assert written.slug == "acme"
+    assert written.name == "Acme Corp"
+    assert len(written.api_key) >= 32  # a real secret, not a short placeholder
+
+    config = resolve_config(data_dir=tmp_path / "data", keys_file=path)
+    assert config.projects == (written,)
+
+
+def test_init_keys_file_refuses_to_overwrite_an_existing_file(tmp_path):
+    path = tmp_path / "keys.json"
+    first = _init_keys_file(path, slug="acme", name="Acme Corp")
+
+    with pytest.raises(FileExistsError):
+        _init_keys_file(path, slug="acme", name="Acme Corp")
+
+    # the real roster on disk must be untouched by the failed second call
+    config = resolve_config(data_dir=tmp_path / "data", keys_file=path)
+    assert config.projects == (first,)
+
+
+def test_init_keys_file_generates_a_different_key_each_time(tmp_path):
+    a = _init_keys_file(tmp_path / "a.json", slug="acme", name="Acme")
+    b = _init_keys_file(tmp_path / "b.json", slug="acme", name="Acme")
+    assert a.api_key != b.api_key
 
 
 def test_a_slug_cannot_traverse_out_of_data_dir(tmp_path):

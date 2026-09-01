@@ -57,6 +57,27 @@ For more than one tenant, use `--keys-file` instead of `--api-key`:
 }
 ```
 
+### Bootstrapping the file
+
+`odyssey-collector` deliberately refuses to start on a missing, empty, or
+malformed `--keys-file` — a silently-created empty roster would be
+indistinguishable from "no keys configured", and every request would
+just 401 with no explanation. `--init-keys-file` is the safe way to
+create a real starting one instead: run once, by hand, before starting
+the server (never as a side effect of `serve`, and never via an env var
+— see `docs/runbooks/run-services.md` for why):
+
+```bash
+odyssey-collector --init-keys-file ./collector-keys.json \
+  --project-slug acme --project-name "Acme Corp"
+```
+
+Writes one project with a fresh `secrets.token_urlsafe(32)` `api_key` —
+a real secret, not a placeholder — and prints it once. Refuses to
+overwrite an existing file. Add more projects by editing the file
+directly (same as any other keys-file edit — restart the server to pick
+it up).
+
 Each project's key writes into its own `<data_dir>/<slug>/<date>/` partition
 — isolation is structural (one caller's key can never resolve into another
 project's directory), not just an access check layered on shared storage.

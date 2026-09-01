@@ -69,31 +69,26 @@ journalctl -u odyssey-collector -f
 **Create the roster file before flipping the `Environment=` line** — do
 not skip this step. `_load_keys_file` (`services/collector/server.py`)
 deliberately refuses to start with a missing, empty, or malformed keys
-file, on purpose: this repo will not auto-generate one, because a
-silently-created empty or placeholder roster is functionally identical
-to "every future POST gets a 401 with no explanation" — the exact
-failure mode fail-fast startup exists to prevent. There is no way around
-supplying real `slug`/`name`/`api_key` values for every project that
-will actually authenticate against this collector; nobody but the
-operator running this deployment has those.
+file, on purpose: a silently-created empty or placeholder roster would be
+functionally identical to "every future POST gets a 401 with no
+explanation" — the exact failure mode fail-fast startup exists to
+prevent.
+
+`odyssey-collector --init-keys-file` bootstraps a real one: one project,
+a fresh cryptographically random `api_key` (a genuine secret, not a
+placeholder you're expected to remember to replace), refuses to
+overwrite a file that already exists.
 
 ```bash
 sudo install -d -m 0750 -o odyssey -g odyssey /etc/odyssey
-sudo tee /etc/odyssey/collector-keys.json > /dev/null <<'EOF'
-{
-  "projects": [
-    {"slug": "acme", "name": "Acme Corp", "api_key": "REPLACE-WITH-A-REAL-SECRET"}
-  ]
-}
-EOF
-sudo chown odyssey:odyssey /etc/odyssey/collector-keys.json
-sudo chmod 0640 /etc/odyssey/collector-keys.json
+sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
+  --init-keys-file /etc/odyssey/collector-keys.json \
+  --project-slug acme --project-name "Acme Corp"
 ```
 
-Replace `REPLACE-WITH-A-REAL-SECRET` (and add one entry per real project)
-before starting the service — an unedited placeholder key is a real
-credential nobody rotated. Then, in the unit file: comment out
-`ODYSSEY_COLLECTOR_API_KEY`, uncomment
+This prints the generated `api_key` once — save it now, it's also in the
+file in plaintext but won't be echoed back to you again. Then, in the
+unit file: comment out `ODYSSEY_COLLECTOR_API_KEY`, uncomment
 `ODYSSEY_COLLECTOR_KEYS_FILE=/etc/odyssey/collector-keys.json`, and:
 
 ```bash
@@ -102,9 +97,18 @@ sudo systemctl restart odyssey-collector
 journalctl -u odyssey-collector -n 20   # confirm it started clean, not a FileNotFoundError
 ```
 
-Every collector CLI flag (`--host`/`--port`/`--data-dir`/`--api-key`/
-`--keys-file`/`--timezone`) has an `ODYSSEY_COLLECTOR_*` env equivalent —
-see `services/collector/README.md`'s config table. Set them as
+**`--init-keys-file`/`--project-slug`/`--project-name` have no
+`ODYSSEY_COLLECTOR_*` env var equivalent, deliberately.** They're a
+one-shot bootstrap action, not persistent server config — giving them an
+env var would mean a stray `Environment=` line in the unit file makes
+every `Restart=on-failure` restart re-run the bootstrap instead of
+serving (and since the file already exists after the first run, it would
+just exit 1 and restart-loop forever). Run it once, by hand, separately
+from `serve`.
+
+Every other collector CLI flag (`--host`/`--port`/`--data-dir`/
+`--api-key`/`--keys-file`/`--timezone`) has an `ODYSSEY_COLLECTOR_*` env
+equivalent — see `services/collector/README.md`'s config table. Set them as
 `Environment=` lines (or `EnvironmentFile=/etc/odyssey/collector.env` for
 a real deployment, kept out of git).
 
