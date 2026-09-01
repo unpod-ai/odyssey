@@ -35,18 +35,18 @@ def list_journeys_with_status(journeys_dir: Path) -> List[Tuple[str, str, bool]]
     (not the two-pass "list then re-find-then-fold" a naive router would
     do) to answer whether it's `trainable` per `fold.FoldResult.complete`.
     A shard that fails to fold (malformed on disk) is reported incomplete
-    rather than aborting the whole listing.
+    rather than aborting the whole listing. Reuses `filesystem.list_journeys`
+    for partition/shard discovery so there is exactly one place that walks
+    `journeys_dir` and decides what counts as a journey shard, not two.
     """
     out: List[Tuple[str, str, bool]] = []
-    if not journeys_dir.is_dir():
-        return out
-    for date_dir in sorted(p for p in journeys_dir.iterdir() if p.is_dir()):
-        for shard in sorted(date_dir.glob("*.jsonl")):
-            try:
-                complete = fold_shard(shard).complete
-            except (OSError, ValueError):
-                complete = False
-            out.append((shard.stem, date_dir.name, complete))
+    for journey_id, journey_date in filesystem.list_journeys(journeys_dir):
+        shard = journeys_dir / journey_date / f"{journey_id}.jsonl"
+        try:
+            complete = fold_shard(shard).complete
+        except (OSError, ValueError):
+            complete = False
+        out.append((journey_id, journey_date, complete))
     return out
 
 

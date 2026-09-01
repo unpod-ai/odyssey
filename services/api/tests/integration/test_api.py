@@ -74,6 +74,49 @@ def test_journeys_list_and_detail(tmp_path):
     assert missing.status_code == 404
 
 
+def test_journeys_list_excludes_metrics_directory(tmp_path):
+    journeys_dir = tmp_path / "journeys"
+    date_dir = journeys_dir / "2026-08-28"
+    date_dir.mkdir(parents=True)
+    write_events(
+        date_dir / f"{JID}.jsonl",
+        [
+            JourneyEvent(
+                journey_id=JID,
+                seq=0,
+                kind="message",
+                event_id="e0",
+                message=Message(role="user", content="hi"),
+            ),
+            JourneyEvent(
+                journey_id=JID,
+                seq=1,
+                kind="terminal",
+                event_id="e1",
+                terminal=Terminal(termination_reason="ENV_DONE"),
+            ),
+        ],
+        header=HEADER,
+    )
+
+    # Mimic what services/collector's POST /metrics writes: a `metrics/`
+    # directory (not a valid ISO date) directly under journeys_dir, with a
+    # .jsonl file inside it.
+    metrics_dir = journeys_dir / "metrics"
+    metrics_dir.mkdir(parents=True)
+    (metrics_dir / "2026-08-28.jsonl").write_text('{"metric": "x"}\n')
+
+    settings = Settings(journeys_dir=journeys_dir)
+    client = _client(settings)
+
+    listed = client.get("/journeys")
+    assert listed.status_code == 200
+    body = listed.json()
+    assert body == [{"journey_id": JID, "date": "2026-08-28", "complete": True}]
+    assert all(entry["date"] != "metrics" for entry in body)
+    assert all(entry["journey_id"] != "2026-08-28" for entry in body)
+
+
 def test_datasets_and_models(tmp_path):
     datasets_registry = tmp_path / "datasets" / "registry.yaml"
     datasets_registry.parent.mkdir(parents=True)
