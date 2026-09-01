@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Sequence, runtime_checkable
 from uuid import uuid4
 
-from odyssey.config import Config, resolve
+from odyssey.config import UNSET, Config, resolve
 from odyssey.context import SeqAllocator
 from odyssey.primitives import TerminationReason
 from odyssey.sinks import FileSink
@@ -308,6 +308,7 @@ def init(
     fsync: bool = False,
     timezone: Optional[str] = None,
     sample_rate: Optional[float] = None,
+    project: Any = UNSET,
     force: bool = False,
 ) -> Client:
     """Start recording. Call once, as early as the process allows.
@@ -326,6 +327,14 @@ def init(
     fraction of *journeys* recorded, decided once per journey at open time
     — never per event, so a sampled-out journey never ends up partially
     written. Clamped to ``[0.0, 1.0]``.
+
+    ``project`` (``ODYSSEY_PROJECT``) tags every journey opened after this
+    call with which repo/codebase it came from -- auto-detected from a git
+    remote or the working directory when not passed explicitly, purely
+    descriptive (``journey_metadata["project"]``), never an auth concept.
+    Pass ``project=None`` explicitly to disable the tag entirely, which is
+    different from not passing it at all (which runs the auto-detect
+    chain) -- see ``odyssey.project.resolve_project``.
 
     ``timezone`` (``ODYSSEY_TIMEZONE``) is which day a shard rotation belongs
     to, not a display setting — UTC by default, so a shard's date means the
@@ -368,6 +377,7 @@ def init(
             timezone=timezone,
             fsync=fsync,
             sample_rate=sample_rate,
+            project=project,
         )
         client = Client(config, sink=sink)
         _client = client

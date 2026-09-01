@@ -201,7 +201,7 @@ def test_caller_metadata_is_stated_once_in_the_header(tmp_path):
     They are constant for the whole journey by definition, so repeating them per
     event bought a reader nothing and was the majority of every line.
     """
-    client = start(tmp_path)
+    client = start(tmp_path, project=None)
     with odyssey.journey(id="j", user_id="u_42", data_source="unit") as j:
         j.message(Message(role="user", content="hi"))
 
@@ -223,7 +223,7 @@ def test_an_unserializable_tag_is_sanitized_before_it_reaches_the_header(tmp_pat
     class Tier(enum.Enum):
         GOLD = "gold"
 
-    client = start(tmp_path)
+    client = start(tmp_path, project=None)
     with odyssey.journey(id="j", tier=Tier.GOLD) as j:
         j.message(Message(role="user", content="hi"))
 
@@ -914,3 +914,28 @@ def test_closing_open_journeys_is_idempotent(tmp_path):
     assert client.close_open_journeys() == 1
     assert client.close_open_journeys() == 0
     assert len(rec.calls) == 1
+
+
+def test_init_project_tags_every_journey(tmp_path, monkeypatch):
+    monkeypatch.setenv("ODYSSEY_PROJECT", "tagged-project")
+    client = start(tmp_path)
+    with odyssey.journey(id="j_project_tag"):
+        pass
+    header = odyssey.read_events(client.spool.shards("j_project_tag")[0]).header
+    assert (header.journey_metadata or {})["project"] == "tagged-project"
+
+
+def test_journey_level_project_kwarg_overrides_the_configured_one(tmp_path):
+    client = start(tmp_path, project="from-init")
+    with odyssey.journey(id="j_override", project="from-journey-call"):
+        pass
+    header = odyssey.read_events(client.spool.shards("j_override")[0]).header
+    assert (header.journey_metadata or {})["project"] == "from-journey-call"
+
+
+def test_project_none_means_no_project_tag_at_all(tmp_path):
+    client = start(tmp_path, project=None)
+    with odyssey.journey(id="j_no_project"):
+        pass
+    header = odyssey.read_events(client.spool.shards("j_no_project")[0]).header
+    assert "project" not in (header.journey_metadata or {})

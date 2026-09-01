@@ -13,8 +13,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
+from odyssey.project import resolve_project
 from odyssey.spool import DEFAULT_REDACT_KEYS
 
 ENV_SPOOL = "ODYSSEY_SPOOL"
@@ -25,6 +26,14 @@ ENV_DEBUG = "ODYSSEY_DEBUG"
 ENV_MAX_OPEN_SHARDS = "ODYSSEY_MAX_OPEN_SHARDS"
 ENV_SAMPLE_RATE = "ODYSSEY_SAMPLE_RATE"
 ENV_DRAIN_BATCH_SIZE = "ODYSSEY_DRAIN_BATCH_SIZE"
+
+# Distinguishes "the caller didn't pass this argument, run the normal
+# resolution chain" from "the caller explicitly passed None" -- the same
+# problem drain_interval_set solves for drain_interval, but as a sentinel
+# value instead of a paired boolean, since `project` has no companion
+# "_set" flag threaded through every call site the way drain_interval
+# does. Any object identity works; this one is deliberately mundane.
+UNSET = object()
 
 DEFAULT_SPOOL_DIR = ".odyssey"
 DEFAULT_OUT_DIR = "odyssey-out"
@@ -85,6 +94,12 @@ class Config:
     # Fraction of journeys to actually record, decided once per journey (see
     # capture.journey()) so a sampled-out journey is never partially written.
     sample_rate: float
+    # Which repo/codebase this process is capturing from -- purely
+    # descriptive (lands in JourneyHeader.journey_metadata), never an auth
+    # concept. None means "don't tag journeys with a project at all",
+    # which is different from "not specified" -- see resolve()'s
+    # project=UNSET default.
+    project: Optional[str]
 
 
 def resolve(
@@ -103,6 +118,7 @@ def resolve(
     fsync: bool = False,
     timezone: Optional[str] = None,
     sample_rate: Optional[float] = None,
+    project: Any = UNSET,
 ) -> Config:
     """Merge explicit arguments over environment over defaults.
 
@@ -154,4 +170,5 @@ def resolve(
                 ),
             ),
         ),
+        project=(project if project is not UNSET else resolve_project()),
     )

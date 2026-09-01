@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 
+from odyssey.config import UNSET, resolve
 from odyssey.project import ENV_PROJECT, resolve_project
 
 
@@ -74,3 +75,28 @@ def test_git_dir_found_from_a_subdirectory(tmp_path, monkeypatch):
     sub = repo_dir / "a" / "b"
     sub.mkdir(parents=True)
     assert resolve_project(cwd=sub) == "repo"
+
+
+def test_config_resolve_runs_auto_detect_when_project_is_unset(tmp_path, monkeypatch):
+    monkeypatch.setenv(ENV_PROJECT, "auto-detected")
+    config = resolve()
+    assert config.project == "auto-detected"
+
+
+def test_config_resolve_explicit_project_wins_over_env(monkeypatch):
+    monkeypatch.setenv(ENV_PROJECT, "from-env")
+    config = resolve(project="from-caller")
+    assert config.project == "from-caller"
+
+
+def test_config_resolve_explicit_none_disables_project_entirely(monkeypatch):
+    monkeypatch.setenv(ENV_PROJECT, "from-env")
+    config = resolve(project=None)
+    assert config.project is None
+
+
+def test_config_resolve_project_default_is_unset_not_none():
+    # UNSET must be importable and distinct from None -- this is the whole
+    # point of the sentinel (see config.py's docstring on drain_interval_set
+    # for the established precedent this mirrors).
+    assert UNSET is not None

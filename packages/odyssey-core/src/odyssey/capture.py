@@ -363,11 +363,24 @@ def journey(
         return
 
     client = require_client()
+
+    # Seed the configured project onto every journey unless the caller
+    # already tagged this one explicitly -- a per-journey `project=` kwarg
+    # always wins over the process-wide default from `odyssey.init()`.
+    tagged_metadata = dict(metadata)
+    if (
+        client is not None
+        and client.config.project is not None
+        and "project" not in tagged_metadata
+    ):
+        tagged_metadata["project"] = client.config.project
+
+    client_for_journey = client
     ctx = JourneyContext(
         journey_id=id or uuid4().hex,
         allocator=(
-            client.allocator
-            if client is not None
+            client_for_journey.allocator
+            if client_for_journey is not None
             # Disabled/uninitialised: a throwaway allocator keeps the API total,
             # and _emit() drops before it ever reaches the spool.
             else _NULL_ALLOCATOR
@@ -378,7 +391,7 @@ def journey(
         # value (`modality=Modality.TEXT_AUDIO` is a real one) would raise inside
         # `_open_shard`, leave a zero-byte shard behind, and drop every event of
         # the journey. `_jsonable` degrades to `repr()` instead of losing data.
-        metadata=_jsonable(dict(metadata)),
+        metadata=_jsonable(tagged_metadata),
         data_source=data_source,
         trace_id=trace_id,
     )
