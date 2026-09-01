@@ -202,6 +202,9 @@ you are to need it first.
 2. [`docs/data-contracts.md`](docs/data-contracts.md) — `odyssey_schemas` → `openapi.json` → both SDKs, the codegen/drift-check chain
 3. [`docs/model-lifecycle.md`](docs/model-lifecycle.md) — corpus → training config → checkpoint → registered model → evaluation, in sequence
 
+**Deployment**
+1. [`docs/runbooks/run-services.md`](docs/runbooks/run-services.md) — `services/api`/`services/collector` under gunicorn/uvicorn + systemd
+
 **Per-component**
 1. [`packages/odyssey-core/README.md`](packages/odyssey-core/README.md) — capture library: schema, fold, spool, builders
 2. [`packages/odyssey-schemas/README.md`](packages/odyssey-schemas/README.md) — the wire-contract DTOs

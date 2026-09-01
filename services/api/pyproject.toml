@@ -33,6 +33,11 @@ dev = [
   "flake8>=7.3",
   "pyrefly>=0.1",
 ]
+# `uvicorn --workers N` (already a base dependency) needs nothing extra —
+# this is only for the gunicorn-managed deployment documented in
+# docs/runbooks/run-services.md, for operators standardised on gunicorn's
+# process manager.
+prod = ["gunicorn>=23"]
 
 [project.entry-points."odyssey.commands"]
 api = "odyssey_api.cli:register"

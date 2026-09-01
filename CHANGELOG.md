@@ -36,6 +36,15 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Added
 
+- **`docs/runbooks/run-services.md`** — how to run `services/collector`
+  and `services/api` in production: a systemd unit for the collector
+  (stdlib `ThreadingHTTPServer`, not WSGI/ASGI — gunicorn does not apply
+  to it), and two verified options for the API — `uvicorn --workers N`
+  (no new dependency) or gunicorn with `uvicorn.workers.UvicornWorker`
+  (new optional `prod` extra on `services/api`, `gunicorn>=23`). Both
+  commands actually run against this repo before being documented.
+- `services/api`'s `prod` optional-dependency extra (`gunicorn>=23`) —
+  only pulled in by `uv sync --extra prod`, not part of the base install.
 - `integrations/langchain.py` — `OdysseyCallbackHandler()` for LangChain
   (optional `odyssey[langchain]` extra), one flat journey per top-level
   `run_id`.

@@ -382,8 +382,10 @@ shard data lives in an object store. Written by `data_preparation`'s
   `model-lifecycle.md` (corpus → training → registry → eval, in
   sequence), `STRUCTURE.md` (the original proposal), `WORKING.md` (the
   real item-by-item scorecard), `NEXT.md` (session handoff notes), `adr/`
-  (numbered decisions), `runbooks/` (still empty — no concrete deployment
-  target to write a runbook against yet).
+  (numbered decisions), `runbooks/run-services.md` (gunicorn/systemd for
+  `services/api`/`services/collector` — the one runbook this repo has;
+  the rest of `docs/STRUCTURE.md`'s named runbooks stay unwritten, no
+  concrete backfill/release process exists yet).
 - `infra/`, `openspec/` — scaffolding; no concrete deployment target yet
   (no k8s/terraform in use, no accepted `openspec` change proposals).
 
