@@ -345,7 +345,7 @@ def test_a_registered_key_lands_under_its_own_product(scoped):
     HttpSink(endpoint(scoped), api_key="sk-acme").send(JID, sent)
     assert read_events(product_path(scoped, "proj_acme")).events == sent
     assert not product_path(scoped, "proj_globex").exists()
-    # And nowhere unscoped either -- project mode always partitions by project.
+    # And nowhere unscoped either -- product mode always partitions by product.
     assert not (scoped.config.data_dir / FIXED_DATE).exists()
 
 
@@ -366,7 +366,7 @@ def test_an_unregistered_key_is_rejected_and_nothing_is_written(scoped):
     assert not product_path(scoped, "proj_globex").exists()
 
 
-def test_a_missing_key_is_rejected_in_project_mode_too(scoped):
+def test_a_missing_key_is_rejected_in_product_mode_too(scoped):
     with pytest.raises(HttpSinkError, match="HTTP 401"):
         HttpSink(endpoint(scoped)).send(JID, evs())
 
@@ -478,7 +478,7 @@ def test_init_products_file_generates_a_different_key_each_time(tmp_path):
 
 def test_a_slug_cannot_traverse_out_of_data_dir(tmp_path):
     """A keys file is operator-authored, but defence in depth is cheap --
-    the same journey_id traversal guard applies to a project's slug."""
+    the same journey_id traversal guard applies to a product's slug."""
     evil = Product(slug="../../etc", name="Evil", api_key="sk-evil")
     config = CollectorConfig(
         host="127.0.0.1",
