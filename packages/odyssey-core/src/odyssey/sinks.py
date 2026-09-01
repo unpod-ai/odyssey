@@ -73,7 +73,108 @@ class HttpSinkError(RuntimeError):
     """A batch could not be delivered. Always retryable — see the module docstring."""
 
 
-class HttpSink:
+class HttpTransport:
+    """Shared stdlib HTTP transport for anything that POSTs to a collector:
+    endpoint/api_key resolution, connection reuse (HTTP/1.1 keep-alive),
+    gzip, and Retry-After backoff. What gets posted, and to which path, is
+    entirely up to the subclass -- HttpSink posts journeys, the metrics
+    poster (odyssey/metrics.py) posts host snapshots to a different path.
+    Not a Sink itself (no send()) -- Sink is a structural Protocol
+    (odyssey.spool.Sink), and this class has no opinion on journey shape.
+    """
+
+    def __init__(
+        self,
+        endpoint: Optional[str] = None,
+        *,
+        api_key: Optional[str] = None,
+        timeout: float = DEFAULT_TIMEOUT,
+        compress: bool = True,
+    ) -> None:
+        resolved = endpoint if endpoint is not None else os.environ.get(ENV_ENDPOINT)
+        if not resolved:
+            raise ValueError(
+                f"{type(self).__name__} needs an endpoint: pass endpoint=... "
+                f"or set {ENV_ENDPOINT}"
+            )
+        self.endpoint = resolved.rstrip("/")
+        self.api_key = api_key if api_key is not None else os.environ.get(ENV_API_KEY)
+        self.timeout = timeout
+        self.compress = compress
+        # Set by a 429's Retry-After; checked before the next request so a
+        # server that asked to be left alone is not immediately re-hit.
+        self._retry_after_until: float = 0.0
+
+        parsed = urlsplit(self.endpoint)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError(
+                f"{type(self).__name__} endpoint must be an http(s) URL: "
+                f"{self.endpoint!r}"
+            )
+        self._scheme = parsed.scheme
+        self._host = parsed.hostname
+        self._port = parsed.port
+        self._base_path = parsed.path.rstrip("/")
+        self._conn: Optional[http.client.HTTPConnection] = None
+        self._lock = threading.Lock()
+
+    def _connect(self) -> http.client.HTTPConnection:
+        cls = (
+            http.client.HTTPSConnection
+            if self._scheme == "https"
+            else http.client.HTTPConnection
+        )
+        return cls(self._host, self._port, timeout=self.timeout)
+
+    def close(self) -> None:
+        """Release the reused connection. Idempotent."""
+        with self._lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
+
+    def _check_backoff(self, subject: str) -> None:
+        """Raise if still inside a prior 429's Retry-After window."""
+        if time.monotonic() < self._retry_after_until:
+            wait = self._retry_after_until - time.monotonic()
+            raise HttpSinkError(
+                f"{subject}: backing off {wait:.0f}s more per the server's "
+                f"last Retry-After"
+            )
+
+    def _note_retry_after(self, retry_after_header: Optional[str]) -> None:
+        self._retry_after_until = time.monotonic() + _parse_retry_after(
+            retry_after_header
+        )
+
+    def _request(
+        self, path: str, payload: bytes, headers: Dict[str, str]
+    ) -> Tuple[Optional[int], Optional[str], Optional[bytes], Optional[str]]:
+        """One POST, reusing ``self._conn`` when a prior request left it open.
+
+        A kept-alive connection the server (or an idle intermediary) closed
+        in the meantime raises on the *first* use after that, not at close
+        time -- so a dropped connection is retried once, transparently, with
+        a fresh one, rather than surfacing as a spurious failure.
+        """
+        for attempt in range(2):
+            if self._conn is None:
+                self._conn = self._connect()
+            try:
+                self._conn.request("POST", path, body=payload, headers=headers)
+                response = self._conn.getresponse()
+                body = response.read()  # must drain the body to reuse the connection
+                return response.status, response.getheader("Retry-After"), body, None
+            except (http.client.HTTPException, OSError) as exc:
+                if self._conn is not None:
+                    self._conn.close()
+                self._conn = None
+                if attempt == 1:
+                    return None, None, None, str(exc)
+        return None, None, None, "unreachable"  # pragma: no cover - loop always returns
+
+
+class HttpSink(HttpTransport):
     """Ships drained events to a network endpoint over plain stdlib HTTP.
 
     ``odyssey-core`` declares ``dependencies = []``; this uses ``http.client``
@@ -132,69 +233,13 @@ class HttpSink:
     so nothing changes unless a caller asks for it.
     """
 
-    def __init__(
-        self,
-        endpoint: Optional[str] = None,
-        *,
-        api_key: Optional[str] = None,
-        timeout: float = DEFAULT_TIMEOUT,
-        compress: bool = True,
-    ) -> None:
-        resolved = endpoint if endpoint is not None else os.environ.get(ENV_ENDPOINT)
-        if not resolved:
-            raise ValueError(
-                f"HttpSink needs an endpoint: pass endpoint=... or set {ENV_ENDPOINT}"
-            )
-        self.endpoint = resolved.rstrip("/")
-        self.api_key = api_key if api_key is not None else os.environ.get(ENV_API_KEY)
-        self.timeout = timeout
-        self.compress = compress
-        # Set by a 429's Retry-After; checked before the next send() so a
-        # server that asked to be left alone is not immediately re-hit.
-        self._retry_after_until: float = 0.0
-
-        parsed = urlsplit(self.endpoint)
-        if parsed.scheme not in ("http", "https") or not parsed.hostname:
-            raise ValueError(
-                f"HttpSink endpoint must be an http(s) URL: {self.endpoint!r}"
-            )
-        self._scheme = parsed.scheme
-        self._host = parsed.hostname
-        self._port = parsed.port
-        self._base_path = parsed.path.rstrip("/")
-        # The reused connection (item 1.7) and the lock guarding it — see the
-        # class docstring's "Cross-journey overhead" section.
-        self._conn: Optional[http.client.HTTPConnection] = None
-        self._lock = threading.Lock()
-
-    def _connect(self) -> http.client.HTTPConnection:
-        cls = (
-            http.client.HTTPSConnection
-            if self._scheme == "https"
-            else http.client.HTTPConnection
-        )
-        return cls(self._host, self._port, timeout=self.timeout)
-
-    def close(self) -> None:
-        """Release the connection reused across ``send()`` calls. Idempotent;
-        safe to call even if nothing was ever sent."""
-        with self._lock:
-            if self._conn is not None:
-                self._conn.close()
-                self._conn = None
-
     def send(
         self,
         journey_id: str,
         events: List[JourneyEvent],
         header: Optional[JourneyHeader] = None,
     ) -> None:
-        if time.monotonic() < self._retry_after_until:
-            wait = self._retry_after_until - time.monotonic()
-            raise HttpSinkError(
-                f"{journey_id}: backing off {wait:.0f}s more per the server's "
-                f"last Retry-After"
-            )
+        self._check_backoff(journey_id)
 
         body = header_line(header=header) + "\n"
         body += "".join(encode_event(e) + "\n" for e in events)
@@ -219,7 +264,7 @@ class HttpSink:
                 f"{journey_id}: could not reach {self.endpoint}: {error}"
             )
         if status == 429:
-            self._retry_after_until = time.monotonic() + _parse_retry_after(retry_after)
+            self._note_retry_after(retry_after)
         if status is None or status >= 300:
             raise HttpSinkError(f"{journey_id}: HTTP {status} from {self.endpoint}")
 
@@ -240,12 +285,7 @@ class HttpSink:
         every journey in ``items`` having failed, same as a single
         ``send()`` raising.
         """
-        if time.monotonic() < self._retry_after_until:
-            wait = self._retry_after_until - time.monotonic()
-            raise HttpSinkError(
-                f"batch of {len(items)}: backing off {wait:.0f}s more per the "
-                f"server's last Retry-After"
-            )
+        self._check_backoff(f"batch of {len(items)}")
 
         blobs = {}
         for journey_id, events, header in items:
@@ -269,7 +309,7 @@ class HttpSink:
                 f"batch of {len(items)}: could not reach {self.endpoint}: {error}"
             )
         if status == 429:
-            self._retry_after_until = time.monotonic() + _parse_retry_after(retry_after)
+            self._note_retry_after(retry_after)
         if status != 200:
             raise HttpSinkError(
                 f"batch of {len(items)}: HTTP {status} from {self.endpoint}"
@@ -296,32 +336,6 @@ class HttpSink:
             else:
                 out[journey_id] = "malformed per-journey result"
         return out
-
-    def _request(
-        self, path: str, payload: bytes, headers: Dict[str, str]
-    ) -> Tuple[Optional[int], Optional[str], Optional[bytes], Optional[str]]:
-        """One POST, reusing ``self._conn`` when a prior request left it open.
-
-        A kept-alive connection the server (or an idle intermediary) closed
-        in the meantime raises on the *first* use after that, not at close
-        time — so a dropped connection is retried once, transparently, with
-        a fresh one, rather than surfacing as a spurious drain failure.
-        """
-        for attempt in range(2):
-            if self._conn is None:
-                self._conn = self._connect()
-            try:
-                self._conn.request("POST", path, body=payload, headers=headers)
-                response = self._conn.getresponse()
-                body = response.read()  # must drain the body to reuse the connection
-                return response.status, response.getheader("Retry-After"), body, None
-            except (http.client.HTTPException, OSError) as exc:
-                if self._conn is not None:
-                    self._conn.close()
-                self._conn = None
-                if attempt == 1:
-                    return None, None, None, str(exc)
-        return None, None, None, "unreachable"  # pragma: no cover - loop always returns
 
 
 # A missing/malformed Retry-After still has to back off *something* -- a
