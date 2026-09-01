@@ -190,7 +190,7 @@ committed contract both SDKs are generated from.
 broker anywhere in this repo), `migrations/` (alembic — no relational
 schema exists), the `odyssey db` CLI group. `services/collector` stays the
 separate write side rather than merging into this service — merging now
-would mean rewriting the collector's idempotency/backoff/project-scoping
+would mean rewriting the collector's idempotency/backoff/product-scoping
 into FastAPI for no functional gain today.
 
 ---

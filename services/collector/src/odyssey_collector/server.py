@@ -545,10 +545,14 @@ class _Handler(BaseHTTPRequestHandler):
             else (base / "metrics")
         )
         with self.server.write_lock:
-            metrics_dir.mkdir(parents=True, exist_ok=True)
-            dest = metrics_dir / f"{self.server.config.date_fn()}.jsonl"
-            with dest.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(snapshot) + "\n")
+            try:
+                metrics_dir.mkdir(parents=True, exist_ok=True)
+                dest = metrics_dir / f"{self.server.config.date_fn()}.jsonl"
+                with dest.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(snapshot) + "\n")
+            except OSError as exc:
+                self._respond(500, {"error": f"storage failed: {exc}"})
+                return
 
         self._respond(200, {"ok": True})
 

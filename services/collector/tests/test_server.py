@@ -730,6 +730,28 @@ def test_a_non_object_metrics_body_is_rejected_with_400(running):
     assert exc_info.value.code == 400
 
 
+def test_a_metrics_storage_failure_is_reported_as_500(running):
+    """Mirrors the journeys/batch handlers' OSError -> 500 contract
+    documented in the README's "Opt-in metrics" section. A regular file
+    sitting where the metrics *directory* needs to go makes ``mkdir``
+    raise (``FileExistsError``/``NotADirectoryError``, both ``OSError``
+    subclasses), simulating a real storage failure without touching
+    filesystem permissions."""
+    metrics_path = running.config.data_dir / "metrics"
+    metrics_path.write_text("not a directory")
+
+    payload = json.dumps({"hostname": "box-1"}).encode()
+    request = urllib.request.Request(
+        f"{endpoint(running)}/metrics", data=payload, method="POST"
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(request)
+
+    assert exc_info.value.code == 500
+    body = json.loads(exc_info.value.read())
+    assert "storage failed" in body["error"]
+
+
 # --------------------------------------------------------------------------
 # Malformed input — a validating ingest point, not a dumb pipe
 # --------------------------------------------------------------------------
