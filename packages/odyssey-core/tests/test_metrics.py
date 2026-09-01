@@ -8,6 +8,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
+import odyssey
+from odyssey.config import resolve
 from odyssey.metrics import MetricsReporter, build_snapshot
 
 
@@ -104,9 +106,6 @@ def test_metrics_reporter_rejects_negative_interval():
         MetricsReporter(interval_seconds=-1, endpoint="http://127.0.0.1:1")
 
 
-from odyssey.config import resolve
-
-
 def test_collect_metrics_defaults_to_false():
     assert resolve().collect_metrics is False
 
@@ -129,9 +128,6 @@ def test_metrics_interval_default_is_300(monkeypatch):
 def test_metrics_interval_env_var(monkeypatch):
     monkeypatch.setenv("ODYSSEY_METRICS_INTERVAL", "60")
     assert resolve().metrics_interval == 60.0
-
-
-import odyssey
 
 
 def test_init_with_collect_metrics_starts_a_reporter(tmp_path, monkeypatch):
@@ -159,6 +155,33 @@ def test_init_without_collect_metrics_starts_no_reporter(tmp_path):
     )
     try:
         assert client.metrics_reporter is None
+    finally:
+        client.shutdown()
+
+
+def test_init_wires_metrics_reporter_from_the_configured_http_sink(
+    tmp_path, monkeypatch
+):
+    """odyssey.init(sink=HttpSink(...), collect_metrics=True) must post
+    metrics to the sink's own endpoint/api_key, not silently depend on
+    ODYSSEY_ENDPOINT/ODYSSEY_API_KEY also being set (finding: MetricsReporter
+    ignored the configured sink's endpoint/api_key)."""
+    monkeypatch.delenv("ODYSSEY_ENDPOINT", raising=False)
+    monkeypatch.delenv("ODYSSEY_API_KEY", raising=False)
+    sink = odyssey.HttpSink("http://127.0.0.1:1", api_key="sk-test")
+    client = odyssey.init(
+        spool_dir=tmp_path / "spool",
+        out_dir=tmp_path / "out",
+        sink=sink,
+        collect_metrics=True,
+        drain_interval=None,
+        force=True,
+    )
+    try:
+        assert client.metrics_reporter is not None
+        transport = client.metrics_reporter._transport
+        assert transport.endpoint == sink.endpoint
+        assert transport.api_key == "sk-test"
     finally:
         client.shutdown()
 

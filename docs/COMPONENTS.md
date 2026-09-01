@@ -139,9 +139,11 @@ persist bytes), not a routing/validation/DTO problem.
 - `GET /health`, `GET /products` (product-scoped mode only).
 - Storage: local disk, date-partitioned —
   `<data_dir>/<YYYY-MM-DD>/<journey_id>.jsonl` (product-scoped:
-  `<data_dir>/<slug>/<date>/...`; metrics: `<data_dir>/[<slug>/]metrics/<date>.jsonl`),
-  written through the same `odyssey.jsonl` codec `FileSink` uses — one
-  wire-format parser, not two.
+  `<data_dir>/<slug>/<date>/...`), written through the same `odyssey.jsonl`
+  codec `FileSink` uses — one wire-format parser, not two. Metrics
+  snapshots go to a separate path (`<data_dir>/[<slug>/]metrics/<date>.jsonl`)
+  and are stored as plain JSON lines, not through the `odyssey.jsonl`
+  codec — they're not journey data.
 - Auth: single shared bearer token (`--api-key`) **or** a multi-tenant
   `--products-file` roster of `Product`s (`{"products": [{"slug","name","api_key"}]}`)
   — mutually exclusive. Product scoping is structural (each key's directory

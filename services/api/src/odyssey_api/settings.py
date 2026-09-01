@@ -4,7 +4,7 @@ config) already uses.
 
 Every path here points at storage another member already owns and writes:
 `journeys_dir` is `services/collector`'s own `--data-dir` (the flat
-``<date>/<journey_id>.jsonl`` layout, non-project-scoped case only — see
+``<date>/<journey_id>.jsonl`` layout, non-product-scoped case only — see
 README's "Not done here"), the three registry paths are
 `odyssey_dataprep.datasets` / `odyssey_training.models_registry` /
 `odyssey_eval.eval_datasets`'s own `registry.yaml` files, and

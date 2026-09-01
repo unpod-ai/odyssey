@@ -29,7 +29,7 @@ from odyssey.config import UNSET, Config, resolve
 from odyssey.context import SeqAllocator
 from odyssey.metrics import MetricsReporter
 from odyssey.primitives import TerminationReason
-from odyssey.sinks import FileSink
+from odyssey.sinks import FileSink, HttpTransport
 from odyssey.spool import DrainResult, IntervalDrainer, Sink, Spool, SpoolConfig
 
 # How many recent failures to keep with their tracebacks. Enough to diagnose a
@@ -115,10 +115,21 @@ class Client:
         self.metrics_reporter: Optional[MetricsReporter] = None
         if config.collect_metrics:
             try:
+                # A configured HttpSink/HttpTransport already resolved an
+                # endpoint/api_key (from its own args or the same env vars);
+                # reuse them so metrics actually go where journeys go instead
+                # of silently depending on ODYSSEY_ENDPOINT/ODYSSEY_API_KEY
+                # also happening to be set. Any other sink (e.g. FileSink)
+                # falls back to MetricsReporter's own env-var resolution.
+                metrics_kwargs: Dict[str, Any] = {}
+                if isinstance(self.sink, HttpTransport):
+                    metrics_kwargs["endpoint"] = self.sink.endpoint
+                    metrics_kwargs["api_key"] = self.sink.api_key
                 self.metrics_reporter = MetricsReporter(
                     interval_seconds=config.metrics_interval,
                     project=config.project,
                     on_error=lambda exc: self.note_error("metrics", exc),
+                    **metrics_kwargs,
                 )
                 self.metrics_reporter.start()
             except Exception as exc:  # noqa: BLE001 - never crash the host

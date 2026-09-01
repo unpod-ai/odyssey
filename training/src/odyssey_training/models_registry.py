@@ -117,7 +117,7 @@ def resolve_model(
     """Look up one registered version of ``name`` — by an explicit
     ``version`` or via an ``alias`` `promote_model` set. Exactly one of the
     two is required, the same mutually-exclusive-params discipline
-    `HttpSink(api_key=...)` / `--keys-file` already use elsewhere in this
+    `HttpSink(api_key=...)` / `--products-file` already use elsewhere in this
     repo. Raises `KeyError` for an unknown name/version/alias rather than
     returning `None` — a caller resolving a model it's about to export or
     serve should fail loudly, not silently get nothing.

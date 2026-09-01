@@ -442,6 +442,17 @@ def test_a_valid_products_file_round_trips_through_resolve_config(tmp_path):
     assert config.products == (Product(slug="proj_a", name="A Corp", api_key="sk-a"),)
 
 
+def test_the_old_keys_file_env_var_fails_fast_instead_of_going_open(
+    tmp_path, monkeypatch
+):
+    """A deployment that still has the pre-rename ODYSSEY_COLLECTOR_KEYS_FILE
+    set (with no --api-key/ODYSSEY_COLLECTOR_API_KEY either) must fail to
+    start, not silently degrade to fully-open, unauthenticated mode."""
+    monkeypatch.setenv("ODYSSEY_COLLECTOR_KEYS_FILE", str(tmp_path / "keys.json"))
+    with pytest.raises(ValueError, match="ODYSSEY_COLLECTOR_KEYS_FILE"):
+        resolve_config(data_dir=tmp_path / "data")
+
+
 def test_init_products_file_writes_a_loadable_roster(tmp_path):
     """The bootstrap path (`odyssey-collector --init-products-file`) writes
     exactly the shape `resolve_config`/`_load_products_file` already accept --

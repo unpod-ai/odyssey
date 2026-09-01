@@ -129,6 +129,12 @@ ENV_API_KEY = "ODYSSEY_COLLECTOR_API_KEY"
 ENV_PRODUCTS_FILE = "ODYSSEY_COLLECTOR_PRODUCTS_FILE"
 ENV_TIMEZONE = "ODYSSEY_COLLECTOR_TIMEZONE"
 
+# Pre-rename name. resolve_config no longer reads it -- and never silently
+# should, since a deployment that still has it set (with no --api-key
+# either) would otherwise start in fully-open, unauthenticated mode instead
+# of failing fast. See the fail-fast note on _load_products_file.
+ENV_KEYS_FILE_OLD = "ODYSSEY_COLLECTOR_KEYS_FILE"
+
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 DEFAULT_DATA_DIR = "./collector-data"
@@ -333,6 +339,11 @@ def resolve_config(
 ) -> CollectorConfig:
     """Explicit arguments win over ``ODYSSEY_COLLECTOR_*`` env vars — the same
     precedence ``odyssey.config.resolve()`` uses on the recording side."""
+    if os.environ.get(ENV_KEYS_FILE_OLD) is not None:
+        raise ValueError(
+            f"{ENV_KEYS_FILE_OLD} was renamed to {ENV_PRODUCTS_FILE} -- update "
+            "your deployment config"
+        )
     resolved_products_file = (
         products_file
         if products_file is not None

@@ -46,6 +46,24 @@ def test_list_journeys_and_find(tmp_path):
     assert filesystem.find_journey_path(tmp_path, "nope") is None
 
 
+def test_list_journeys_skips_non_date_dirs(tmp_path):
+    """The collector also writes a ``metrics/`` subdirectory of ``.jsonl``
+    files directly under the same root; it isn't a date partition and
+    must not be mistaken for one (finding: metrics/journeys collision)."""
+    date_dir = tmp_path / "2026-08-28"
+    date_dir.mkdir()
+    write_events(date_dir / f"{JID}.jsonl", _events(), header=HEADER)
+
+    metrics_dir = tmp_path / "metrics"
+    metrics_dir.mkdir()
+    (metrics_dir / "2026-08-28.jsonl").write_text(
+        '{"ts": "2026-08-28T00:00:00Z"}\n', encoding="utf-8"
+    )
+
+    assert filesystem.list_journeys(tmp_path) == [(JID, "2026-08-28")]
+    assert filesystem.find_journey_path(tmp_path, "2026-08-28") is None
+
+
 def test_read_registry_missing_file(tmp_path):
     assert filesystem.read_registry(tmp_path / "registry.yaml", "corpora") == {}
 
