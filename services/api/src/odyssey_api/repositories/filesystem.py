@@ -9,6 +9,7 @@ draining a journey, stays `odyssey data`/`odyssey model`/`odyssey eval`/
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -21,6 +22,7 @@ __all__ = [
     "read_registry",
     "list_eval_reports",
     "list_exports",
+    "list_metrics",
 ]
 
 
@@ -121,4 +123,30 @@ def list_exports(exports_dir: Path) -> List[Dict[str, Any]]:
                 "sha256": h.hexdigest(),
             }
         )
+    return out
+
+
+def list_metrics(journeys_dir: Path) -> List[Dict[str, Any]]:
+    """Host telemetry snapshots from ``<journeys_dir>/metrics/*.jsonl`` —
+    mirrors `services/collector`'s single-key/open-mode storage path
+    exactly. **Deliberately only the flat, non-product-scoped layout**,
+    same documented scope cut `list_journeys`/`find_journey_path` already
+    have. Malformed lines are skipped rather than raising, same
+    defensiveness as `list_journeys_with_status`'s per-shard fold failure
+    handling. Sorted by ``ts`` descending (newest first)."""
+    metrics_dir = journeys_dir / "metrics"
+    if not metrics_dir.is_dir():
+        return []
+    out: List[Dict[str, Any]] = []
+    for shard in sorted(metrics_dir.glob("*.jsonl")):
+        with open(shard, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    out.sort(key=lambda snapshot: snapshot.get("ts", ""), reverse=True)
     return out

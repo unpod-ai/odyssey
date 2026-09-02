@@ -1,8 +1,8 @@
 # odyssey-api
 
-The read API for journeys/datasets/models/eval-runs (items 8.1-8.3):
+The read API for journeys/datasets/models/eval-runs/metrics (items 8.1-8.3):
 `GET /journeys`, `/journeys/{id}`, `/datasets`, `/datasets/{name}`,
-`/models`, `/models/{name}`, `/runs`, `/exports`, `/health`.
+`/models`, `/models/{name}`, `/runs`, `/exports`, `/metrics`, `/health`.
 
 ## Not the ingest endpoint
 
@@ -75,6 +75,12 @@ Point it at real data:
 | `ODYSSEY_API_EVAL_REPORTS_DIR` | `evaluation/reports` |
 | `ODYSSEY_API_EXPORTS_DIR` | `./exports` |
 | `ODYSSEY_API_AUTH_KEY` | unset — no auth required |
+
+`GET /metrics` has no env var of its own — it reads
+`<ODYSSEY_API_JOURNEYS_DIR>/metrics/*.jsonl`, the same directory
+`services/collector`'s `POST /metrics` already writes to (host telemetry
+snapshots from `ODYSSEY_COLLECT_METRICS`-enabled clients). Only the flat,
+non-product-scoped layout, same scope cut `/journeys` already has.
 
 ## Auth
 

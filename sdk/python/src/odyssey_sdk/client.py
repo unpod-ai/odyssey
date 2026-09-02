@@ -18,6 +18,7 @@ from odyssey_sdk.errors import raise_for_status
 from odyssey_sdk.resources.datasets import DatasetsResource
 from odyssey_sdk.resources.exports import ExportsResource
 from odyssey_sdk.resources.journeys import JourneysResource
+from odyssey_sdk.resources.metrics import MetricsResource
 from odyssey_sdk.resources.models import ModelsResource
 from odyssey_sdk.resources.runs import RunsResource
 
@@ -66,6 +67,7 @@ class OdysseySDK:
         self.models = ModelsResource(self._transport)
         self.runs = RunsResource(self._transport)
         self.exports = ExportsResource(self._transport)
+        self.metrics = MetricsResource(self._transport)
 
     def health(self) -> HealthOut:
         return HealthOut.model_validate(self._transport.get("/health"))

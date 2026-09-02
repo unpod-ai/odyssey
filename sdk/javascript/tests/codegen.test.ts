@@ -18,6 +18,7 @@ describe("codegen", () => {
       "datasets",
       "exports",
       "journeys",
+      "metrics",
       "models",
       "runs",
     ]);

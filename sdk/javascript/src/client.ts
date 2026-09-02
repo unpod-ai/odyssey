@@ -3,6 +3,7 @@ import type { HealthOut } from "./types.generated.js";
 import { DatasetsResource } from "./resources/datasets.js";
 import { ExportsResource } from "./resources/exports.js";
 import { JourneysResource } from "./resources/journeys.js";
+import { MetricsResource } from "./resources/metrics.js";
 import { ModelsResource } from "./resources/models.js";
 import { RunsResource } from "./resources/runs.js";
 
@@ -32,6 +33,7 @@ export class OdysseySDK {
   readonly models: ModelsResource;
   readonly runs: RunsResource;
   readonly exports: ExportsResource;
+  readonly metrics: MetricsResource;
   private readonly transport: Transport;
 
   constructor(baseUrl: string, apiKey?: string) {
@@ -46,6 +48,7 @@ export class OdysseySDK {
     this.models = new ModelsResource(this.transport);
     this.runs = new RunsResource(this.transport);
     this.exports = new ExportsResource(this.transport);
+    this.metrics = new MetricsResource(this.transport);
   }
 
   async health(): Promise<HealthOut> {

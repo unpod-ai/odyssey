@@ -1,12 +1,12 @@
 # apps/web
 
 Read-only dashboard over `services/api` (item 8.6): journeys, datasets,
-models, eval runs, exports. Next.js 16 (App Router), TypeScript, pnpm.
+models, eval runs, exports, metrics. Next.js 16 (App Router), TypeScript, pnpm.
 
 `docs/STRUCTURE.md` describes this app's pages as
 `{journeys,datasets,experiments,models,reports}` — adapted here to
-`{journeys,datasets,models,runs,exports}`, the resources `services/api`
-(items 8.1-8.3) actually exposes today. "experiments"/"reports" have no
+`{journeys,datasets,models,runs,exports,metrics}`, the resources
+`services/api` actually exposes today. "experiments"/"reports" have no
 backing endpoint yet.
 
 ## Consumes `@odyssey/sdk`
@@ -45,15 +45,15 @@ same "not done here" treatment as other deferred pieces in this repo) —
 this was verified instead by starting a real `services/api` instance,
 running `pnpm dev` against it, and `curl`-ing every route
 (`/`, `/journeys`, `/journeys/{id}`, `/datasets`, `/models`, `/runs`,
-`/exports`, including the 404 path for a missing journey) to confirm the
-server-rendered HTML actually contains the live API's data, not by
-opening a browser. If Playwright/e2e is wanted later, `tests/e2e/` is
-where it belongs.
+`/exports`, `/metrics`, including the 404 path for a missing journey) to
+confirm the server-rendered HTML actually contains the live API's data,
+not by opening a browser. If Playwright/e2e is wanted later, `tests/e2e/`
+is where it belongs.
 
 ## Architecture
 
 ```
-src/app/(dashboard)/{journeys,datasets,models,runs,exports}/page.tsx   list pages
+src/app/(dashboard)/{journeys,datasets,models,runs,exports,metrics}/page.tsx   list pages
 src/app/(dashboard)/journeys/[journeyId]/page.tsx                      detail page
 src/components/       Nav, DataTable (shared across every list page)
 src/lib/api/          index.ts — apiClient(), the one @odyssey/sdk entry point

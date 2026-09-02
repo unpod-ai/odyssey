@@ -52,6 +52,19 @@ export interface JourneySummaryOut {
   journey_id: string;
 }
 
+export interface MetricsSnapshotOut {
+  cpu_count?: number | null;
+  disk_free_bytes?: number | null;
+  disk_total_bytes?: number | null;
+  hostname: string;
+  memory_available_bytes?: number | null;
+  memory_total_bytes?: number | null;
+  os: string;
+  project?: string | null;
+  public_ip?: string | null;
+  ts: string;
+}
+
 export interface ModelOut {
   name: string;
   versions: ModelVersionOut[];

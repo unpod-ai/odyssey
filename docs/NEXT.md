@@ -1,6 +1,46 @@
 # odyssey — session handoff
 
-## Product/Project rename, opt-in metrics, services/api auth — done. Next: expose metrics through services/api + a apps/web UI page (designed, not started)
+## Metrics exposed end to end: services/collector → GET /metrics → apps/web dashboard — done
+
+Built exactly what the previous handoff below designed, verified against
+real code before it was written: `MetricsSnapshotOut` DTO
+(`packages/odyssey-schemas`), `repositories/filesystem.list_metrics` +
+`domain/metrics.py` + `routers/metrics.py` in `services/api` (registered
+behind `require_api_key`, same as every other data route), regenerated
+`services/api/openapi.json` + both SDKs' new `metrics` resource (their
+hand-written `client.py`/`client.ts` needed a manual one-line addition
+each — codegen only emits `resources/*.py`/`.ts`, not the top-level
+client's resource registration, a gap the original design note didn't
+call out), and `apps/web/src/app/(dashboard)/metrics/page.tsx` + a `Nav.tsx`
+link, mirroring the `runs`/`exports` pages exactly. TDD'd throughout (new
+integration tests for the list route + malformed-line skip, SDK
+empty-list tests for both languages) — every test written and watched
+failing before the implementing code landed. Also lowered
+`ODYSSEY_METRICS_INTERVAL`'s default from 300s to 30s (user request,
+mid-session), updated everywhere it was documented.
+
+**Verified end to end for real** (not just unit tests): a real
+`services/collector` instance running, a real host snapshot posted to it
+via `odyssey.metrics.build_snapshot()` + `HttpTransport`, landed on disk
+at `<data-dir>/metrics/<date>.jsonl`; a real `services/api` instance
+pointed at that dir returned it from `GET /metrics`; a real `apps/web`
+production build + `next start` rendered it in the `/metrics` page's
+server-rendered HTML (confirmed hostname/project/disk-usage columns all
+present in the actual response bytes, not just that the route existed).
+One non-obvious thing hit along the way, worth knowing for next time:
+`apps/web`'s list pages are statically prerendered at `next build` time,
+not fetched fresh per request under `next start` — if the API isn't
+already running when you build, the build bakes in the "fetch failed"
+error and a `next start` restart alone won't fix it; you have to rebuild
+with the API up.
+
+Full per-member `task test` green across all 8 workspace members after
+this, `openapi --check` reports fresh, `codegen-drift` clean.
+
+**Old handoff below, now fully closed — kept for the exact design
+rationale in case it's useful again:**
+
+## Product/Project rename, opt-in metrics, services/api auth — done. Metrics-through-services/api + apps/web UI — also now done (see above)
 
 Big session, all pushed to `origin/main`, HEAD is `9a48c25`. Three separate pieces of work, in order:
 

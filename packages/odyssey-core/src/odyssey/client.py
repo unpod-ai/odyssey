@@ -370,7 +370,7 @@ def init(
     opts into a background reporter that posts one host snapshot
     (hostname, OS, CPU count, disk usage) to ``{endpoint}/metrics`` every
     ``metrics_interval`` seconds (``ODYSSEY_METRICS_INTERVAL``, default
-    ``300``). Off by default -- when off, nothing in ``odyssey.metrics``
+    ``30``). Off by default -- when off, nothing in ``odyssey.metrics``
     ever runs and no host metadata leaves the process. Uses the same
     ``endpoint``/``api_key`` resolution ``HttpSink`` does
     (``ODYSSEY_ENDPOINT``/``ODYSSEY_API_KEY``) -- there is no separate

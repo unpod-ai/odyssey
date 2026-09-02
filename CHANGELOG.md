@@ -61,6 +61,30 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Added
 
+- **`GET /metrics` on `services/api` + a `apps/web` dashboard page** —
+  exposes `services/collector`'s `POST /metrics` host telemetry snapshots
+  (opt-in via `ODYSSEY_COLLECT_METRICS`, off by default) through the read
+  API and a new `/metrics` page, closing the scope cut the original
+  Product/Project/metrics design explicitly deferred ("no route reads
+  `/metrics` data"). New `MetricsSnapshotOut` DTO in `odyssey_schemas`;
+  `repositories/filesystem.list_metrics` reads
+  `<journeys_dir>/metrics/*.jsonl` (mirrors `services/collector`'s
+  storage path exactly, skips malformed lines rather than raising, same
+  defensiveness as journey-shard folding), a thin `domain/metrics.py`
+  passthrough, `routers/metrics.py` (`GET /metrics` → `List[MetricsSnapshotOut]`),
+  registered in `main.py` behind `require_api_key` like every other data
+  route. Deliberately only the flat, non-product-scoped layout, same
+  documented scope cut `/journeys` already has. Both SDKs and `apps/web`
+  regenerated a matching `metrics` resource/page (`sdk/python`,
+  `sdk/javascript` codegen; `apps/web/src/app/(dashboard)/metrics/page.tsx`
+  mirrors the existing `runs`/`exports` pages exactly, `Nav.tsx` gained a
+  `Metrics` link). `client.py`/`client.ts` in both hand-written SDK
+  wrappers updated to register the new resource (codegen only emits
+  `resources/*`, not the top-level client wiring). `ODYSSEY_METRICS_INTERVAL`'s
+  default lowered from 300s to 30s. Verified end to end against a real
+  running `services/collector` + `services/api` + `apps/web` stack: a real
+  host snapshot posted to the collector, read back through `GET /metrics`,
+  and rendered in the server-rendered `/metrics` page HTML.
 - **`services/api` optional bearer-token auth** — previously had none at
   all. `ODYSSEY_API_AUTH_KEY` env var / `--api-key` CLI flag on
   `odyssey api serve`, checked via `Authorization: Bearer <key>` on every

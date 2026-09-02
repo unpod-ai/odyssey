@@ -104,6 +104,7 @@ def test_empty_registries_return_empty_lists(live_server):
     assert client.models.list() == []
     assert client.runs.list() == []
     assert client.exports.list() == []
+    assert client.metrics.list() == []
 
 
 @pytest.fixture

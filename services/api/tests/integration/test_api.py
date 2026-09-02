@@ -173,6 +173,52 @@ def test_runs_and_exports(tmp_path):
     assert exp.json()[0]["rows"] == 1
 
 
+def test_metrics_list(tmp_path):
+    journeys_dir = tmp_path / "journeys"
+    metrics_dir = journeys_dir / "metrics"
+    metrics_dir.mkdir(parents=True)
+    snapshot = {
+        "ts": "2026-09-02T10:00:00+00:00",
+        "hostname": "host1",
+        "os": "Linux-x86_64",
+        "cpu_count": 8,
+        "memory_total_bytes": 1000,
+        "memory_available_bytes": 500,
+        "disk_total_bytes": 2000,
+        "disk_free_bytes": 1000,
+        "project": "demo",
+        "public_ip": "1.2.3.4",
+    }
+    (metrics_dir / "2026-09-02.jsonl").write_text(json.dumps(snapshot) + "\n")
+
+    settings = Settings(journeys_dir=journeys_dir)
+    client = _client(settings)
+
+    resp = client.get("/metrics")
+    assert resp.status_code == 200
+    assert resp.json() == [snapshot]
+
+
+def test_metrics_list_skips_malformed_lines(tmp_path):
+    journeys_dir = tmp_path / "journeys"
+    metrics_dir = journeys_dir / "metrics"
+    metrics_dir.mkdir(parents=True)
+    (metrics_dir / "2026-09-02.jsonl").write_text(
+        "not json\n" + json.dumps({"ts": "t", "hostname": "h", "os": "o"}) + "\n"
+    )
+
+    settings = Settings(journeys_dir=journeys_dir)
+    client = _client(settings)
+
+    resp = client.get("/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["ts"] == "t"
+    assert body[0]["hostname"] == "h"
+    assert body[0]["os"] == "o"
+
+
 def test_openapi_schema_is_generated():
     client = _client(Settings())
     resp = client.get("/openapi.json")

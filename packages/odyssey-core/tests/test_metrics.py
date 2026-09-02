@@ -120,9 +120,9 @@ def test_collect_metrics_explicit_beats_env(monkeypatch):
     assert resolve(collect_metrics=False).collect_metrics is False
 
 
-def test_metrics_interval_default_is_300(monkeypatch):
+def test_metrics_interval_default_is_30(monkeypatch):
     monkeypatch.delenv("ODYSSEY_METRICS_INTERVAL", raising=False)
-    assert resolve().metrics_interval == 300.0
+    assert resolve().metrics_interval == 30.0
 
 
 def test_metrics_interval_env_var(monkeypatch):

@@ -46,7 +46,7 @@ DEFAULT_SAMPLE_RATE = 1.0
 # batching (sink.send_batch()) is opt-in, not a default -- a plain Sink with
 # no send_batch is unaffected by this value regardless.
 DEFAULT_DRAIN_BATCH_SIZE = 1
-DEFAULT_METRICS_INTERVAL = 300.0
+DEFAULT_METRICS_INTERVAL = 30.0
 
 _FALSEY = {"", "0", "false", "no", "off", "none"}
 

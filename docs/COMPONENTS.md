@@ -162,7 +162,8 @@ retention/pruning for `metrics/` (`prune.py` is unaware of it in this pass).
 
 The read side over the same files `services/collector` writes —
 `GET /journeys`, `/journeys/{id}`, `/datasets`, `/datasets/{name}`,
-`/models`, `/models/{name}`, `/runs`, `/exports`, `/health`. Read-only:
+`/models`, `/models/{name}`, `/runs`, `/exports`, `/metrics`, `/health`.
+Read-only:
 folds `<data_dir>/<date>/<journey_id>.jsonl` through
 `odyssey.export.fold_shard`, the same path every exporter uses, and never
 writes back into that directory.

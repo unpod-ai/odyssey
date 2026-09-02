@@ -27,6 +27,7 @@ __all__ = [
     "ModelOut",
     "EvalRunOut",
     "ExportArtifactOut",
+    "MetricsSnapshotOut",
 ]
 
 
@@ -98,3 +99,16 @@ class ExportArtifactOut(BaseModel):
     path: str
     rows: int
     sha256: str
+
+
+class MetricsSnapshotOut(BaseModel):
+    ts: str
+    hostname: str
+    os: str
+    cpu_count: Optional[int] = None
+    memory_total_bytes: Optional[int] = None
+    memory_available_bytes: Optional[int] = None
+    disk_total_bytes: Optional[int] = None
+    disk_free_bytes: Optional[int] = None
+    project: Optional[str] = None
+    public_ip: Optional[str] = None

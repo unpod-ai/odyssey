@@ -60,7 +60,7 @@ Source: `packages/odyssey-core/src/odyssey/config.py`,
 | `ODYSSEY_API_KEY` | unset | The bearer token `HttpSink` sends as `Authorization: Bearer <key>` — see "Naming collision" above |
 | `ODYSSEY_PROJECT` | unset (auto-detected) | Explicit override for `odyssey.init(project=...)`'s auto-detect chain (`ODYSSEY_PROJECT` → `.git/config`'s `origin` remote → cwd dirname). Tags `JourneyHeader.journey_metadata["project"]` — descriptive only, see "Naming collision" above |
 | `ODYSSEY_COLLECT_METRICS` | `false` | Opt-in, off-by-default host telemetry (hostname, OS, CPU count, disk usage, Linux-only memory). When truthy, starts a background thread posting one snapshot per `ODYSSEY_METRICS_INTERVAL` to `POST /metrics` on the configured `HttpSink` endpoint. See `packages/odyssey-core/src/odyssey/metrics.py` |
-| `ODYSSEY_METRICS_INTERVAL` | `300` (seconds) | How often the metrics background thread posts a snapshot, when `ODYSSEY_COLLECT_METRICS` is enabled |
+| `ODYSSEY_METRICS_INTERVAL` | `30` (seconds) | How often the metrics background thread posts a snapshot, when `ODYSSEY_COLLECT_METRICS` is enabled |
 
 ## `services/collector` — ingest
 

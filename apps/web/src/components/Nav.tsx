@@ -6,6 +6,7 @@ const LINKS = [
   { href: "/models", label: "Models" },
   { href: "/runs", label: "Eval runs" },
   { href: "/exports", label: "Exports" },
+  { href: "/metrics", label: "Metrics" },
 ];
 
 export function Nav() {

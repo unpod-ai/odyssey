@@ -14,7 +14,14 @@ def test_committed_openapi_is_the_real_narrow_shape():
 
 def test_render_all_produces_one_module_per_resource():
     rendered = render_all(load_openapi())
-    assert set(rendered) == {"journeys", "datasets", "models", "runs", "exports"}
+    assert set(rendered) == {
+        "journeys",
+        "datasets",
+        "models",
+        "runs",
+        "exports",
+        "metrics",
+    }
     assert "class JourneysResource:" in rendered["journeys"]
 
 

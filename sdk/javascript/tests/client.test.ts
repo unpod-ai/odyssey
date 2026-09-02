@@ -135,6 +135,7 @@ describe("OdysseySDK against a real services/api instance", () => {
     expect(await client.models.list()).toEqual([]);
     expect(await client.runs.list()).toEqual([]);
     expect(await client.exports.list()).toEqual([]);
+    expect(await client.metrics.list()).toEqual([]);
   });
 });
 
