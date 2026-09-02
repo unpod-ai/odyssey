@@ -32,6 +32,28 @@ through the same sequence: `health()`, `journeys.list()`/`.get()`, a 404
 on a missing journey (`OdysseyAPINotFoundError`), then
 `datasets`/`models`/`runs`/`exports`.
 
+## Testing a live `services/collector` (write side)
+
+`basic_usage.py`/`basic-usage.mjs` above are read-side (`services/api`)
+walkthroughs against a server you start yourself. To send a real request
+to an already-running collector — a QA box, staging, whatever — instead:
+
+```bash
+ODYSSEY_ENDPOINT=https://your-collector-host \
+ODYSSEY_API_KEY=<product's api_key, if the server requires one> \
+uv run python sdk/examples/python/qa_collector_smoke_test.py
+
+# or pass them positionally:
+uv run python sdk/examples/python/qa_collector_smoke_test.py \
+    https://your-collector-host <api_key>
+```
+
+Posts one dummy, uniquely-timestamped journey via `odyssey.HttpSink` (the
+same client `odyssey.init()` uses in production) and prints the result —
+useful for confirming a deployment's endpoint/auth/data-dir are all
+working, and (with `ODYSSEY_COLLECTOR_DEBUG=1` set on that box) for
+watching the resulting request show up in `journalctl -u odyssey-collector -f`.
+
 ## Which SDK is which
 
 - `sdk/python` (`odyssey-sdk`) — stdlib `urllib` transport, no extra deps
