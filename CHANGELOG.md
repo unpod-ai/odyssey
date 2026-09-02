@@ -65,15 +65,20 @@ project has not yet made a versioned release, so entries accumulate under
   breaking every journey ingest** — `_Handler._store` writes each posted
   batch to a `tempfile.TemporaryDirectory()` scratch file to validate it
   before appending (`services/collector/src/odyssey_collector/server.py`),
-  but `ProtectSystem=strict` without `PrivateTmp=true` remounts `/tmp`
-  read-only along with everything outside `ReadWritePaths`, so every
-  `POST /journeys/<id>/events`/`/batch/events` 500'd with "no usable
-  temporary directory" while `POST /metrics` (no temp file in its path)
-  kept succeeding — a deployment-reported symptom, reproduced against the
-  code before fixing. Added `PrivateTmp=true` to both the repo-root
-  `odyssey-collector.service` and `docs/runbooks/run-services.md`'s unit
-  template, with a note explaining why it's required alongside
-  `ProtectSystem=strict`, not optional hardening.
+  but `ProtectSystem=strict` remounts `/tmp` read-only along with
+  everything outside `ReadWritePaths`, so every `POST
+  /journeys/<id>/events`/`/batch/events` 500'd with "no usable temporary
+  directory" while `POST /metrics` (no temp file in its path) kept
+  succeeding — a deployment-reported symptom, reproduced against the code
+  before fixing. Fixed belt-and-suspenders: `_store`'s scratch dir now
+  lives under `data_dir` itself (`tempfile.TemporaryDirectory(dir=base)`)
+  rather than the system temp dir — the one path this service already
+  must write to, so it no longer depends on `/tmp` at all — and
+  `PrivateTmp=true` is also set on the unit in case anything else in the
+  process needs `/tmp`. New tests cover both an unusable system temp dir
+  and that no scratch directory leaks into `data_dir` after a request.
+  Both `odyssey-collector.service` and `docs/runbooks/run-services.md`'s
+  unit template updated to match.
 
 ### Added
 
