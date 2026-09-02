@@ -1,203 +1,269 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 440" width="100%" height="100%" style="background: #0B0F19; border-radius: 12px; font-family: system-ui, -apple-system, sans-serif;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 860" width="100%" height="100%" role="img" aria-labelledby="title desc">
+  <title id="title">Odyssey Data Flow Architecture</title>
+  <desc id="desc">Animated architecture diagram showing the exact observability inputs and training outputs from the README reference flowing through Odyssey core.</desc>
   <defs>
-    <!-- Gradients -->
-    <linearGradient id="grad-capture" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#8338EC"/>
-      <stop offset="100%" stop-color="#3A86FF"/>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fffdf8"/>
+      <stop offset="100%" stop-color="#fff7ef"/>
     </linearGradient>
-    <linearGradient id="grad-train" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#3A86FF"/>
-      <stop offset="100%" stop-color="#00F5D4"/>
+    <radialGradient id="halo" cx="50%" cy="45%" r="60%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#eef2ff" stop-opacity="0.85"/>
+    </radialGradient>
+    <linearGradient id="coreFill" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2f3141"/>
+      <stop offset="100%" stop-color="#111218"/>
     </linearGradient>
-    <linearGradient id="grad-eval" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#00F5D4"/>
-      <stop offset="100%" stop-color="#FF006E"/>
+    <linearGradient id="leftStroke" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#4f8dff"/>
+      <stop offset="100%" stop-color="#8db6ff"/>
     </linearGradient>
-    <!-- Glow Filters -->
-    <filter id="glow-capture" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#8338EC" flood-opacity="0.4"/>
+    <linearGradient id="rightStroke" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffb067"/>
+      <stop offset="100%" stop-color="#ff8a33"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#b7c0d6" flood-opacity="0.28"/>
     </filter>
-    <filter id="glow-train" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#3A86FF" flood-opacity="0.4"/>
+    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#d7dee9" flood-opacity="0.35"/>
     </filter>
-    <filter id="glow-eval" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#FF006E" flood-opacity="0.4"/>
-    </filter>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.2" fill="#e8e4dc"/>
+    </pattern>
+    <marker id="arrowRightBlue" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto">
+      <path d="M1,1 L11,6 L1,11 Z" fill="#5b94ff"/>
+    </marker>
+    <marker id="arrowRightOrange" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto">
+      <path d="M1,1 L11,6 L1,11 Z" fill="#ff943c"/>
+    </marker>
   </defs>
 
   <style>
-    .title { font-weight: 800; font-size: 14px; letter-spacing: 1px; fill: #E2E8F0; }
-    .subtitle { font-size: 11px; fill: #94A3B8; }
-    .node-text { font-weight: 600; font-size: 12px; fill: #F8FAFC; }
-    .node-subtext { font-size: 10px; fill: #94A3B8; }
-    
-    .panel { fill: #0F172A; stroke: #1F2937; stroke-width: 1.5; rx: 12px; }
-    .panel-capture { stroke: #8338EC; stroke-opacity: 0.4; }
-    .panel-train { stroke: #3A86FF; stroke-opacity: 0.4; }
-    .panel-eval { stroke: #FF006E; stroke-opacity: 0.4; }
-
-    .node { rx: 8px; fill: #1E293B; stroke: #334155; stroke-width: 1.5; transition: all 0.3s ease; }
-    .node:hover { fill: #334155; stroke-width: 2; cursor: pointer; }
-    
-    .node-capture { stroke: url(#grad-capture); }
-    .node-train { stroke: url(#grad-train); }
-    .node-eval { stroke: url(#grad-eval); }
-
-    /* Animated Flows */
-    .flow-line { fill: none; stroke-width: 2.5; stroke-linecap: round; }
-    .flow-capture { stroke: #8338EC; stroke-dasharray: 8, 8; animation: dash 1.5s linear infinite; }
-    .flow-train { stroke: #3A86FF; stroke-dasharray: 8, 8; animation: dash 1.5s linear infinite; }
-    .flow-eval { stroke: #FF006E; stroke-dasharray: 8, 8; animation: dash 1.5s linear infinite; }
-    
-    /* Cross-pipeline loop (back-feeding reports to api) */
-    .flow-loop { stroke: #00F5D4; stroke-dasharray: 8, 8; animation: dash-reverse 2s linear infinite; }
-
-    @keyframes dash {
-      to { stroke-dashoffset: -32; }
+    text { font-family: Inter, "Segoe UI", Arial, sans-serif; }
+    .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; }
+    .title { font-size: 28px; font-weight: 800; fill: #1b1d26; }
+    .caption { font-size: 14px; fill: #7b8193; }
+    .section { font-size: 18px; font-weight: 800; letter-spacing: 1.4px; text-transform: uppercase; }
+    .pill { fill: #ffffff; stroke: #e7e6e2; stroke-width: 1.2; }
+    .pillText { font-size: 14px; font-weight: 700; }
+    .panel { fill: url(#halo); stroke: #ece9e2; stroke-width: 1.4; }
+    .card { fill: #ffffff; stroke: #e7eaf0; stroke-width: 1.4; rx: 20; }
+    .leftCardAccent { fill: #4f8dff; }
+    .rightCardAccent { fill: #ff9b4a; }
+    .cardTitle { font-size: 28px; font-weight: 700; fill: #2a2e3b; }
+    .cardSub { font-size: 18px; fill: #9aa1b2; }
+    .smallTitle { font-size: 26px; font-weight: 700; fill: #2a2e3b; }
+    .coreLabel { font-size: 14px; font-weight: 700; letter-spacing: 2.4px; fill: #d2d5de; text-transform: uppercase; }
+    .coreText { font-size: 72px; font-weight: 800; fill: #ffffff; }
+    .coreSub { font-size: 18px; font-weight: 500; fill: #b9bfce; }
+    .foundationTag { fill: #ffffff; stroke: #e3e5eb; stroke-width: 1.1; rx: 20; }
+    .foundationTagText { font-size: 15px; font-weight: 700; fill: #72798b; letter-spacing: 0.9px; text-transform: uppercase; }
+    .platformTitle { font-size: 28px; font-weight: 800; fill: #2d313f; }
+    .platformSub { font-size: 18px; fill: #8b90a0; }
+    .boxedPill { fill: #eafaf0; stroke: #bce7ca; stroke-width: 1; rx: 12; }
+    .boxedText { font-size: 16px; font-weight: 800; fill: #27a167; letter-spacing: 1px; }
+    .legend { font-size: 13px; fill: #8d92a1; }
+    .footer { font-size: 14px; fill: #9aa0af; }
+    .flowLeft, .flowRight {
+      fill: none;
+      stroke-width: 3.2;
+      stroke-linecap: round;
+      stroke-dasharray: 10 10;
+      opacity: 0.95;
     }
-    @keyframes dash-reverse {
-      to { stroke-dashoffset: 32; }
+    .flowLeft {
+      stroke: #76a8ff;
+      animation: dashLeft 1.6s linear infinite;
     }
-
-    /* Pulse active indicators */
-    .pulse-dot { animation: pulse 2s infinite; }
-    @keyframes pulse {
-      0% { r: 3.5px; opacity: 1; }
-      50% { r: 7px; opacity: 0.4; }
-      100% { r: 3.5px; opacity: 1; }
+    .flowRight {
+      stroke: #ff9d56;
+      animation: dashRight 1.6s linear infinite;
+    }
+    .pulseBlue { fill: #4f8dff; animation: pulseBlue 2.4s ease-in-out infinite; }
+    .pulseOrange { fill: #ff9b4a; animation: pulseOrange 2.4s ease-in-out infinite; }
+    .glowDot { animation-delay: 0.4s; }
+    .coreFloat { animation: floatCore 5s ease-in-out infinite; transform-origin: 700px 386px; }
+    .platformFloat { animation: floatPlatform 5s ease-in-out infinite; transform-origin: 700px 610px; }
+    @keyframes dashLeft {
+      to { stroke-dashoffset: -40; }
+    }
+    @keyframes dashRight {
+      to { stroke-dashoffset: -40; }
+    }
+    @keyframes pulseBlue {
+      0%, 100% { r: 5; opacity: 0.95; }
+      50% { r: 10; opacity: 0.28; }
+    }
+    @keyframes pulseOrange {
+      0%, 100% { r: 5; opacity: 0.95; }
+      50% { r: 10; opacity: 0.28; }
+    }
+    @keyframes floatCore {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-4px); }
+    }
+    @keyframes floatPlatform {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(4px); }
     }
   </style>
 
-  <!-- Panel 1: CAPTURE -->
-  <rect x="20" y="20" width="290" height="400" class="panel panel-capture" />
-  <text x="40" y="50" class="title">01. CAPTURE &amp; SERVE (Live)</text>
-  <text x="40" y="68" class="subtitle">Agent Traces In &amp; Real-time APIs</text>
+  <rect width="1400" height="860" fill="url(#bg)"/>
+  <rect width="1400" height="860" fill="url(#dots)" opacity="0.7"/>
 
-  <!-- Panel 2: TRAIN -->
-  <rect x="350" y="20" width="300" height="400" class="panel panel-train" />
-  <text x="370" y="50" class="title">02. PIPELINE &amp; TRAIN (Batch)</text>
-  <text x="370" y="68" class="subtitle">7-Stage Prep &amp; Soup Finetuning</text>
+  <text x="700" y="74" text-anchor="middle" class="title">Odyssey - Data Flow Architecture</text>
+  <text x="700" y="106" text-anchor="middle" class="caption">Observability signals converge into odyssey core • Foundation layer stores to Data Collection Platform • Training stack consumes downstream</text>
 
-  <!-- Panel 3: SERVE & EVAL -->
-  <rect x="690" y="20" width="290" height="400" class="panel panel-eval" />
-  <text x="710" y="50" class="title">03. SERVE &amp; EVAL (Offline)</text>
-  <text x="710" y="68" class="subtitle">Baseten, Cerebras &amp; Scoring</text>
-
-  <!-- ================== NODES: CAPTURE ================== -->
-  <!-- App / LiveKit / SDKs Source -->
-  <g filter="url(#glow-capture)">
-    <rect x="40" y="95" width="250" height="55" class="node node-capture" />
-    <text x="55" y="118" class="node-text">Live Sources &amp; SDKs</text>
-    <text x="55" y="135" class="node-subtext">Langchain • Langfuse • LiveKit • OpenAI</text>
+  <g transform="translate(338,132)">
+    <rect width="194" height="36" rx="18" class="pill"/>
+    <circle cx="18" cy="18" r="4" fill="#4f8dff"/>
+    <text x="34" y="23" class="pillText" fill="#5b7fe8">INPUTS • OBSERVABILITY</text>
+  </g>
+  <g transform="translate(573,132)">
+    <rect width="154" height="36" rx="18" fill="#14161d"/>
+    <circle cx="18" cy="18" r="4" fill="#ffffff"/>
+    <text x="34" y="23" class="pillText" fill="#ffffff">CORE • odyssey</text>
+  </g>
+  <g transform="translate(758,132)">
+    <rect width="194" height="36" rx="18" class="pill"/>
+    <circle cx="18" cy="18" r="4" fill="#ff9b4a"/>
+    <text x="34" y="23" class="pillText" fill="#ee8d35">OUTPUTS • TRAINING</text>
   </g>
 
-  <!-- Local Spool -->
-  <g>
-    <rect x="40" y="180" width="250" height="50" class="node" />
-    <text x="55" y="203" class="node-text">Local Spool (Core)</text>
-    <text x="55" y="218" class="node-subtext">Append-only local JSONL buffer</text>
+  <rect x="72" y="200" width="1256" height="596" rx="34" class="panel" filter="url(#softShadow)"/>
+
+  <text x="128" y="248" class="section" fill="#4c79e7">INPUTS / OBSERVABILITY STACK</text>
+  <text x="970" y="248" class="section" fill="#ee8937">OUTPUTS / TRAINING STACK</text>
+
+  <g filter="url(#cardShadow)">
+    <g transform="translate(92,274)">
+      <rect width="258" height="84" rx="18" class="card"/>
+      <rect x="0" y="18" width="5" height="48" rx="3" class="leftCardAccent"/>
+      <text x="48" y="42" class="cardTitle">metrics</text>
+      <text x="48" y="66" class="cardSub">OpenTelemetry • Prometheus</text>
+      <circle cx="236" cy="42" r="4" fill="#77a7ff"/>
+    </g>
+    <g transform="translate(92,362)">
+      <rect width="258" height="84" rx="18" class="card"/>
+      <rect x="0" y="18" width="5" height="48" rx="3" class="leftCardAccent"/>
+      <text x="48" y="42" class="cardTitle">traces</text>
+      <text x="48" y="66" class="cardSub">Distributed Tracing</text>
+      <circle cx="236" cy="42" r="4" fill="#77a7ff"/>
+    </g>
+    <g transform="translate(92,450)">
+      <rect width="258" height="84" rx="18" class="card"/>
+      <rect x="0" y="18" width="5" height="48" rx="3" class="leftCardAccent"/>
+      <text x="48" y="42" class="cardTitle">langfuse</text>
+      <text x="48" y="66" class="cardSub">LLM Observability</text>
+      <circle cx="236" cy="42" r="4" fill="#77a7ff"/>
+    </g>
+    <g transform="translate(92,538)">
+      <rect width="258" height="84" rx="18" class="card"/>
+      <rect x="0" y="18" width="5" height="48" rx="3" class="leftCardAccent"/>
+      <text x="48" y="42" class="cardTitle">langchain</text>
+      <text x="48" y="66" class="cardSub">Agent Framework</text>
+      <circle cx="236" cy="42" r="4" fill="#77a7ff"/>
+    </g>
+    <g transform="translate(92,626)">
+      <rect width="258" height="84" rx="18" class="card"/>
+      <rect x="0" y="18" width="5" height="48" rx="3" class="leftCardAccent"/>
+      <text x="48" y="42" class="cardTitle">pipecat</text>
+      <text x="48" y="66" class="cardSub">Voice Pipeline</text>
+      <circle cx="236" cy="42" r="4" fill="#77a7ff"/>
+    </g>
+    <g transform="translate(92,714)">
+      <rect width="258" height="84" rx="18" class="card"/>
+      <rect x="0" y="18" width="5" height="48" rx="3" class="leftCardAccent"/>
+      <text x="48" y="42" class="cardTitle">livekit</text>
+      <text x="48" y="66" class="cardSub">Realtime Transport</text>
+      <circle cx="236" cy="42" r="4" fill="#77a7ff"/>
+    </g>
+    <g transform="translate(1050,274)">
+      <rect width="258" height="84" rx="18" class="card"/>
+      <rect x="253" y="18" width="5" height="48" rx="3" class="rightCardAccent"/>
+      <text x="28" y="42" class="cardTitle">hugging face</text>
+      <text x="28" y="66" class="cardSub">Model Hub • Datasets</text>
+      <circle cx="236" cy="42" r="4" fill="#ffab63"/>
+    </g>
+    <g transform="translate(1050,404)">
+      <rect width="258" height="84" rx="18" class="card"/>
+      <rect x="253" y="18" width="5" height="48" rx="3" class="rightCardAccent"/>
+      <text x="28" y="42" class="cardTitle">unsloth</text>
+      <text x="28" y="66" class="cardSub">Fast Finetuning</text>
+      <circle cx="236" cy="42" r="4" fill="#ffab63"/>
+    </g>
+    <g transform="translate(1050,534)">
+      <rect width="258" height="84" rx="18" class="card"/>
+      <rect x="253" y="18" width="5" height="48" rx="3" class="rightCardAccent"/>
+      <text x="28" y="42" class="cardTitle">bedrock</text>
+      <text x="28" y="66" class="cardSub">AWS Bedrock</text>
+      <circle cx="236" cy="42" r="4" fill="#ffab63"/>
+    </g>
+    <g transform="translate(1050,664)">
+      <rect width="258" height="84" rx="18" class="card" stroke="#ffc58e" stroke-dasharray="6 6"/>
+      <rect x="0" y="22" width="40" height="40" rx="12" fill="#ff6f1f"/>
+      <circle cx="20" cy="42" r="9" fill="#ffffff" opacity="0.2"/>
+      <circle cx="20" cy="42" r="4" fill="#ffffff"/>
+      <text x="58" y="40" class="smallTitle">other data training models</text>
+      <text x="58" y="64" class="cardSub">Custom Training Loop</text>
+      <circle cx="236" cy="42" r="4" fill="#ffab63"/>
+    </g>
   </g>
 
-  <!-- Collector -->
-  <g>
-    <rect x="40" y="260" width="250" height="50" class="node" />
-    <text x="55" y="283" class="node-text">Collector (:8787)</text>
-    <text x="55" y="298" class="node-subtext">Fast stdlib multi-tenant ingest</text>
+  <g class="coreFloat" filter="url(#softShadow)">
+    <rect x="462" y="318" width="476" height="228" rx="92" fill="url(#coreFill)"/>
+    <text x="700" y="372" text-anchor="middle" class="coreLabel">CORE ENGINE</text>
+    <circle cx="571" cy="363" r="4" fill="#62a0ff"/>
+    <circle cx="832" cy="363" r="4" fill="#ff9b4a"/>
+    <circle cx="875" cy="363" r="4" fill="#4ae18b"/>
+    <text x="700" y="433" text-anchor="middle" class="coreText">odyssey</text>
+    <text x="700" y="480" text-anchor="middle" class="coreSub">Data Orchestration  •  Real-time Flow</text>
   </g>
 
-  <!-- API / SDKs / Web UI -->
-  <g>
-    <rect x="40" y="340" width="250" height="55" class="node" />
-    <text x="55" y="363" class="node-text">API (:8000) &amp; Web UI (:3000)</text>
-    <text x="55" y="380" class="node-subtext">FastAPI, Next.js, JS/Python SDKs</text>
+  <g transform="translate(610,548)">
+    <rect width="180" height="34" rx="17" class="foundationTag"/>
+    <circle cx="18" cy="17" r="4" fill="#33353e"/>
+    <text x="32" y="22" class="foundationTagText">Foundation Layer</text>
   </g>
 
-  <!-- ================== NODES: TRAIN ================== -->
-  <!-- Raw Traces / Filesystem -->
-  <g>
-    <rect x="375" y="95" width="250" height="50" class="node" />
-    <text x="390" y="118" class="node-text">Immutable Raw Traces</text>
-    <text x="390" y="133" class="node-subtext">Date-partitioned file repository</text>
+  <g class="platformFloat" filter="url(#cardShadow)">
+    <rect x="500" y="584" width="400" height="124" rx="20" class="card" stroke-dasharray="4 6"/>
+    <rect x="520" y="612" width="44" height="44" rx="12" fill="#14161d"/>
+    <rect x="532" y="623" width="20" height="20" rx="4" fill="#ffffff" opacity="0.9"/>
+    <text x="585" y="628" class="platformTitle">Data Collection Platform</text>
+    <text x="585" y="657" class="platformSub">Central Intake • Cold + Hot Store</text>
+    <rect x="760" y="631" width="78" height="30" class="boxedPill"/>
+    <text x="778" y="651" class="boxedText">BOXED</text>
+    <rect x="867" y="636" width="24" height="10" rx="5" fill="#14161d"/>
   </g>
 
-  <!-- Data Prep -->
-  <g filter="url(#glow-train)">
-    <rect x="375" y="175" width="250" height="55" class="node node-train" />
-    <text x="390" y="198" class="node-text">7-Stage Data Prep</text>
-    <text x="390" y="215" class="node-subtext">Clean • Normalize • Augment • Split</text>
-  </g>
+  <path d="M350 316 C430 320, 468 355, 492 390" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
+  <path d="M350 404 C430 408, 470 402, 492 402" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
+  <path d="M350 492 C432 500, 470 438, 492 416" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
+  <path d="M350 580 C430 586, 470 468, 492 430" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
+  <path d="M350 668 C430 654, 474 518, 492 444" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
+  <path d="M350 756 C432 714, 500 560, 564 454" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
 
-  <!-- Soup Trainer Config -->
-  <g>
-    <rect x="375" y="260" width="250" height="50" class="node" />
-    <text x="390" y="283" class="node-text">Soup Config &amp; CLI</text>
-    <text x="390" y="298" class="node-subtext">Unsloth • SFT • DPO • GRPO configs</text>
-  </g>
+  <path d="M908 392 C962 352, 1008 328, 1050 316" class="flowRight" marker-end="url(#arrowRightOrange)"/>
+  <path d="M908 408 C968 402, 1012 428, 1050 446" class="flowRight" marker-end="url(#arrowRightOrange)"/>
+  <path d="M908 426 C970 456, 1015 512, 1050 576" class="flowRight" marker-end="url(#arrowRightOrange)"/>
+  <path d="M908 440 C970 520, 1012 628, 1050 706" class="flowRight" marker-end="url(#arrowRightOrange)"/>
 
-  <!-- Hugging Face / Checkpoint Upload -->
-  <g>
-    <rect x="375" y="340" width="250" height="50" class="node" />
-    <text x="390" y="363" class="node-text">Hugging Face / Object Store</text>
-    <text x="390" y="378" class="node-subtext">Upload checkpoint manifests &amp; bytes</text>
-  </g>
+  <path d="M700 708 L700 748" class="flowRight" marker-end="url(#arrowRightOrange)"/>
 
-  <!-- ================== NODES: INFERENCE ================== -->
-  <!-- Model Registry -->
-  <g>
-    <rect x="710" y="95" width="250" height="50" class="node" />
-    <text x="725" y="118" class="node-text">Model Registry</text>
-    <text x="725" y="133" class="node-subtext">Track configs, metrics, metadata</text>
-  </g>
+  <circle cx="446" cy="355" r="5" class="pulseBlue"/>
+  <circle cx="468" cy="446" r="5" class="pulseBlue glowDot"/>
+  <circle cx="472" cy="558" r="5" class="pulseBlue"/>
+  <circle cx="468" cy="670" r="5" class="pulseBlue glowDot"/>
+  <circle cx="518" cy="606" r="5" class="pulseBlue"/>
+  <circle cx="952" cy="366" r="5" class="pulseOrange"/>
+  <circle cx="980" cy="486" r="5" class="pulseOrange glowDot"/>
+  <circle cx="988" cy="612" r="5" class="pulseOrange"/>
+  <circle cx="994" cy="722" r="5" class="pulseOrange glowDot"/>
 
-  <!-- Inference Serving -->
-  <g filter="url(#glow-eval)">
-    <rect x="710" y="175" width="250" height="55" class="node node-eval" />
-    <text x="725" y="198" class="node-text">Inference Servers</text>
-    <text x="725" y="215" class="node-subtext">Baseten • Cerebras • vLLM • Ollama</text>
-  </g>
-
-  <!-- Completions -->
-  <g>
-    <rect x="710" y="260" width="250" height="50" class="node" />
-    <text x="725" y="283" class="node-text">Model Completions</text>
-    <text x="725" y="298" class="node-subtext">Output responses as JSONL rows</text>
-  </g>
-
-  <!-- Offline Eval Harness -->
-  <g>
-    <rect x="710" y="340" width="250" height="50" class="node" />
-    <text x="725" y="363" class="node-text">Offline Eval Harness</text>
-    <text x="725" y="378" class="node-subtext">Score benchmarks &amp; feed back to API</text>
-  </g>
-
-  <!-- ================== FLOW LINES & INTERCONNECTIONS ================== -->
-  <!-- Col 1 Flow -->
-  <path d="M 165,150 L 165,180" class="flow-line flow-capture" />
-  <path d="M 165,230 L 165,260" class="flow-line flow-capture" />
-  <path d="M 165,310 L 165,340" class="flow-line flow-capture" />
-
-  <!-- Col 2 Flow -->
-  <path d="M 500,145 L 500,175" class="flow-line flow-train" />
-  <path d="M 500,230 L 500,260" class="flow-line flow-train" />
-  <path d="M 500,310 L 500,340" class="flow-line flow-train" />
-
-  <!-- Col 3 Flow -->
-  <path d="M 835,145 L 835,175" class="flow-line flow-eval" />
-  <path d="M 835,230 L 835,260" class="flow-line flow-eval" />
-  <path d="M 835,310 L 835,340" class="flow-line flow-eval" />
-
-  <!-- Cross Column Connections -->
-  <!-- Collector/FileStore (Col 1) to Raw Traces (Col 2) -->
-  <path d="M 290,285 L 330,285 Q 350,285 350,120 L 375,120" class="flow-line flow-train" />
-  
-  <!-- HF/Object Store (Col 2) to Model Registry (Col 3) -->
-  <path d="M 625,365 L 665,365 Q 685,365 685,120 L 710,120" class="flow-line flow-eval" />
-  
-  <!-- Eval Harness (Col 3) back to API (Col 1) -->
-  <path d="M 710,365 Q 670,365 670,410 L 330,410 Q 290,410 290,365" class="flow-line flow-loop" />
-
-  <!-- Glowing pulse indicators -->
-  <circle cx="165" cy="165" r="4" fill="#8338EC" class="pulse-dot" />
-  <circle cx="500" cy="160" r="4" fill="#3A86FF" class="pulse-dot" />
-  <circle cx="835" cy="160" r="4" fill="#FF006E" class="pulse-dot" />
+  <text x="104" y="816" class="legend">Blue = metrics • traces • langfuse • langchain • pipecat • livekit</text>
+  <text x="444" y="816" class="legend">Black = odyssey core</text>
+  <text x="650" y="816" class="legend">Orange = hugging face • unsloth • bedrock • custom training loops</text>
+  <text x="1038" y="816" class="footer">Odyssey • Data Flow Architecture</text>
 </svg>

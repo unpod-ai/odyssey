@@ -26,10 +26,10 @@ It bridges the gap between raw, active agent interactions and heavy, offline GPU
 
 ## 🔄 The Closed-Loop Architecture
 
-The flowchart below represents the full, automated lifecycle of the Odyssey ecosystem. **Connections animate to show data flowing dynamically across the three key operational phases:**
+The flowchart below represents the high-level data-flow architecture of the Odyssey ecosystem. Connections animate to show observability inputs converging into Odyssey core and flowing downstream into training systems:
 
 <div align="center">
-  <img src="docs/assets/pipeline.svg" width="100%" alt="Odyssey Lifecycle Flow">
+  <img src="docs/assets/pipeline.svg" width="100%" alt="Odyssey Data Flow Architecture">
 </div>
 
 ### 🏛️ Operational Pillars
