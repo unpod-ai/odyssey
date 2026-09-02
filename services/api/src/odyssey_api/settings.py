@@ -3,9 +3,12 @@ other member (`odyssey.config.resolve()`, `services/collector`'s server
 config) already uses.
 
 Every path here points at storage another member already owns and writes:
-`journeys_dir` is `services/collector`'s own `--data-dir` (the flat
-``<date>/<journey_id>.jsonl`` layout, non-product-scoped case only — see
-README's "Not done here"), the three registry paths are
+`journeys_dir` is `services/collector`'s own `--data-dir` — either the flat
+``<date>/<journey_id>.jsonl`` layout or a product-scoped
+``<product_slug>/<date>/<journey_id>.jsonl`` one (`--products-file`); both
+`/journeys` (`repositories/filesystem.list_journeys`/`find_journey_path`)
+and `/metrics` (`repositories/filesystem.list_metrics`) handle both
+layouts. The three registry paths are
 `odyssey_dataprep.datasets` / `odyssey_training.models_registry` /
 `odyssey_eval.eval_datasets`'s own `registry.yaml` files, and
 ``eval_reports_dir``/``exports_dir`` are directories a caller points a CLI

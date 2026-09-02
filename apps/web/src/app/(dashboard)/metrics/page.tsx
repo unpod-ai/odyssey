@@ -2,6 +2,11 @@ import { apiClient } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
 import type { MetricsSnapshotOut } from "@odyssey/sdk";
 
+// Snapshots land continuously (services/collector's POST /metrics), so this
+// page must hit services/api on every request rather than serve the
+// `next build`-time snapshot the default static prerender would freeze in.
+export const dynamic = "force-dynamic";
+
 export default async function MetricsPage() {
   let snapshots: MetricsSnapshotOut[] = [];
   let error: string | null = null;

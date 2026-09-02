@@ -38,11 +38,17 @@ def list_journeys_with_status(journeys_dir: Path) -> List[Tuple[str, str, bool]]
     rather than aborting the whole listing. Reuses `filesystem.list_journeys`
     for partition/shard discovery so there is exactly one place that walks
     `journeys_dir` and decides what counts as a journey shard, not two.
+    The shard's actual path is re-resolved via `find_journey_path` rather
+    than rebuilt as `journeys_dir / journey_date / f"{journey_id}.jsonl"` —
+    that flat-layout join is wrong for a product-scoped journey, which
+    lives one level deeper at `<journeys_dir>/<product_slug>/<journey_date>/...`.
     """
     out: List[Tuple[str, str, bool]] = []
     for journey_id, journey_date in filesystem.list_journeys(journeys_dir):
-        shard = journeys_dir / journey_date / f"{journey_id}.jsonl"
+        shard = filesystem.find_journey_path(journeys_dir, journey_id)
         try:
+            if shard is None:
+                raise OSError(f"shard for {journey_id!r} vanished mid-listing")
             complete = fold_shard(shard).complete
         except (OSError, ValueError):
             complete = False

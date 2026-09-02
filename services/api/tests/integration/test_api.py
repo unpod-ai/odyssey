@@ -219,6 +219,31 @@ def test_metrics_list_skips_malformed_lines(tmp_path):
     assert body[0]["os"] == "o"
 
 
+def test_metrics_list_skips_snapshots_missing_required_fields(tmp_path):
+    """A snapshot missing ``ts``/``os`` (older probe payloads) must not
+    500 the whole listing — it's dropped, valid snapshots still come back."""
+    journeys_dir = tmp_path / "journeys"
+    metrics_dir = journeys_dir / "metrics"
+    metrics_dir.mkdir(parents=True)
+    valid = {"ts": "t", "hostname": "h", "os": "o"}
+    (metrics_dir / "2026-09-02.jsonl").write_text(
+        json.dumps({"hostname": "probe", "os": "linux"}) + "\n"  # missing ts
+        + json.dumps({"ts": "t2", "hostname": "probe2"}) + "\n"  # missing os
+        + json.dumps(valid) + "\n"
+    )
+
+    settings = Settings(journeys_dir=journeys_dir)
+    client = _client(settings)
+
+    resp = client.get("/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["ts"] == "t"
+    assert body[0]["hostname"] == "h"
+    assert body[0]["os"] == "o"
+
+
 def test_openapi_schema_is_generated():
     client = _client(Settings())
     resp = client.get("/openapi.json")

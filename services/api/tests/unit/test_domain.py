@@ -57,6 +57,19 @@ def test_list_journeys_with_status(tmp_path):
     assert out == [(JID, "2026-08-28", True)]
 
 
+def test_list_journeys_with_status_product_scoped(tmp_path):
+    """`--products-file` collector deployments nest journeys one level
+    deeper (``<journeys_dir>/<product_slug>/<date>/<journey_id>.jsonl``);
+    the domain layer must see through to them the same as the flat layout."""
+    _write_journey(tmp_path / "unpod" / "2026-08-28")
+    out = journeys.list_journeys_with_status(tmp_path)
+    assert out == [(JID, "2026-08-28", True)]
+
+    result = journeys.get_journey(tmp_path, JID)
+    assert result.journey_id == JID
+    assert result.complete is True
+
+
 def test_list_datasets(tmp_path):
     path = tmp_path / "registry.yaml"
     path.write_text(yaml.safe_dump({"corpora": {"c1": [{"version": 1}]}}))

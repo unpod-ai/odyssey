@@ -79,8 +79,9 @@ Point it at real data:
 `GET /metrics` has no env var of its own — it reads
 `<ODYSSEY_API_JOURNEYS_DIR>/metrics/*.jsonl`, the same directory
 `services/collector`'s `POST /metrics` already writes to (host telemetry
-snapshots from `ODYSSEY_COLLECT_METRICS`-enabled clients). Only the flat,
-non-product-scoped layout, same scope cut `/journeys` already has.
+snapshots from `ODYSSEY_COLLECT_METRICS`-enabled clients), plus, in a
+product-scoped deployment, every `<ODYSSEY_API_JOURNEYS_DIR>/<product_slug>/metrics/*.jsonl`
+— same both-layouts handling `/journeys` has.
 
 ## Auth
 

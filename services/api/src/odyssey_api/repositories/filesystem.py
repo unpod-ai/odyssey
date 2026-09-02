@@ -26,52 +26,83 @@ __all__ = [
 ]
 
 
+def _is_date_dir(path: Path) -> bool:
+    """True for a directory whose name parses as an ISO date — the same
+    partition-name discipline ``odyssey_collector.prune.prune_dir`` uses,
+    which is what keeps a non-date directory (e.g. the collector's own
+    ``metrics/`` subdirectory, or a product-slug directory one level up)
+    from being misread as a date partition."""
+    if not path.is_dir():
+        return False
+    try:
+        date.fromisoformat(path.name)
+    except ValueError:
+        return False
+    return True
+
+
 def list_journeys(journeys_dir: Path) -> List[Tuple[str, str]]:
-    """``[(journey_id, date), ...]`` from ``<journeys_dir>/<date>/<journey_id>.jsonl``.
+    """``[(journey_id, date), ...]`` from ``<journeys_dir>/<date>/<journey_id>.jsonl``
+    (flat collector layout) or ``<journeys_dir>/<product_slug>/<date>/<journey_id>.jsonl``
+    (product-scoped layout, ``--products-file``) — both are walked, since a
+    single ``journeys_dir`` only ever holds one or the other in practice and
+    a caller here has no reliable way to know in advance which mode the
+    collector was started in.
 
-    Only the flat, non-product-scoped collector layout — a product-scoped
-    deployment (`--products-file`) nests one more level (`<slug>/<date>/...`)
-    and is out of scope here, same as the collector README's own "Not done
-    here" note for cross-product listing.
-
-    A directory directly under ``journeys_dir`` only counts as a date
-    partition if its name parses as an ISO date — this mirrors
-    ``odyssey_collector.prune.prune_dir``'s own discipline, and keeps
-    non-date directories the collector also writes here (e.g. its
-    ``metrics/`` subdirectory) from being misread as journey shards.
+    A directory directly under ``journeys_dir`` is treated as a date
+    partition if its name parses as an ISO date (flat layout); otherwise —
+    unless it's the collector's own ``metrics/`` subdirectory — it's treated
+    as a product-slug directory and its own date-partition subdirectories
+    are walked one level deeper. Two products both writing a journey with
+    the same id on the same date collide in the returned list the same way
+    they always could on disk (there is no per-product namespacing here);
+    that's the same "isolation is structural, not by id" tradeoff
+    ``services/collector`` itself makes.
     """
     if not journeys_dir.is_dir():
         return []
     out: List[Tuple[str, str]] = []
-    for date_dir in sorted(p for p in journeys_dir.iterdir() if p.is_dir()):
-        try:
-            date.fromisoformat(date_dir.name)
-        except ValueError:
+    for entry in sorted(p for p in journeys_dir.iterdir() if p.is_dir()):
+        if _is_date_dir(entry):
+            for shard in sorted(entry.glob("*.jsonl")):
+                out.append((shard.stem, entry.name))
             continue
-        for shard in sorted(date_dir.glob("*.jsonl")):
-            out.append((shard.stem, date_dir.name))
+        if entry.name == "metrics":
+            continue
+        for date_dir in sorted(p for p in entry.iterdir() if _is_date_dir(p)):
+            for shard in sorted(date_dir.glob("*.jsonl")):
+                out.append((shard.stem, date_dir.name))
     return out
 
 
 def find_journey_path(journeys_dir: Path, journey_id: str) -> Path | None:
-    """The on-disk shard for ``journey_id``, searching every date partition.
+    """The on-disk shard for ``journey_id``, searching every date partition
+    in both the flat and product-scoped layouts (see ``list_journeys``).
 
     A journey id is the collector's own filename stem (never a caller-
-    supplied path fragment); the date is not part of the lookup key a
-    caller has, so every partition is checked.
+    supplied path fragment); neither the date nor the product slug is part
+    of the lookup key a caller has, so every partition is checked. If two
+    products both hold a same-named journey, whichever is found first wins
+    — the same collision `list_journeys` doesn't resolve either.
     """
     if not journeys_dir.is_dir():
         return None
-    for date_dir in journeys_dir.iterdir():
-        if not date_dir.is_dir():
+    for entry in journeys_dir.iterdir():
+        if not entry.is_dir():
             continue
-        try:
-            date.fromisoformat(date_dir.name)
-        except ValueError:
+        if _is_date_dir(entry):
+            candidate = entry / f"{journey_id}.jsonl"
+            if candidate.is_file():
+                return candidate
             continue
-        candidate = date_dir / f"{journey_id}.jsonl"
-        if candidate.is_file():
-            return candidate
+        if entry.name == "metrics":
+            continue
+        for date_dir in entry.iterdir():
+            if not _is_date_dir(date_dir):
+                continue
+            candidate = date_dir / f"{journey_id}.jsonl"
+            if candidate.is_file():
+                return candidate
     return None
 
 
@@ -127,26 +158,35 @@ def list_exports(exports_dir: Path) -> List[Dict[str, Any]]:
 
 
 def list_metrics(journeys_dir: Path) -> List[Dict[str, Any]]:
-    """Host telemetry snapshots from ``<journeys_dir>/metrics/*.jsonl`` —
-    mirrors `services/collector`'s single-key/open-mode storage path
-    exactly. **Deliberately only the flat, non-product-scoped layout**,
-    same documented scope cut `list_journeys`/`find_journey_path` already
-    have. Malformed lines are skipped rather than raising, same
-    defensiveness as `list_journeys_with_status`'s per-shard fold failure
-    handling. Sorted by ``ts`` descending (newest first)."""
-    metrics_dir = journeys_dir / "metrics"
-    if not metrics_dir.is_dir():
+    """Host telemetry snapshots from ``<journeys_dir>/metrics/*.jsonl``
+    (flat collector layout) and ``<journeys_dir>/<product_slug>/metrics/*.jsonl``
+    (product-scoped layout, ``--products-file``) — mirrors
+    `services/collector`'s own per-mode storage path exactly, same as
+    `list_journeys`/`find_journey_path` now do for journey shards. Snapshots
+    from every product are pooled into one list — there's no per-product
+    filter here, same as `/journeys`. Malformed lines are skipped rather
+    than raising, same defensiveness as `list_journeys_with_status`'s
+    per-shard fold failure handling. Sorted by ``ts`` descending (newest
+    first)."""
+    if not journeys_dir.is_dir():
         return []
+    metrics_dirs = [journeys_dir / "metrics"]
+    for entry in journeys_dir.iterdir():
+        if entry.is_dir() and not _is_date_dir(entry) and entry.name != "metrics":
+            metrics_dirs.append(entry / "metrics")
     out: List[Dict[str, Any]] = []
-    for shard in sorted(metrics_dir.glob("*.jsonl")):
-        with open(shard, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    out.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+    for metrics_dir in metrics_dirs:
+        if not metrics_dir.is_dir():
+            continue
+        for shard in sorted(metrics_dir.glob("*.jsonl")):
+            with open(shard, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        out.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
     out.sort(key=lambda snapshot: snapshot.get("ts", ""), reverse=True)
     return out

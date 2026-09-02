@@ -4,6 +4,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends
 from odyssey_schemas import MetricsSnapshotOut
+from pydantic import ValidationError
 
 from odyssey_api import deps
 from odyssey_api.domain import metrics as domain
@@ -16,4 +17,15 @@ router = APIRouter(prefix="/metrics", tags=["metrics"])
 def list_metrics(
     settings: Settings = Depends(deps.get_settings_dep),
 ) -> List[MetricsSnapshotOut]:
-    return [MetricsSnapshotOut(**m) for m in domain.list_metrics(settings.journeys_dir)]
+    """A snapshot missing `MetricsSnapshotOut`'s required fields (older
+    probe payloads predate ``ts``/``os`` being sent on every snapshot) is
+    skipped rather than 500ing the whole listing — the same
+    "malformed entries don't take down the rest" defensiveness
+    `domain.list_metrics` already applies to unparseable JSON lines."""
+    out: List[MetricsSnapshotOut] = []
+    for m in domain.list_metrics(settings.journeys_dir):
+        try:
+            out.append(MetricsSnapshotOut(**m))
+        except ValidationError:
+            continue
+    return out

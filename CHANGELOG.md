@@ -6,6 +6,32 @@ project has not yet made a versioned release, so entries accumulate under
 
 ## [Unreleased]
 
+### Fixed
+
+- `services/api`'s `GET /journeys` (and `GET /journeys/{id}`) and
+  `GET /metrics` both returned an empty list against a product-scoped
+  `services/collector` deployment (`--products-file`) even with data
+  present on disk — `repositories/filesystem.list_journeys`/
+  `find_journey_path`/`list_metrics` only walked the flat
+  `<journeys_dir>/<date>/<journey_id>.jsonl` / `<journeys_dir>/metrics/*.jsonl`
+  layout, so the product-slug directory a product-scoped collector writes
+  into (`<journeys_dir>/<product_slug>/...`) was silently skipped (its name
+  doesn't parse as an ISO date). All three now also walk product-slug
+  subdirectories. Also fixed in the same pass: `domain.journeys.
+  list_journeys_with_status` was re-deriving each shard's path by hand
+  (`journeys_dir / date / f"{id}.jsonl"`) instead of resolving it through
+  `find_journey_path`, which silently broke `complete` status for any
+  product-scoped journey even once listing itself was fixed.
+
+- `services/api`'s `GET /metrics` 500ed instead of returning snapshots once
+  real product-scoped metrics data was present, because some on-disk
+  snapshots (older probe payloads) are missing `MetricsSnapshotOut`'s
+  required `ts`/`os` fields. `routers/metrics.list_metrics` now skips a
+  snapshot that fails schema validation instead of letting the
+  `pydantic.ValidationError` propagate into a 500 for the whole response —
+  same "malformed entries don't take down the rest" defensiveness
+  `domain.list_metrics` already applies to unparseable JSON lines.
+
 ### Changed
 
 - `odyssey-collector.service` (repo root) and
