@@ -1,0 +1,23 @@
+[Unit]
+Description=odyssey-collector (trace ingest)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/apps/odyssey
+Environment=ODYSSEY_COLLECTOR_HOST=127.0.0.1
+Environment=ODYSSEY_COLLECTOR_PORT=8787
+Environment=ODYSSEY_COLLECTOR_DATA_DIR=/var/apps/odyssey/collector-data
+Environment=ODYSSEY_COLLECTOR_PRODUCTS_FILE=/var/apps/odyssey/collector-keys.json
+ExecStart=/var/apps/odyssey/.venv/bin/odyssey-collector
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/apps/odyssey/collector-data
+StandardOutput=append:/var/log/qa_odyssey_collector.out.log
+StandardError=append:/var/log/qa_odyssey_collector.err.log
+
+
+[Install]
+WantedBy=multi-user.target
