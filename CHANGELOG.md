@@ -61,6 +61,30 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Added
 
+- **`services/api` optional bearer-token auth** — previously had none at
+  all. `ODYSSEY_API_AUTH_KEY` env var / `--api-key` CLI flag on
+  `odyssey api serve`, checked via `Authorization: Bearer <key>` on every
+  route except `GET /health` (always open, for monitoring/liveness
+  probes), open by default when unset — matches prior (unauthenticated)
+  behavior exactly. Deliberately not named `ODYSSEY_API_KEY` — that name
+  already belongs to `packages/odyssey-core`'s `HttpSink` (a different,
+  client-side setting). Implemented with `fastapi.security.HTTPBearer` +
+  `secrets.compare_digest` (not a raw `Header()` param — that leaked a
+  spurious `authorization` parameter and `422` response into every
+  route's OpenAPI schema) — `HTTPBearer` also adds the RFC-required
+  `WWW-Authenticate: Bearer` header on a 401 and makes the scheme name
+  case-insensitive. Both SDKs (`sdk/python`, `sdk/javascript`) gained a
+  matching `ODYSSEY_API_AUTH_KEY` env var fallback for their existing
+  `api_key`/`apiKey` constructor parameter; `apps/web`'s `apiClient()`
+  passes it through (server-side only — confirmed it can never reach the
+  browser bundle, and the app has zero client components to leak it
+  through anyway). New tests across all four members proving 401 without
+  auth, 200 with the right key, 401 with the wrong key, `/health` staying
+  open even when a key is configured, and byte-for-byte unchanged
+  behavior when no key is set at all. `services/api/openapi.json`
+  regenerated (the only file the new security scheme touches — both SDK
+  generators ignore header/security params, so no generated resource
+  code moved). Verified end to end against a real running server.
 - **`odyssey.init(project=...)`** (`packages/odyssey-core/src/odyssey/project.py`,
   `resolve_project()`) — tags `JourneyHeader.journey_metadata["project"]`
   with which repo/codebase a capturing process belongs to: explicit
