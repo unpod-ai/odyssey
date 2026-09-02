@@ -1,262 +1,281 @@
 # <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/unpod-ai/odyssey/main/docs/assets/banner_dark.png"><img alt="odyssey" src="https://img.shields.io/badge/odyssey-%E2%9C%A8-blueviolet?style=for-the-badge&logo=rocket"></picture>
 
 <p align="center">
-  <strong>Training-Data Framework — Agent Traces In, Training Corpora Out.</strong>
+  <strong>The Enterprise-Grade Data Engine for LLM Agents</strong><br>
+  <em>Capture raw trajectories, curate high-density corpora, generate optimal finetuning configs, and run closed-loop evaluations.</em>
 </p>
 
 <p align="center">
-  <a href="https://github.com/unpod-ai/odyssey/actions"><img src="https://img.shields.io/badge/Build-passing-brightgreen?style=flat-square&logo=github-actions" alt="Build Status"></a>
-  <a href="https://www.python.org/downloads/release/python-3120/"><img src="https://img.shields.io/badge/Python-3.12-blue?style=flat-square&logo=python&logoColor=white" alt="Python 3.12"></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node-22-green?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node 22"></a>
+  <a href="https://github.com/unpod-ai/odyssey/actions"><img src="https://img.shields.io/badge/Build-passing-00F5D4?style=flat-square&logo=github-actions&logoColor=white" alt="Build Status"></a>
+  <a href="https://www.python.org/downloads/release/python-3120/"><img src="https://img.shields.io/badge/Python-3.12-3A86FF?style=flat-square&logo=python&logoColor=white" alt="Python 3.12"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node-22-8338EC?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node 22"></a>
   <a href="https://pnpm.io/"><img src="https://img.shields.io/badge/pnpm-workspace-orange?style=flat-square&logo=pnpm&logoColor=white" alt="pnpm"></a>
-  <a href="https://astral.sh/uv"><img src="https://img.shields.io/badge/uv-fast_package_manager-00f5d4?style=flat-square" alt="uv"></a>
+  <a href="https://astral.sh/uv"><img src="https://img.shields.io/badge/uv-fast_package_manager-FF006E?style=flat-square" alt="uv"></a>
   <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/badge/Linter-Ruff-61dafb?style=flat-square" alt="Ruff"></a>
-  <a href="https://github.com/unpod-ai/odyssey/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License"></a>
 </p>
 
 ---
 
-## 🧭 Overview
+## 🧭 Executive Summary
 
-**Odyssey** is an end-to-end framework designed to solve the data loop for LLM agents. While observability platforms like Langfuse record traces to look at them, **Odyssey captures traces to fine-tune on them.**
+**Odyssey** is an end-to-end data platform designed specifically to solve the training-data loop for LLM agents. While observability platforms like Langfuse record traces to look at them, **Odyssey captures traces to fine-tune on them.**
 
-It bridges the gap between active agent applications and deep training pipelines, organizing the flow from high-write real-time ingest to curated corpora, offline fine-tuning configurations, and rigorous evaluation.
+It bridges the gap between raw, active agent interactions and heavy, offline GPU training pipelines. By combining high-efficiency edge capture with an automated curation pipeline, Odyssey programmatically converts production logs into optimal configurations for fine-tuning frameworks like **Unsloth**, **SFT**, **DPO**, and **GRPO**.
 
 ---
 
-## 🔄 Interactive Lifecycle & Flowchart
+## 🔄 The Closed-Loop Architecture
 
-The diagram below outlines the full lifecycle of the Odyssey ecosystem. **Connections animate to show real-time data flow** across three distinct pillars:
+The flowchart below represents the full, automated lifecycle of the Odyssey ecosystem. **Connections animate to show data flowing dynamically across the three key operational phases:**
 
 <div align="center">
   <img src="docs/assets/pipeline.svg" width="100%" alt="Odyssey Lifecycle Flow">
 </div>
 
-### 🏛️ The Three Pillars
+### 🏛️ Operational Pillars
 
-1. **CAPTURE & SERVE**: Active applications instrumented with `odyssey.init()` stream live agent traces. Traces land first on a durable, **Local Spool** to guarantee zero data loss on network blips. From there, they drain to the high-throughput, multi-tenant stdlib **Collector** (`:8787`), persisting as partitioned JSONL files served read-only via the **API** (`:8000`) and visualized inside a sleek Next.js **Dashboard** (`:3000`).
-2. **PIPELINE & TRAIN**: Immutable raw traces enter a highly configurable **7-stage data preparation pipeline** (collection → cleaning → normalization → annotation → augmentation → validation → splitting) to produce high-density curated corpora. The **Soup Adapter** translates these datasets into valid configs (`soup.yaml`) targeting **Unsloth**, SFT, DPO, or GRPO, before exporting checkpoints to **Hugging Face** or S3-compatible object stores.
-3. **SERVE & EVAL**: Checkpoints registered inside the **Model Registry** are served on high-performance engines like **Baseten** or **Cerebras** (or local vLLM / Ollama). Model completions files are collected and evaluated offline via the **Evaluation Harness** against benchmarks. Reports feed directly back into the API for fully closed-loop evaluation.
+#### 1️⃣ Edge Telemetry & Ingest (Real-Time Ingestion)
+Active agent applications are instrumented via a lightweight, zero-dependency SDK. Production traces are spooled locally in an append-only, crash-resilient disk buffer to guarantee zero data loss. Local spools asynchronously drain to the high-throughput, multi-tenant standard-library **Collector** (`:8787`), which partitions raw bytes onto durable storage.
 
----
+#### 2️⃣ Trajectory Curation & Training (Batch Curation)
+Immutable raw traces undergo a programmatic **7-stage declarative pipeline** (clean ➜ normalize ➜ annotate ➜ augment ➜ validate ➜ split) to filter noise and assemble high-density datasets (such as ChatML formats). The **Soup Adapter** programmatically translates these curated datasets into validated fine-tuning configurations (`soup.yaml`) for **Unsloth**, **SFT**, **DPO**, and **GRPO** training runs.
 
-## 📂 Monorepo Layout
-
-Click on any folder below to expand its technical specifications and deep dive into its exact role in the monorepo:
-
-<details>
-<summary>📦 <strong>packages/odyssey-core</strong> — <em>Capture Library</em></summary>
-<br>
-
-- **Path**: `packages/odyssey-core`
-- **Role**: Pure stdlib Python library (no external dependencies) providing the instrumentation primitives.
-- **Key Modules**:
-  - `primitives.py`: The unified `JourneyEvent` schema.
-  - `fold.py`: Live projection folding cumulative states.
-  - `spool.py`: Local disk-backed spooling queue with redaction on-the-fly.
-  - `integrations/`: Pre-packaged integrations for OpenAI, Anthropic, Gemini, Langchain, and LiveKit.
-- **Run**: `cd packages/odyssey-core && uv sync --extra dev && bash scripts/run_tests.sh all`
-</details>
-
-<details>
-<summary>🧱 <strong>packages/odyssey-schemas</strong> — <em>Wire Contract</em></summary>
-<br>
-
-- **Path**: `packages/odyssey-schemas`
-- **Role**: Pydantic DTOs shared by the API and offline pipelines. The single source of truth generating `openapi.json` without pull-in from heavy packages like FastAPI or Torch.
-- **Run**: `cd packages/odyssey-schemas && uv sync --extra dev && uv run pytest tests`
-</details>
-
-<details>
-<summary>🚀 <strong>cli</strong> — <em>Unified CLI Entrypoint</em></summary>
-<br>
-
-- **Path**: `cli`
-- **Role**: Owns the single `odyssey` entrypoint. Implements lazy command dispatch so importing never loads heavy libraries (like PyTorch or Transformers) unless explicitly dispatched.
-- **Key Commands**: `odyssey spool`, `odyssey data`, `odyssey train`, `odyssey model`, `odyssey eval`, `odyssey api`, `odyssey doctor`
-- **Run**: `cd cli && uv sync --extra dev && uv run odyssey --help`
-</details>
-
-<details>
-<summary>⚡ <strong>services/collector</strong> — <em>Ingest Server</em></summary>
-<br>
-
-- **Path**: `services/collector`
-- **Role**: High-speed, pure standard-library HTTP server (`:8787`) to accept compressed JSONL batches from capturing agents and stream them to disk partitions safely.
-- **Run**: `cd services/collector && uv run odyssey-collector --data-dir ./collector-data`
-</details>
-
-<details>
-<summary>🕸️ <strong>services/api</strong> — <em>Read API Server</em></summary>
-<br>
-
-- **Path**: `services/api`
-- **Role**: FastAPI backend (`:8000`) exposing read-only routes for journeys, datasets, and models written by the collector and train pipelines.
-- **Run**: `cd services/api && uv run uvicorn odyssey_api.main:app --host 127.0.0.1 --port 8000`
-</details>
-
-<details>
-<summary>🖥️ <strong>apps/web</strong> — <em>Dashboard UI</em></summary>
-<br>
-
-- **Path**: `apps/web`
-- **Role**: Next.js dashboard UI (`:3000`) pulling dataset, training run, and eval visualization directly from the API via the generated `@odyssey/sdk`.
-- **Run**: `ODYSSEY_API_BASE_URL=http://127.0.0.1:8000 pnpm --filter @odyssey/web dev`
-</details>
-
-<details>
-<summary>🎛️ <strong>data_preparation</strong> — <em>7-Stage Pipeline</em></summary>
-<br>
-
-- **Path**: `data_preparation`
-- **Role**: Takes raw trace dumps and cleanses, normalizes (e.g. ChatML mapping), augments, and splits them into clean train/val/test splits.
-- **Key Commands**: `odyssey data normalize`, `odyssey data build-corpus`
-</details>
-
-<details>
-<summary>🧠 <strong>training</strong> — <em>Soup-cli Adapter</em></summary>
-<br>
-
-- **Path**: `training`
-- **Role**: Config generator and model cards manager mapping curated corpora to perfect training files for [soup-cli](https://trysoup.dev) (supporting SFT, DPO, and GRPO fine-tuning).
-- **Run**: `odyssey train sft-config --base <hf-id> --shard sft.jsonl --out soup.yaml`
-</details>
-
-<details>
-<summary>🧪 <strong>evaluation</strong> — <em>Offline Scoring Harness</em></summary>
-<br>
-
-- **Path**: `evaluation`
-- **Role**: Offline scoring harness. Never calls model APIs directly; instead, scores static completions files (JSONL) produced by any inference agent against frozen yaml benchmarks.
-- **Run**: `odyssey eval run --benchmark evaluation/benchmarks/example-arithmetic.yaml --completions completions.jsonl`
-</details>
-
-<details>
-<summary>⚙️ <strong>Other Components</strong> — <em>SDKs, Metadata registries, Specs</em></summary>
-<br>
-
-- `sdk/python` & `sdk/javascript`: Fully generated clients automatically kept in sync with the FastAPI schema via CI drift-checks.
-- `datasets` & `models`: Lightweight metadata-only registries (no raw weight storage) holding metadata, config hashes, and model cards.
-</details>
+#### 3️⃣ Model Validation & Lineage (Offline Evaluation)
+Training checkpoints and registered metadata are published to a decoupled **Model Registry**. Models are served on top-tier serverless inference engines (such as **Baseten** or **Cerebras**), and generations are scored offline via the **Evaluation Harness** against frozen benchmarks. Analytical reports feed back into the read-only **API** (`:8000`) and the Next.js **Dashboard** (`:3000`) for continuous performance iteration.
 
 ---
 
-## ⚡ Quickstart
+## 📂 Monorepo Workspace Blueprint
 
-### Prerequisites & Setup
-Odyssey requires **Python 3.12** strictly (upper-bounded at `<3.13` for compatibility with heavy downstream training wrappers).
+Odyssey organizes its components inside a modern monorepo. Every subdirectory is highly isolated, ensuring clean dependency separation and deterministic build configurations.
 
-We use `Taskfile` to drive simple monorepo setups. To install and configure the whole project:
-
-```bash
-task setup           # uv syncs all packages, extra packages, and Node dev deps
-task check           # Runs linter, format checkers, type checks, and tests across the repo
-task test            # Runs unit and integration tests only
+```
+odyssey/
+├── packages/
+│   ├── odyssey-core          # Edge capture SDK, disk-spooling, & provider integrations
+│   └── odyssey-schemas       # Pydantic DTO contracts; the root of the codegen pipeline
+├── cli                       # Single CLI orchestrator with lazy plugin discovery
+├── services/
+│   ├── collector             # High-write raw telemetry ingest gateway
+│   └── api                   # FastAPI metadata catalog & evaluation report ledger
+├── apps/
+│   └── web                   # Next.js 15 developer portal & trajectory dashboard
+├── data_preparation          # 7-stage declarative data purification pipeline
+├── training                  # Soup-cli configuration adapter & model registry
+└── evaluation                # Offline completion scoring & benchmark harness
 ```
 
-### Running individual packages with CLI plugins:
-Using the lazy-loaded `odyssey` CLI script, commands are dynamically discovered and loaded:
+### 🧱 Component Specifications
+
+<details>
+<summary>📦 <strong>packages/odyssey-core</strong> — <em>Zero-Dependency Edge SDK</em></summary>
+<br>
+
+- **Module**: `odyssey`
+- **Core Intent**: Implements disk-buffered telemetry spooling and agent tracing.
+- **Architectural Highlights**:
+  - `primitives.py`: Formal definition of the unified `JourneyEvent` schema.
+  - `spool.py`: Crash-resilient local disk spooler that automatically redacts sensitive credentials at record time.
+  - `integrations/`: Drop-in capture wrappers for OpenAI, Anthropic, Gemini, Langchain, and LiveKit.
+- **Verification**: `cd packages/odyssey-core && uv sync --extra dev && bash scripts/run_tests.sh all`
+</details>
+
+<details>
+<summary>🧱 <strong>packages/odyssey-schemas</strong> — <em>The Unified API Wire Contract</em></summary>
+<br>
+
+- **Module**: `odyssey_schemas`
+- **Core Intent**: Decouples API contract definitions from web-server frameworks and training backends.
+- **Architectural Highlights**: Pure Pydantic models representing the exact shared schema. Generates the central `openapi.json` to automatically drive SDK client generation for both Python and JS, preventing interface drift in CI.
+- **Verification**: `cd packages/odyssey-schemas && uv sync --extra dev && uv run pytest tests`
+</details>
+
+<details>
+<summary>🚀 <strong>cli</strong> — <em>Optimized CLI Orchestrator</em></summary>
+<br>
+
+- **Module**: `odyssey-cli`
+- **Core Intent**: The single command-line interface for the entire workspace.
+- **Architectural Highlights**: Employs lazy-load dynamic command dispatch (plugin architecture). Does not import heavy dependencies (such as PyTorch, Hugging Face, or Transformers) during help-commands, preserving a strict under-700ms cold boot.
+- **Verification**: `cd cli && uv sync --extra dev && uv run odyssey --help`
+</details>
+
+<details>
+<summary>⚡ <strong>services/collector</strong> — <em>High-Write Ingestion Gateway</em></summary>
+<br>
+
+- **Module**: `odyssey-collector`
+- **Core Intent**: Multi-tenant, secure ingestion target for edge-captured traces.
+- **Architectural Highlights**: Implemented entirely via Python's standard library (no web framework overhead). Handles raw HTTP POST batch payloads, performs fast bearer auth, and date-partitions compressed raw bytes directly onto disk or S3 buckets.
+- **Verification**: `cd services/collector && uv run odyssey-collector --data-dir ./collector-data`
+</details>
+
+<details>
+<summary>🕸️ <strong>services/api</strong> — <em>Centrally Managed Metadata Ledger</em></summary>
+<br>
+
+- **Module**: `odyssey-api`
+- **Core Intent**: Serves analytical metadata and evaluation reports.
+- **Architectural Highlights**: A FastAPI service (`:8000`) designed around a read-only filesystem repository pattern. Decoupled from the collector's high-write path to guarantee query-serving isolation and robust system uptime.
+- **Verification**: `cd services/api && uv run uvicorn odyssey_api.main:app --host 127.0.0.1 --port 8000`
+</details>
+
+<details>
+<summary>🖥️ <strong>apps/web</strong> — <em>Visual Trajectory Dashboard</em></summary>
+<br>
+
+- **Module**: `@odyssey/web`
+- **Core Intent**: Enterprise developer portal designed to visualize agent trajectories and evaluate finetuning runs.
+- **Architectural Highlights**: Next.js 15 interface consuming the programmatically generated `@odyssey/sdk` package. Implements React Server Components for fast initial loads.
+- **Verification**: `ODYSSEY_API_BASE_URL=http://127.0.0.1:8000 pnpm --filter @odyssey/web dev`
+</details>
+
+<details>
+<summary>🎛️ <strong>data_preparation</strong> — <em>Deterministic Trajectory Curation</em></summary>
+<br>
+
+- **Module**: `odyssey-dataprep`
+- **Core Intent**: Implements the 7-stage data preparation pipeline.
+- **Architectural Highlights**: Programmatically normalizes unstructured telemetry logs into ChatML schemas, executes data augmentation, and validates splitting strategies before exporting.
+</details>
+
+<details>
+<summary>🧠 <strong>training</strong> — <em>Fine-Tuning Config Generator</em></summary>
+<br>
+
+- **Module**: `odyssey-training`
+- **Core Intent**: Maps curated datasets into production-ready configs for `soup-cli`.
+- **Architectural Highlights**: Automatically generates fully validated configs (`soup.yaml`) for Unsloth-compatible SFT, DPO, and GRPO training pipelines. Manages checkpoint storage in S3 and registers lineage in the Model Registry.
+- **Verification**: `odyssey train sft-config --base meta-llama/Llama-3.1-8B-Instruct --shard sft.jsonl --out soup.yaml`
+</details>
+
+<details>
+<summary>🧪 <strong>evaluation</strong> — <em>Deterministic Offline Evaluation</em></summary>
+<br>
+
+- **Module**: `odyssey-eval`
+- **Core Intent**: Scores offline generations against frozen benchmarks.
+- **Architectural Highlights**: Does not call live APIs during scoring. Instead, matches cold-stored static model completions against benchmarks and registers evaluative statistics back to the core API.
+- **Verification**: `odyssey eval run --benchmark evaluation/benchmarks/example-arithmetic.yaml --completions completions.jsonl`
+</details>
+
+---
+
+## ⚡ Development Onboarding
+
+### System Prerequisites
+Odyssey targets **Python 3.12** exclusively to meet the strict intersection constraints of heavy downstream deep-learning adapters and monorepo telemetry libraries. Node.js 22 is required for building frontend dashboards and SDKs.
+
+### Direct Workspace Bootstrapping
+We use `Taskfile` to coordinate unified, multi-language setup steps:
 
 ```bash
-odyssey --help                                                                     # Show all mounted plugins
-odyssey spool status --spool .odyssey                                              # Check status of local spool
+task setup           # Provisions Python virtual environments (uv) and Node modules (pnpm)
+task check           # Runs linter (Ruff/ESLint), formatter, types check, and test suites
+task test            # Runs unit and integration test runners exclusively
+```
+
+### Command Execution examples:
+```bash
+odyssey --help                                                                     # Discover command plugins
+odyssey spool status --spool .odyssey                                              # Inspect local Edge spool
 odyssey data normalize --raw ./raw_exports --format openai_chat --out ./normalized # Normalize traces
-odyssey doctor                                                                     # Diagnose plugin loading & boot timings
+odyssey doctor                                                                     # Run plugin health and latency diagnostics
 ```
 
 ---
 
-## 🏃 Running the Full Stack (Local Development)
+## 🏃 Engineering Runbook (Local Development)
 
-Follow these steps to spin up the complete end-to-end trace loop locally:
+Follow this end-to-end runbook to spin up and test the full trace capture and evaluation cycle locally:
 
-### 1️⃣ Collector (Ingest Live Traces on Port 8787)
-Starts the stdlib server to accept posts from active SDK agents:
+### 1️⃣ Spin up the Telemetry Collector (:8787)
+Launches the high-throughput standard-library gateway to accept events from edge-captured agents:
 ```bash
 cd services/collector
 uv run odyssey-collector --data-dir ./collector-data
 ```
-In your agent process, initialize Odyssey to send live traces to the collector:
+In your production application, configure the Odyssey SDK to spool traces to this gateway:
 ```python
 import odyssey
 odyssey.init(sink=odyssey.HttpSink("http://127.0.0.1:8787"))
 ```
 
-### 2️⃣ API (Serve Datasets and Runs on Port 8000)
-Exposes the query interface over the written traces and pipeline registries:
+### 2️⃣ Initialize the FastAPI Metadata Catalog (:8000)
+Exposes read-only catalog endpoints over partitioned spools and model logs:
 ```bash
 cd services/api
 uv run uvicorn odyssey_api.main:app --host 127.0.0.1 --port 8000
 ```
-*Note: Run `./scripts/codegen.sh` to regenerate both Python and JavaScript SDK clients directly from the running FastAPI's openapi spec.*
+*Note: Run `./scripts/codegen.sh` to automatically update client SDK code whenever schemas change.*
 
-### 3️⃣ Web Dashboard (Visualize Results on Port 3000)
-Ensure you've built the local JavaScript SDK first, then spin up the Next.js frontend:
+### 3️⃣ Start the Next.js Developer Portal (:3000)
+Compile the internal TypeScript SDK client, then run the dashboard:
 ```bash
-# Build the SDK from root
+# Build the TypeScript SDK from the workspace root
 pnpm --filter @odyssey/sdk build
 
-# Run the web UI
+# Spin up the Next.js UI
 ODYSSEY_API_BASE_URL=http://127.0.0.1:8000 pnpm --filter @odyssey/web dev
 ```
 
-### 4️⃣ Training & Fine-Tuning Pipeline
-Translate registered corpora into standard `soup-cli` config files, ready to train on a GPU box:
+### 4️⃣ Generate Fine-Tuning Recipes
+Convert curated trajectory datasets into optimized training configs targeting Hugging Face base models:
 ```bash
-# Generate SFT training configuration targeting Meta Llama-3.1
+# Compile optimal SFT training configurations
 odyssey train sft-config --base meta-llama/Llama-3.1-8B-Instruct --shard sft.jsonl --out soup.yaml
 
-# On your GPU machine: run the training job
+# Execute training separately on your GPU cluster
 soup train --config soup.yaml
 ```
 
-### 5️⃣ Offline Evaluation
-Score completed inference generations against benchmarks:
+### 5️⃣ Execute Offline Benchmark Evaluations
+Compile model outputs and run deterministic evaluations:
 ```bash
 odyssey eval run --benchmark evaluation/benchmarks/example-arithmetic.yaml --completions completions.jsonl
 ```
 
 ---
 
-## 📈 Monorepo Phase Checklist
+## 📈 Platform Maturity Milestones
 
-Odyssey is built incrementally across key milestones. All completed steps have fully verified, tested code:
+The monorepo development strategy is split into six sequential phases. Every completed milestone is fully verified, type-safe, and thoroughly tested:
 
-- [x] **Phase 0**: Code extraction of core library with history preserved under `packages/odyssey-core`
-- [x] **Phase 1**: Workspace root, gitignore configuration, version pinnings, and ADR documentation
-- [x] **Phase 2**: Single unified `cli/` console script utilizing lazy command dispatch plugins (ADR 0003)
-- [x] **Phase 3**: Shared schema contract, FastAPI API server, auto OpenAPI generation, and Python client SDK
-- [x] **Phase 4**: 7-Stage `data_preparation` pipeline & registry metadata layout
-- [x] **Phase 5**: Training pipeline adapter (soup-cli bridge), Model registry schemas, and evaluation harness
-- [x] **Phase 6**: Next.js dashboard UI, JavaScript/TypeScript SDK, and comprehensive workspace examples
+- [x] **Phase 0**: Preserve git history and extract the edge telemetry core library to `packages/odyssey-core`
+- [x] **Phase 1**: Configure monorepo workspace configurations, version-pinning rules, and ADR blueprints
+- [x] **Phase 2**: Assemble the lazy-load command line interface (`cli/`) and plugin framework (ADR 0003)
+- [x] **Phase 3**: Decouple schemas into `odyssey-schemas`, deploy FastAPI API server, and generate client SDKs
+- [x] **Phase 4**: Implement the 7-stage declarative `data_preparation` pipeline & metadata registries
+- [x] **Phase 5**: Build the `training` soup config translation adapter, Model Cards registry, and evaluation harness
+- [x] **Phase 6**: Release Next.js developer dashboard UI, JavaScript SDK, and verified basic-usage examples
 
 ---
 
-## 📚 Complete Documentation Index
+## 📚 Complete Technical Documentation Index
 
-Our docs are organized by operational layers to help you find exactly what you need quickly:
+Detailed architectural blueprints and operational documents are cataloged below:
 
-| Category | Document | Description |
+| Dimension | Specification | Description |
 |---|---|---|
-| **🚀 Start Here** | [Architecture Specs](docs/architecture.md) | High-level overview of capture & train pipelines |
-| | [Component Guide](docs/COMPONENTS.md) | Detailed map of what every folder actually does |
-| | [Build Scorecard](docs/WORKING.md) | The line-by-line completion status of features |
+| **🚀 Architectural Core** | [Architecture Blueprint](docs/architecture.md) | High-level data flows across Capture and Train pipelines |
+| | [Component Architecture](docs/COMPONENTS.md) | In-depth technical guide of every directory's implementation |
+| | [Platform Scorecard](docs/WORKING.md) | Granular line-by-line completion status of features |
 | | [Structure Guidelines](docs/STRUCTURE.md) | Monorepo layout rules and developer conventions |
-| **📊 Data & Lifecycle** | [Journey Schema](docs/journey-schema.md) | The `JourneyEvent` wire format specified field-by-field |
-| | [Data Contracts](docs/data-contracts.md) | Codegen pipeline keeping Python, JS, and APIs in sync |
-| | [Model Lifecycle](docs/model-lifecycle.md) | The sequence turning active corpora into evaluations |
-| **🛡️ Infrastructure** | [Env Variables](docs/environment-variables.md) | Full guide of every load-bearing environment variable |
-| | [Service Runbooks](docs/runbooks/run-services.md) | Production checklist for API, Collector, and Web UI |
-| **⚙️ Deep Dives** | [odyssey-core README](packages/odyssey-core/README.md) | Core capture, redaction, and integrations |
-| | [data_preparation README](data_preparation/README.md) | Stages of filtering and data curation |
-| | [training README](training/README.md) | Creating soup configurations for Unsloth & SFT/DPO |
-| **🧠 Decisions (ADRs)** | [ADR 0001: Monorepo Layout](docs/adr/0001-monorepo-layout.md) | Monorepo layout rationale |
-| | [ADR 0002: Large Artifacts](docs/adr/0002-artifacts-out-of-git.md) | Rationale for keeping datasets/weights out of git |
-| | [ADR 0003: Lazy CLI Plugins](docs/adr/0003-single-cli-entrypoint.md) | Rationale behind unified `odyssey` command entry |
-| | [ADR 0004: Event Sourcing](docs/adr/0004-capture-layer.md) | Decision to project state rather than store state |
+| **📊 Data & Lifecycles** | [Journey Event Specification](docs/journey-schema.md) | The strict wire format of agent trajectories |
+| | [Client Codegen Pipeline](docs/data-contracts.md) | Automating the openapi ➜ SDK drift validation in CI |
+| | [Model Lifecycle Sequence](docs/model-lifecycle.md) | Flow-state tracking from raw corpus to verified report |
+| **🛡️ Infrastructure** | [Environment Specification](docs/environment-variables.md) | Full table of all load-bearing system variables |
+| | [Deployment Runbooks](docs/runbooks/run-services.md) | Production setups using systemd, gunicorn, and Next.js |
+| **⚙️ Deep Dives** | [odyssey-core Deep Dive](packages/odyssey-core/README.md) | Trace serialization, redaction, and agent hooks |
+| | [data_preparation Pipeline](data_preparation/README.md) | Trajectory filtration, normalisation, and splitting |
+| | [training Soup-cli Adapter](training/README.md) | Translating raw datasets into Unsloth SFT & DPO runs |
+| **🧠 Architectural Decisions** | [ADR 0001: Monorepo Layout](docs/adr/0001-monorepo-layout.md) | Rationale behind monorepo structure |
+| | [ADR 0002: Out-Of-Git Bytes](docs/adr/0002-artifacts-out-of-git.md) | Strategic decision to exclude dataset weights from VCS |
+| | [ADR 0003: Single CLI Entrypoint](docs/adr/0003-single-cli-entrypoint.md) | Rationale behind the unified lazy command dispatcher |
+| | [ADR 0004: Event Sourcing Only](docs/adr/0004-capture-layer.md) | Projecting cumulative trace states instead of saving state |
 
 ---
 
 ## ⚖️ License
 
-Apache-2.0. See `LICENSE` and `NOTICE` under `packages/odyssey-core`.
+Apache-2.0. See the `LICENSE` and `NOTICE` manifests in the root workspace or under `packages/odyssey-core`.
