@@ -7,6 +7,7 @@ lives here, once.
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.request
 from typing import Any, Optional
@@ -57,6 +58,8 @@ class OdysseySDK:
     the resource pattern (nothing to paginate or fetch by id)."""
 
     def __init__(self, base_url: str, api_key: Optional[str] = None) -> None:
+        if api_key is None:
+            api_key = os.environ.get("ODYSSEY_API_AUTH_KEY")
         self._transport = Transport(base_url, api_key)
         self.journeys = JourneysResource(self._transport)
         self.datasets = DatasetsResource(self._transport)

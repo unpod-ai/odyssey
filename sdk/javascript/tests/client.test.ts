@@ -9,7 +9,7 @@ import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { OdysseyAPINotFoundError, OdysseySDK } from "../src/index.js";
+import { OdysseyAPIError, OdysseyAPINotFoundError, OdysseySDK } from "../src/index.js";
 
 const REPO_ROOT = join(import.meta.dirname, "..", "..", "..");
 const JID = "j_sdk_js";
@@ -135,5 +135,57 @@ describe("OdysseySDK against a real services/api instance", () => {
     expect(await client.models.list()).toEqual([]);
     expect(await client.runs.list()).toEqual([]);
     expect(await client.exports.list()).toEqual([]);
+  });
+});
+
+describe("OdysseySDK against a real services/api instance with --api-key set", () => {
+  let authBaseUrl: string;
+  let authServerProcess: ChildProcess;
+
+  beforeAll(async () => {
+    const port = await freePort();
+    authBaseUrl = `http://127.0.0.1:${port}`;
+    const tmp = mkdtempSync(join(tmpdir(), "odyssey-sdk-js-auth-"));
+    authServerProcess = spawn(
+      "uv",
+      ["run", "odyssey", "api", "serve", "--port", String(port), "--api-key", "sk-test"],
+      {
+        cwd: REPO_ROOT,
+        env: {
+          ...process.env,
+          ODYSSEY_API_JOURNEYS_DIR: join(tmp, "journeys"),
+          ODYSSEY_API_DATASETS_REGISTRY: join(tmp, "no-such-datasets.yaml"),
+          ODYSSEY_API_MODELS_REGISTRY: join(tmp, "no-such-models.yaml"),
+          ODYSSEY_API_EVAL_REGISTRY: join(tmp, "no-such-eval.yaml"),
+          ODYSSEY_API_EVAL_REPORTS_DIR: join(tmp, "no-such-reports"),
+          ODYSSEY_API_EXPORTS_DIR: join(tmp, "no-such-exports"),
+        },
+        stdio: "ignore",
+      },
+    );
+    await waitForHealth(authBaseUrl);
+  }, 60_000);
+
+  afterAll(() => {
+    authServerProcess?.kill();
+  });
+
+  test("missing api key raises 401", async () => {
+    const client = new OdysseySDK(authBaseUrl);
+    await expect(client.journeys.list()).rejects.toMatchObject({
+      status: 401,
+    } satisfies Partial<OdysseyAPIError>);
+  });
+
+  test("wrong api key raises 401", async () => {
+    const client = new OdysseySDK(authBaseUrl, "sk-wrong");
+    await expect(client.journeys.list()).rejects.toMatchObject({
+      status: 401,
+    } satisfies Partial<OdysseyAPIError>);
+  });
+
+  test("correct api key succeeds", async () => {
+    const client = new OdysseySDK(authBaseUrl, "sk-test");
+    expect(await client.journeys.list()).toEqual([]);
   });
 });

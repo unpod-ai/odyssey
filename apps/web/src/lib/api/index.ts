@@ -9,5 +9,8 @@ import { OdysseySDK } from "@odyssey/sdk";
 export { OdysseyAPIError, OdysseyAPINotFoundError } from "@odyssey/sdk";
 
 export function apiClient(): OdysseySDK {
-  return new OdysseySDK(process.env.ODYSSEY_API_BASE_URL ?? "http://127.0.0.1:8000");
+  return new OdysseySDK(
+    process.env.ODYSSEY_API_BASE_URL ?? "http://127.0.0.1:8000",
+    process.env.ODYSSEY_API_AUTH_KEY,
+  );
 }

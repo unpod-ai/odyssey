@@ -35,7 +35,12 @@ export class OdysseySDK {
   private readonly transport: Transport;
 
   constructor(baseUrl: string, apiKey?: string) {
-    this.transport = new Transport(baseUrl, apiKey);
+    // Node-side only (this runs server-side, e.g. apps/web) -- browsers
+    // don't have process.env, so guard the lookup.
+    const resolvedApiKey =
+      apiKey ??
+      (typeof process !== "undefined" ? process.env?.ODYSSEY_API_AUTH_KEY : undefined);
+    this.transport = new Transport(baseUrl, resolvedApiKey);
     this.journeys = new JourneysResource(this.transport);
     this.datasets = new DatasetsResource(this.transport);
     this.models = new ModelsResource(this.transport);
