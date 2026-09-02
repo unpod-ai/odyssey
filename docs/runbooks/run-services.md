@@ -51,11 +51,23 @@ Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true
 ProtectSystem=strict
+PrivateTmp=true
 ReadWritePaths=/var/lib/odyssey/collector-data
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+`PrivateTmp=true` is required, not optional, alongside `ProtectSystem=strict`:
+`_Handler._store` (`services/collector/src/odyssey_collector/server.py`)
+writes each posted batch to a scratch file in `tempfile.TemporaryDirectory()`
+to validate it before appending — without `PrivateTmp`, `ProtectSystem=strict`
+remounts `/tmp` read-only along with everything else outside
+`ReadWritePaths`, so every `POST /journeys/<id>/events` (and `/batch/events`,
+same `_store` path) 500s with "no usable temporary directory". `POST
+/metrics` is unaffected — it writes straight into `data_dir` with no temp
+file — so metrics landing successfully while journey posts 500 is the
+signature of this exact misconfiguration, not a key/network/data_dir issue.
 
 ```bash
 sudo mkdir -p /var/lib/odyssey/collector-data && sudo chown odyssey:odyssey /var/lib/odyssey/collector-data

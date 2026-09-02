@@ -59,6 +59,22 @@ project has not yet made a versioned release, so entries accumulate under
   `assert x is not None` / `(x or {})[...]` idioms, plus a couple of test
   helper signatures widened to their real `Literal` types.
 
+### Fixed
+
+- **`odyssey-collector.service`'s `ProtectSystem=strict` was silently
+  breaking every journey ingest** — `_Handler._store` writes each posted
+  batch to a `tempfile.TemporaryDirectory()` scratch file to validate it
+  before appending (`services/collector/src/odyssey_collector/server.py`),
+  but `ProtectSystem=strict` without `PrivateTmp=true` remounts `/tmp`
+  read-only along with everything outside `ReadWritePaths`, so every
+  `POST /journeys/<id>/events`/`/batch/events` 500'd with "no usable
+  temporary directory" while `POST /metrics` (no temp file in its path)
+  kept succeeding — a deployment-reported symptom, reproduced against the
+  code before fixing. Added `PrivateTmp=true` to both the repo-root
+  `odyssey-collector.service` and `docs/runbooks/run-services.md`'s unit
+  template, with a note explaining why it's required alongside
+  `ProtectSystem=strict`, not optional hardening.
+
 ### Added
 
 - **`GET /metrics` on `services/api` + a `apps/web` dashboard page** —
