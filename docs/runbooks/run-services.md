@@ -50,28 +50,25 @@ ExecStart=/opt/odyssey/.venv/bin/odyssey-collector
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true
-ProtectSystem=strict
-PrivateTmp=true
-ReadWritePaths=/var/lib/odyssey/collector-data
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-`ProtectSystem=strict` remounts `/tmp` read-only along with everything
-outside `ReadWritePaths`. `_Handler._store`
+**No `ProtectSystem=strict`/`ReadWritePaths`/`PrivateTmp` here on
+purpose** — an earlier version of this unit set `ProtectSystem=strict`
+without `PrivateTmp`, which remounts `/tmp` read-only along with
+everything outside `ReadWritePaths`; `_Handler._store`
 (`services/collector/src/odyssey_collector/server.py`) writes each posted
-batch to a scratch file to validate it before appending, so under
-`ProtectSystem=strict` this used to 500 every `POST /journeys/<id>/events`
-(and `/batch/events`, same `_store` path) with "no usable temporary
-directory" — `POST /metrics` was unaffected (writes straight into
-`data_dir`, no temp file), so metrics landing while journey posts 500 was
-the signature of this exact misconfiguration, not a key/network/data_dir
-issue. Fixed two ways, belt-and-suspenders: `_store`'s scratch dir now
-lives under `data_dir` itself (`tempfile.TemporaryDirectory(dir=base)`) —
-the one path this service already must be able to write to, so it no
-longer depends on `/tmp` being writable at all — and `PrivateTmp=true` is
-set regardless, in case anything else in the process ever needs `/tmp`.
+batch to a scratch file to validate it before appending, so it 500'd
+every `POST /journeys/<id>/events`/`/batch/events` with "no usable
+temporary directory" (`POST /metrics` was unaffected — no temp file in
+its path — so metrics landing while journey posts 500 was the signature
+of this exact misconfiguration). `_store`'s scratch dir now lives under
+`data_dir` itself regardless of this setting, so the underlying bug is
+fixed in code either way — but this deployment runs without the
+filesystem-hardening directives entirely, by choice, rather than
+maintaining them alongside the app-level fix.
 
 ```bash
 sudo mkdir -p /var/lib/odyssey/collector-data && sudo chown odyssey:odyssey /var/lib/odyssey/collector-data

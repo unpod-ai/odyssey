@@ -8,6 +8,17 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Changed
 
+- `odyssey-collector.service` (repo root) and
+  `docs/runbooks/run-services.md`'s unit template no longer set
+  `ProtectSystem=strict`/`ReadWritePaths`/`PrivateTmp` — a deliberate
+  deployment choice to run without filesystem-hardening directives
+  entirely, rather than maintain them. The underlying bug they'd
+  triggered (`_store`'s temp-dir scratch write 500ing every journey
+  ingest under `strict`) is already fixed in code regardless — `_store`'s
+  scratch dir lives under `data_dir` now, not the system temp dir — so
+  removing these directives is a deployment simplification, not a
+  regression.
+
 - `docs/runbooks/run-services.md` now also covers `apps/web` in
   production (`pnpm --filter @odyssey/web build` + `next start`, its own
   systemd unit) — previously only `services/api`/`services/collector`
