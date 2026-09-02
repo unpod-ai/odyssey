@@ -111,7 +111,6 @@ import logging
 import os
 import secrets
 import sys
-import tempfile
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -124,6 +123,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from odyssey.jsonl import (
     MalformedHeaderError,
     SchemaVersionError,
+    parse_events,
     read_events,
     write_events,
 )
@@ -628,7 +628,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _store(self, journey_id: str, body: bytes, product_slug: Optional[str]) -> int:
         """Parse the posted batch through the real codec, then append it.
 
-        Round-tripping through :func:`read_events` rather than trusting the
+        Round-tripping through :func:`parse_events` rather than trusting the
         bytes as-is is what makes this a validating ingest point instead of a
         dumb pipe: a malformed batch is rejected with a 400 here, not written
         and only discovered broken the next time someone folds it.
@@ -641,18 +641,22 @@ class _Handler(BaseHTTPRequestHandler):
         but the raw layer would carry redundant bytes indefinitely.
         """
         base = self.server.config.data_dir
-        # The parse round-trip's scratch space lives under ``data_dir`` rather
-        # than the system temp dir: a hardened deployment (systemd
-        # ``ProtectSystem=strict`` with ``ReadWritePaths`` naming only the data
-        # directory) leaves ``/tmp``, ``/var/tmp`` and the working directory
-        # read-only, and ``tempfile`` then fails every ingest with a 500.
-        # ``data_dir`` is the one path this service cannot function without
-        # writing to, so it is the only safe place to put scratch bytes.
-        base.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=base) as tmp:
-            received = Path(tmp) / "received.jsonl"
-            received.write_bytes(body)
-            result = read_events(received)
+        # Validated in memory, with no scratch file anywhere. This used to
+        # write the posted bytes to a temp file and read them back, which made
+        # every ingest depend on a writable temp directory. A hardened
+        # deployment does not have one: under ``ProtectSystem=strict`` with
+        # ``ReadWritePaths`` naming only the data directory, ``/tmp``,
+        # ``/var/tmp``, ``/usr/tmp`` and the working directory are all
+        # read-only, so ``tempfile`` found no candidate and returned a 500 for
+        # every journey POST -- while ``POST /metrics``, which writes straight
+        # into ``data_dir``, kept working and made the failure look selective.
+        # The batch is already in memory; putting it on disk to read it back
+        # bought nothing but that dependency and a write per request.
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise BatchRejected(f"malformed batch: not valid UTF-8: {exc}") from exc
+        result = parse_events(text, source=f"journey {journey_id}")
 
         if not result.clean:
             reason = (

@@ -64,7 +64,13 @@ from odyssey.export import (
     save,
 )
 from odyssey.fold import FoldResult, fold
-from odyssey.jsonl import ReadResult, read_events, read_header, write_events
+from odyssey.jsonl import (
+    ReadResult,
+    parse_events,
+    read_events,
+    read_header,
+    write_events,
+)
 from odyssey.pii import redact_pii, scan_pii
 from odyssey.primitives import (
     SCHEMA_VERSION,
@@ -156,6 +162,7 @@ __all__ = [
     "export_spool",
     "fold_shard",
     "ExportResult",
+    "parse_events",
     "read_events",
     "read_header",
     "write_events",

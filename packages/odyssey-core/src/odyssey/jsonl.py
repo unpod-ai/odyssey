@@ -347,17 +347,28 @@ def read_schema_version(path: Path | str) -> str:
     return str(_header_from(first, Path(path))[HEADER_KEY])
 
 
-def read_events(path: Path | str) -> ReadResult:
-    """Read a JSONL event file, tolerating truncation and bad lines."""
-    p = Path(path)
-    raw = p.read_text(encoding="utf-8")
+def parse_events(raw: str, source: Path | str = "<memory>") -> ReadResult:
+    """Parse JSONL event text, tolerating truncation and bad lines.
+
+    Split out of :func:`read_events` so a caller that already holds the bytes
+    can validate them without a round trip through a scratch file. That round
+    trip is what made ``services/collector``'s ingest depend on a writable
+    temp directory, which a hardened deployment does not have: under
+    ``ProtectSystem=strict`` with ``ReadWritePaths`` naming only the data
+    directory, ``/tmp``, ``/var/tmp``, ``/usr/tmp`` and the working directory
+    are all read-only, and every POST died with "no usable temporary
+    directory found" before its data ever reached storage.
+
+    ``source`` only labels error messages -- nothing here touches the
+    filesystem.
+    """
     if not raw.strip():
-        raise MalformedHeaderError(f"{p}: file is empty, no header")
+        raise MalformedHeaderError(f"{source}: file is empty, no header")
 
     ends_clean = raw.endswith("\n")
     lines = raw.splitlines()
 
-    header = decode_header(_header_from(lines[0], p))
+    header = decode_header(_header_from(lines[0], source))
     version = _check_version(header.odyssey_schema_version)
 
     events: List[JourneyEvent] = []
@@ -396,6 +407,12 @@ def read_events(path: Path | str) -> ReadResult:
     )
 
 
+def read_events(path: Path | str) -> ReadResult:
+    """Read a JSONL event file, tolerating truncation and bad lines."""
+    p = Path(path)
+    return parse_events(p.read_text(encoding="utf-8"), source=p)
+
+
 def read_header(path: Path | str) -> JourneyHeader:
     """Parse the header alone, reading no events.
 
@@ -412,7 +429,7 @@ def read_header(path: Path | str) -> JourneyHeader:
     return header
 
 
-def _header_from(line: str, p: Path) -> Dict[str, Any]:
+def _header_from(line: str, p: Path | str) -> Dict[str, Any]:
     """The header line as a dict, validated as an odyssey header.
 
     Returns the whole object rather than just the version: v1.1 put journey
