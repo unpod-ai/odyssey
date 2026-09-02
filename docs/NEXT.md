@@ -1,5 +1,41 @@
 # odyssey — session handoff
 
+## Product/Project rename, opt-in metrics, services/api auth — done. Next: expose metrics through services/api + a apps/web UI page (designed, not started)
+
+Big session, all pushed to `origin/main`, HEAD is `9a48c25`. Three separate pieces of work, in order:
+
+**1. Product/Project rename + opt-in metrics capture** (full design doc + implementation plan + subagent-driven-development execution — read these two files for the complete rationale, they're still accurate/current):
+- `docs/superpowers/specs/2026-09-02-product-project-metrics-design.md`
+- `docs/superpowers/plans/2026-09-02-product-project-metrics.md`
+
+Shipped: `services/collector`'s `Project` auth concept renamed to `Product` (clean break, `--products-file`/`ODYSSEY_COLLECTOR_PRODUCTS_FILE`, `GET /products`); new `packages/odyssey-core/src/odyssey/project.py` (`odyssey.init(project=...)`, auto-detected from git remote/dirname, tags `journey_metadata["project"]`); new `packages/odyssey-core/src/odyssey/metrics.py` + `services/collector`'s `POST /metrics` (opt-in host telemetry — hostname/OS/CPU/disk, off by default via `ODYSSEY_COLLECT_METRICS`, `public_ip` recorded server-side from the real TCP peer address); `HttpTransport` base class extracted from `HttpSink` so the metrics poster reuses it. A final whole-branch review caught and fixed a real bug: `services/api`'s journey listing was scanning the new `metrics/` directory as if it were journey data (`services/api/src/odyssey_api/domain/journeys.py`'s `list_journeys_with_status` now delegates to the already-guarded `filesystem.list_journeys` instead of its own unguarded directory walk — this is the precedent to follow for the metrics-UI work below).
+
+**2. `apps/web` added to the production runbook** — `docs/runbooks/run-services.md` previously only covered `services/api`/`services/collector`; now has a verified `pnpm build` + `next start` section + systemd unit for `apps/web` too.
+
+**3. `services/api` gained optional bearer-token auth** (it had none before this session). `ODYSSEY_API_AUTH_KEY` env var / `--api-key` flag on `odyssey api serve`, `Authorization: Bearer <key>` required on every route except `GET /health`, open by default when unset. Deliberately not named `ODYSSEY_API_KEY` — that's a different, pre-existing client-side setting (`packages/odyssey-core`'s `HttpSink`). Implemented with `fastapi.security.HTTPBearer` + `secrets.compare_digest` (a security review caught that the first pass used a raw `Header()` param, which polluted the OpenAPI schema and left `services/api/openapi.json` stale against CI's drift gate — fixed). Both SDKs and `apps/web` wired up with a matching env var fallback; confirmed the key can never reach `apps/web`'s browser bundle (no `NEXT_PUBLIC_` prefix, and the app has zero client components anyway).
+
+### Next up — designed, not started: expose `POST /metrics` data through `services/api` + a dashboard page
+
+The user asked for this and I'd fully designed it (verified against real code) when the session ended for a handoff instead. Nothing has been written yet. The design, so the next session doesn't have to re-derive it:
+
+**Why this doesn't already exist:** the original Product/Project/metrics design spec explicitly scoped `services/api` changes out ("no route reads `/metrics` data"). The user now wants that closed.
+
+**Backend (do this first — everything else depends on it):**
+- `packages/odyssey-schemas/src/odyssey_schemas/__init__.py` — new `MetricsSnapshotOut(BaseModel)`: `ts: str`, `hostname: str`, `os: str`, `cpu_count: Optional[int] = None`, `memory_total_bytes: Optional[int] = None`, `memory_available_bytes: Optional[int] = None`, `disk_total_bytes: Optional[int] = None`, `disk_free_bytes: Optional[int] = None`, `project: Optional[str] = None`, `public_ip: Optional[str] = None` — matches `packages/odyssey-core/src/odyssey/metrics.py`'s `build_snapshot()` output shape plus the `public_ip` field `services/collector`'s `_do_metrics_post` adds server-side. Add to `__all__`.
+- `services/api/src/odyssey_api/repositories/filesystem.py` — new `list_metrics(journeys_dir: Path) -> List[Dict[str, Any]]`: reads `<journeys_dir>/metrics/*.jsonl` (mirrors `services/collector`'s single-key/open-mode storage path exactly), parses each line as JSON, skips malformed lines rather than raising (same defensiveness as `list_journeys_with_status`'s per-shard fold failure handling), sorts by `ts` descending. **Deliberately only the flat, non-product-scoped layout** — same documented scope cut `list_journeys`/`find_journey_path` already have (see their docstrings), don't try to add product-awareness in this pass.
+- `services/api/src/odyssey_api/domain/metrics.py` — thin `list_metrics(journeys_dir) -> ...` passthrough to the repository, matching `domain/exports.py`'s exact shape (the simplest existing precedent — a directory listing, no registry, no folding).
+- `services/api/src/odyssey_api/routers/metrics.py` — `GET /metrics` → `List[MetricsSnapshotOut]`, matching `routers/exports.py`'s exact shape.
+- `services/api/src/odyssey_api/main.py` — register the new router with `dependencies=[Depends(require_api_key)]` (protected, same as every other data route).
+- Tests: mirror `services/api/tests/integration/test_api.py`'s existing exports/journeys test patterns — write a real `metrics/<date>.jsonl` file via the `_client(settings)` fixture, hit `GET /metrics`, assert the response.
+- **Regenerate after the schema/route lands**: `./scripts/codegen.sh` from repo root (regenerates `services/api/openapi.json`, then both SDKs — verify `git diff --stat` afterward, the metrics DTO/route should produce a new `MetricsResource`/`metrics.py` resource file in both `sdk/python/src/odyssey_sdk/resources/` and `sdk/javascript/src/resources/`, with zero other resource files changing).
+
+**Frontend, after the backend + codegen lands (needs the generated SDK types):**
+- `apps/web/src/app/(dashboard)/metrics/page.tsx` — new page, copy `runs/page.tsx`'s exact shape (`apiClient().metrics.list()` in a try/catch, `<DataTable>` with columns for `ts`/`hostname`/`os`/`cpu_count`/disk usage/`project`/`public_ip` — check `apps/web/src/components/DataTable.tsx` for the `Column<T>` interface first).
+- `apps/web/src/components/Nav.tsx` — add `{ href: "/metrics", label: "Metrics" }` to the `LINKS` array.
+- Verify end to end: real `services/collector` with `ODYSSEY_COLLECT_METRICS=1` on a test SDK process, real `services/api`, real `pnpm dev`, curl/browser-check the `/metrics` page actually shows a posted snapshot.
+
+**Docs to update after this lands:** `docs/COMPONENTS.md` (mention the new route/page), `docs/data-contracts.md` (the metrics DTO joins the generated-client chain), `services/api/README.md` (new route), `apps/web/README.md` (new page), `CHANGELOG.md`.
+
 ## Documentation pass, continued — 4 new top-level docs + runnable SDK examples
 
 Still no engineering, docs only. Added `sdk/examples/{python,javascript}`
