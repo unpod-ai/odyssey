@@ -78,6 +78,15 @@ systemctl status odyssey-collector
 journalctl -u odyssey-collector -f
 ```
 
+**Quiet by default, no per-request access log** — `_Handler.log_message`
+is a deliberate no-op unless `ODYSSEY_COLLECTOR_DEBUG=1` (or `--debug`) is
+set, in which case every request (method, path, status) logs to stdout
+via the `odyssey_collector.requests` logger, visible through
+`journalctl -u odyssey-collector -f`. Add
+`Environment=ODYSSEY_COLLECTOR_DEBUG=1` to the unit's `[Service]` block
+and `daemon-reload && restart` to turn it on; remove it and restart again
+to go back to quiet.
+
 ### Switching to product-scoped mode (`--products-file`)
 
 **Create the roster file before flipping the `Environment=` line** — do

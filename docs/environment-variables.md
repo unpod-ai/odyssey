@@ -74,6 +74,7 @@ Source: `services/collector/src/odyssey_collector/server.py`.
 | `ODYSSEY_COLLECTOR_API_KEY` | `--api-key` | unset (open) | One shared bearer token, unscoped. Mutually exclusive with `ODYSSEY_COLLECTOR_PRODUCTS_FILE` |
 | `ODYSSEY_COLLECTOR_PRODUCTS_FILE` | `--products-file` | unset | Path to a `{"products": [{"slug", "name", "api_key"}, ...]}` roster (product scoping). Mutually exclusive with `ODYSSEY_COLLECTOR_API_KEY`. `odyssey-collector --init-products-file` bootstraps this file — see `services/collector/README.md` |
 | `ODYSSEY_COLLECTOR_TIMEZONE` | `--timezone` | `UTC` | Which day a batch's date-partition belongs to |
+| `ODYSSEY_COLLECTOR_DEBUG` | `--debug` | unset (off) | Per-request access log (method, path, status) to stdout via the `odyssey_collector.requests` logger — quiet by default, same as before this existed |
 
 `--init-products-file`/`--product-slug`/`--product-name` (the bootstrap
 command) have **no** env var equivalents, deliberately — see

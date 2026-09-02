@@ -93,6 +93,19 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Added
 
+- **`services/collector` opt-in per-request access logging** —
+  `_Handler.log_message` was a hardcoded no-op (deliberately quiet
+  stdout), with no way to see individual requests short of editing code.
+  New `--debug`/`ODYSSEY_COLLECTOR_DEBUG` flag routes one log line per
+  request (client, method, path, status) through a dedicated
+  `odyssey_collector.requests` logger — off by default (unchanged, silent
+  behavior when not set), visible via `journalctl -u odyssey-collector -f`
+  or stdout when enabled. `main()` only calls `logging.basicConfig()` when
+  debug is on, so nothing about default startup output changes. New tests
+  cover both the off-by-default silence and the on-when-enabled log line;
+  verified end to end with a real running CLI process (`--debug` producing
+  real log lines, no flag producing none).
+
 - **`GET /metrics` on `services/api` + a `apps/web` dashboard page** —
   exposes `services/collector`'s `POST /metrics` host telemetry snapshots
   (opt-in via `ODYSSEY_COLLECT_METRICS`, off by default) through the read

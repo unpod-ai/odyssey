@@ -843,3 +843,50 @@ def test_an_unrecognised_path_is_404(running):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         urllib.request.urlopen(f"{endpoint(running)}/nonsense")
     assert exc_info.value.code == 404
+
+
+# --------------------------------------------------------------------------
+# Debug request logging (ODYSSEY_COLLECTOR_DEBUG / --debug)
+
+
+def test_no_request_log_by_default(running, caplog):
+    """debug=False (the running fixture's default) — no per-request log line,
+    same "keep stdout quiet" behavior this had before the toggle existed."""
+    with caplog.at_level("INFO", logger="odyssey_collector.requests"):
+        urllib.request.urlopen(f"{endpoint(running)}/health")
+    assert caplog.records == []
+
+
+def test_request_log_emitted_when_debug_enabled(tmp_path, caplog):
+    config = CollectorConfig(
+        host="127.0.0.1",
+        port=0,
+        data_dir=tmp_path / "data",
+        date_fn=lambda: FIXED_DATE,
+        debug=True,
+    )
+    server = serve(config)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with caplog.at_level("INFO", logger="odyssey_collector.requests"):
+            urllib.request.urlopen(f"{endpoint(server)}/health")
+    finally:
+        server.shutdown()
+        thread.join()
+
+    assert len(caplog.records) == 1
+    assert "GET /health" in caplog.records[0].message
+    assert "200" in caplog.records[0].message
+
+
+def test_resolve_config_debug_env_var(tmp_path, monkeypatch):
+    monkeypatch.setenv("ODYSSEY_COLLECTOR_DEBUG", "1")
+    config = resolve_config(data_dir=tmp_path / "data")
+    assert config.debug is True
+
+
+def test_resolve_config_debug_explicit_beats_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("ODYSSEY_COLLECTOR_DEBUG", "1")
+    config = resolve_config(data_dir=tmp_path / "data", debug=False)
+    assert config.debug is False

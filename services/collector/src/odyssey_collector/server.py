@@ -95,6 +95,11 @@ products: it deletes date-named directories directly under whatever
 ``--data-dir`` it is pointed at. In product-scoped mode that means running
 it once per product directory (``--data-dir <data_dir>/<slug>``), not once
 against the root.
+
+No per-request access log by default (``_Handler.log_message`` is a
+no-op) -- ``--debug``/``ODYSSEY_COLLECTOR_DEBUG`` opts into one line per
+request (method, path, status) via the ``odyssey_collector.requests``
+logger.
 """
 
 from __future__ import annotations
@@ -102,6 +107,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import logging
 import os
 import secrets
 import sys
@@ -128,6 +134,7 @@ ENV_DATA_DIR = "ODYSSEY_COLLECTOR_DATA_DIR"
 ENV_API_KEY = "ODYSSEY_COLLECTOR_API_KEY"
 ENV_PRODUCTS_FILE = "ODYSSEY_COLLECTOR_PRODUCTS_FILE"
 ENV_TIMEZONE = "ODYSSEY_COLLECTOR_TIMEZONE"
+ENV_DEBUG = "ODYSSEY_COLLECTOR_DEBUG"
 
 # Pre-rename name. resolve_config no longer reads it -- and never silently
 # should, since a deployment that still has it set (with no --api-key
@@ -139,6 +146,16 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 DEFAULT_DATA_DIR = "./collector-data"
 DEFAULT_TIMEZONE = "UTC"
+
+# Per-request access logging, off by default (see _Handler.log_message) --
+# a caller opts in with --debug/ODYSSEY_COLLECTOR_DEBUG rather than editing
+# code. A dedicated logger name (not the root logger) so enabling this can
+# never surface unrelated third-party log noise.
+request_logger = logging.getLogger("odyssey_collector.requests")
+
+
+def _truthy(value: Optional[str]) -> bool:
+    return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _make_date_fn(tz_name: Optional[str]) -> Callable[[], str]:
@@ -304,6 +321,10 @@ class CollectorConfig:
     products: Optional[Tuple[Product, ...]] = None
     # Explicit wins over ODYSSEY_COLLECTOR_TIMEZONE, which wins over UTC.
     timezone: Optional[str] = None
+    # Per-request access logging via `request_logger` -- off by default,
+    # same "keep stdout quiet" behavior this always had. See
+    # ENV_DEBUG/--debug.
+    debug: bool = False
     # Injectable for tests that need a fixed date rather than the real one.
     # Passing this directly bypasses `timezone` entirely.
     date_fn: Callable[[], str] = field(default_factory=lambda: _make_date_fn(None))
@@ -336,6 +357,7 @@ def resolve_config(
     api_key: Optional[str] = None,
     products_file: Optional[Path | str] = None,
     timezone: Optional[str] = None,
+    debug: Optional[bool] = None,
 ) -> CollectorConfig:
     """Explicit arguments win over ``ODYSSEY_COLLECTOR_*`` env vars — the same
     precedence ``odyssey.config.resolve()`` uses on the recording side."""
@@ -364,6 +386,7 @@ def resolve_config(
             else None
         ),
         timezone=timezone,
+        debug=debug if debug is not None else _truthy(os.environ.get(ENV_DEBUG)),
     )
 
 
@@ -392,8 +415,14 @@ class _Handler(BaseHTTPRequestHandler):
     # keep-alive's one hard requirement.
     protocol_version = "HTTP/1.1"
 
-    def log_message(self, *args: object) -> None:  # keep stdout quiet
-        pass
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        # Quiet by default -- opt in with --debug/ODYSSEY_COLLECTOR_DEBUG
+        # rather than editing code. Mirrors BaseHTTPRequestHandler's own
+        # default format (client address, then the request line + status),
+        # routed through `request_logger` instead of straight to stderr so
+        # it can be turned on/off and captured like any other log.
+        if self.server.config.debug:
+            request_logger.info("%s - %s", self.address_string(), format % args)
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib method name
         if self.path == "/health":
@@ -705,6 +734,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default="Default",
         help="with --init-products-file (default: Default)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=None,
+        help="log every request (method, path, status) to stdout via the "
+        "'odyssey_collector.requests' logger; default: off (ODYSSEY_COLLECTOR_DEBUG)",
+    )
     args = parser.parse_args(argv)
 
     if args.init_products_file is not None:
@@ -732,7 +768,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         api_key=args.api_key,
         products_file=args.products_file,
         timezone=args.timezone,
+        debug=args.debug,
     )
+    if config.debug:
+        logging.basicConfig(
+            level=logging.INFO, format="%(asctime)s %(name)s %(message)s"
+        )
     server = serve(config)
     print(
         f"odyssey-collector listening on http://{config.host}:{config.port} "

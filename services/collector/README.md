@@ -43,6 +43,7 @@ Env-first, explicit argument wins — same precedence as `odyssey.config.resolve
 | `ODYSSEY_COLLECTOR_API_KEY` | `--api-key` | unset (open) | one shared bearer token, unscoped. Mutually exclusive with `--products-file` |
 | `ODYSSEY_COLLECTOR_PRODUCTS_FILE` | `--products-file` | unset | JSON `{"products": [{"slug", "name", "api_key"}, ...]}` file (product scoping, below). Mutually exclusive with `--api-key` |
 | `ODYSSEY_COLLECTOR_TIMEZONE` | `--timezone` | `UTC` | IANA name (e.g. `Asia/Kolkata`); which day a batch's date-partition belongs to. Unrecognised names fall back to UTC |
+| `ODYSSEY_COLLECTOR_DEBUG` | `--debug` | unset (off) | per-request access log (method, path, status) to stdout, via the `odyssey_collector.requests` logger. Quiet by default — same as before this existed |
 
 ## Product scoping
 
