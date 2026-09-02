@@ -205,7 +205,8 @@ def test_health_stays_open_even_when_api_key_configured():
     assert resp.json() == {"status": "ok"}
 
 
-def test_protected_route_open_by_default_when_no_api_key_configured():
+def test_protected_route_open_by_default_when_no_api_key_configured(monkeypatch):
+    monkeypatch.delenv("ODYSSEY_API_AUTH_KEY", raising=False)
     client = _client(Settings())
     resp = client.get("/journeys")
     assert resp.status_code == 200

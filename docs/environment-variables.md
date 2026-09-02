@@ -15,9 +15,16 @@ different secrets for different directions of the same connection:
 `ODYSSEY_API_KEY` is the key `odyssey.HttpSink` **sends** when it POSTs
 to a collector; `ODYSSEY_COLLECTOR_API_KEY` is the key
 `services/collector` **requires** to accept that POST. Set them to the
-same value on the two ends of one connection. Neither is related to
-`services/api` (the read API), which has no API-key auth of its own
-today — see its `README.md`'s "Not done here".
+same value on the two ends of one connection. There is now a third,
+unrelated-but-similarly-named variable: **`ODYSSEY_API_AUTH_KEY`**,
+the key `services/api` (the read API) optionally **requires** on every
+route except `/health` — see its `README.md`'s Auth section. All three
+are genuinely separate settings for three separate processes (capture,
+collector, read API), easy to confuse by name alone: `ODYSSEY_API_KEY`
+is client-side (what `HttpSink` sends to a collector),
+`ODYSSEY_COLLECTOR_API_KEY` and `ODYSSEY_API_AUTH_KEY` are both
+server-side (what a collector, respectively `services/api`, requires),
+and none of the three are interchangeable with each other.
 
 **`ODYSSEY_PROJECT`** (capture side, below) and **`Product`/`products`**
 (`services/collector`'s `ODYSSEY_COLLECTOR_PRODUCTS_FILE`/`--products-file`
@@ -93,6 +100,7 @@ below points at storage another member already owns and writes;
 | `ODYSSEY_API_EVAL_REGISTRY` | `evaluation/datasets/registry.yaml` | `evaluation`'s frozen eval-set registry |
 | `ODYSSEY_API_EVAL_REPORTS_DIR` | `evaluation/reports` | Where `odyssey eval run` writes reports |
 | `ODYSSEY_API_EXPORTS_DIR` | `./exports` | Where export artifacts are read from |
+| `ODYSSEY_API_AUTH_KEY` | unset (open) | Optional bearer-token auth (`Authorization: Bearer <key>`) required on every route except `/health`. Same as `odyssey api serve --api-key`. See "Naming collision" above |
 
 ## `apps/web` — dashboard
 
@@ -101,6 +109,7 @@ Source: `apps/web/src/lib/api/index.ts`.
 | Variable | Default | What it controls |
 |---|---|---|
 | `ODYSSEY_API_BASE_URL` | `http://127.0.0.1:8000` | The `services/api` instance `apiClient()`/`@odyssey/sdk` points at. Unrelated to `ODYSSEY_API_HOST`/`PORT` above — those configure the server side of the same service, this configures a client pointed at it |
+| `ODYSSEY_API_AUTH_KEY` | unset | The bearer token `apiClient()` sends to `services/api` — must match that service's own `ODYSSEY_API_AUTH_KEY` if it has auth enabled |
 
 ## Referenced in docs, not implemented in this repo
 
@@ -117,8 +126,11 @@ itself; nothing here does today.
 ## What has no env var, on purpose
 
 - `sdk/python`, `sdk/javascript` — the base URL is a required constructor
-  argument (`OdysseySDK(base_url)`), not an env var; only `apps/web`'s
-  thin wrapper adds one.
+  argument (`OdysseySDK(base_url)`), not an env var. The API key
+  argument is optional and *does* fall back to an env var
+  (`ODYSSEY_API_AUTH_KEY`, read directly by `OdysseySDK.__init__` in
+  both SDKs) when not passed explicitly — `apps/web`'s thin wrapper
+  reads the same variable itself rather than relying on that fallback.
 - `data_preparation`, `training`, `evaluation` — every knob is a CLI flag
   (`odyssey data ...`, `odyssey train ...`, `odyssey eval ...`), no
   `ODYSSEY_DATAPREP_*`/`ODYSSEY_TRAIN_*`/`ODYSSEY_EVAL_*` variables exist.

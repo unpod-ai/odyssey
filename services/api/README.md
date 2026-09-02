@@ -87,6 +87,9 @@ configured, so load balancers/monitoring can hit it without credentials.
 Deliberately not named `ODYSSEY_API_KEY` — `packages/odyssey-core`'s
 `HttpSink` already uses that name for an unrelated, client-side setting;
 see `docs/environment-variables.md`'s "Naming collision to know about".
+The `--api-key` CLI flag is visible to any local user via `ps aux` or
+`/proc/<pid>/cmdline` — prefer the `ODYSSEY_API_AUTH_KEY` env var for
+production and reserve the flag for local development only.
 
 ## Tests
 

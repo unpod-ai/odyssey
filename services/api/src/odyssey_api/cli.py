@@ -9,7 +9,7 @@ group is mounted by `sdk/python`'s own CLI plugin (item 8.4) — see its
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Optional
 
 
 def register(app: Any) -> None:
@@ -27,7 +27,7 @@ def register(app: Any) -> None:
         reload: bool = typer.Option(
             False, "--reload", help="uvicorn autoreload (dev only)"
         ),
-        api_key: str = typer.Option(
+        api_key: Optional[str] = typer.Option(
             None,
             "--api-key",
             help="require this bearer token on every route except /health; "

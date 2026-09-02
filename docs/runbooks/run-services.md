@@ -147,6 +147,7 @@ Environment=ODYSSEY_API_MODELS_REGISTRY=/opt/odyssey/training/models/registry.ya
 Environment=ODYSSEY_API_EVAL_REGISTRY=/opt/odyssey/evaluation/datasets/registry.yaml
 Environment=ODYSSEY_API_EVAL_REPORTS_DIR=/opt/odyssey/evaluation/reports
 Environment=ODYSSEY_API_EXPORTS_DIR=/var/lib/odyssey/exports
+# Environment=ODYSSEY_API_AUTH_KEY=change-me
 ExecStart=/opt/odyssey/.venv/bin/uvicorn odyssey_api.main:app \
   --app-dir /opt/odyssey/services/api/src \
   --host %E{ODYSSEY_API_HOST} --port %E{ODYSSEY_API_PORT} --workers 4
@@ -160,6 +161,13 @@ WantedBy=multi-user.target
 
 (`%E{VAR}` needs systemd ≥ 246; on an older systemd, hardcode
 `--host`/`--port` instead of interpolating the `Environment=` lines.)
+
+`ODYSSEY_API_AUTH_KEY` is commented out above because auth is opt-in
+and off by default — uncomment it and set a real value to require a
+bearer token on every route except `/health`. **If you set it here,
+you must set the identical value on the `odyssey-web` unit below** —
+`services/api` and `apps/web` have to agree on the key or the
+dashboard will silently 401 every page.
 
 ### Option B — gunicorn, `uvicorn.workers.UvicornWorker`
 
@@ -218,6 +226,7 @@ Group=odyssey
 WorkingDirectory=/opt/odyssey/apps/web
 Environment=NODE_ENV=production
 Environment=ODYSSEY_API_BASE_URL=http://127.0.0.1:8000
+# Environment=ODYSSEY_API_AUTH_KEY=change-me
 ExecStart=/opt/odyssey/apps/web/node_modules/.bin/next start -p 3000
 Restart=on-failure
 RestartSec=2

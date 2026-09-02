@@ -171,6 +171,7 @@ describe("OdysseySDK against a real services/api instance with --api-key set", (
   });
 
   test("missing api key raises 401", async () => {
+    delete process.env.ODYSSEY_API_AUTH_KEY;
     const client = new OdysseySDK(authBaseUrl);
     await expect(client.journeys.list()).rejects.toMatchObject({
       status: 401,

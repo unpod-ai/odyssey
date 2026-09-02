@@ -155,7 +155,8 @@ def live_server_with_api_key(tmp_path):
         thread.join(timeout=5)
 
 
-def test_missing_api_key_raises_401(live_server_with_api_key):
+def test_missing_api_key_raises_401(live_server_with_api_key, monkeypatch):
+    monkeypatch.delenv("ODYSSEY_API_AUTH_KEY", raising=False)
     client = OdysseySDK(live_server_with_api_key)
     with pytest.raises(OdysseyAPIError) as exc_info:
         client.journeys.list()
