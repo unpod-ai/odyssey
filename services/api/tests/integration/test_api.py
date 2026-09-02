@@ -178,3 +178,34 @@ def test_openapi_schema_is_generated():
     resp = client.get("/openapi.json")
     assert resp.status_code == 200
     assert "/journeys" in resp.json()["paths"]
+
+
+def test_protected_route_requires_api_key_when_configured():
+    client = _client(Settings(api_key="sk-test"))
+    resp = client.get("/journeys")
+    assert resp.status_code == 401
+
+
+def test_protected_route_accepts_correct_bearer_token():
+    client = _client(Settings(api_key="sk-test"))
+    resp = client.get("/journeys", headers={"Authorization": "Bearer sk-test"})
+    assert resp.status_code == 200
+
+
+def test_protected_route_rejects_wrong_bearer_token():
+    client = _client(Settings(api_key="sk-test"))
+    resp = client.get("/journeys", headers={"Authorization": "Bearer sk-wrong"})
+    assert resp.status_code == 401
+
+
+def test_health_stays_open_even_when_api_key_configured():
+    client = _client(Settings(api_key="sk-test"))
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+def test_protected_route_open_by_default_when_no_api_key_configured():
+    client = _client(Settings())
+    resp = client.get("/journeys")
+    assert resp.status_code == 200

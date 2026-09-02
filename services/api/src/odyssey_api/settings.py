@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 
 def _env_path(name: str, default: str) -> Path:
@@ -58,6 +59,9 @@ class Settings:
     )
     exports_dir: Path = field(
         default_factory=lambda: _env_path("ODYSSEY_API_EXPORTS_DIR", "./exports")
+    )
+    api_key: Optional[str] = field(
+        default_factory=lambda: os.environ.get("ODYSSEY_API_AUTH_KEY")
     )
 
 

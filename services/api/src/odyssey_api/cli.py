@@ -27,11 +27,22 @@ def register(app: Any) -> None:
         reload: bool = typer.Option(
             False, "--reload", help="uvicorn autoreload (dev only)"
         ),
+        api_key: str = typer.Option(
+            None,
+            "--api-key",
+            help="require this bearer token on every route except /health; "
+            "default: open. Same as setting $ODYSSEY_API_AUTH_KEY",
+        ),
     ) -> None:
         """Run the API with uvicorn (item 8.2)."""
+        import os
+
         import uvicorn
 
         from odyssey_api.settings import get_settings
+
+        if api_key is not None:
+            os.environ["ODYSSEY_API_AUTH_KEY"] = api_key
 
         settings = get_settings()
         uvicorn.run(

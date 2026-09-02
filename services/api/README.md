@@ -74,6 +74,19 @@ Point it at real data:
 | `ODYSSEY_API_EVAL_REGISTRY` | `evaluation/datasets/registry.yaml` |
 | `ODYSSEY_API_EVAL_REPORTS_DIR` | `evaluation/reports` |
 | `ODYSSEY_API_EXPORTS_DIR` | `./exports` |
+| `ODYSSEY_API_AUTH_KEY` | unset — no auth required |
+
+## Auth
+
+Optional single shared bearer token, mirroring `services/collector`'s
+`--api-key` mode: set `ODYSSEY_API_AUTH_KEY` (or pass `--api-key` to
+`odyssey api serve`) and every route must send
+`Authorization: Bearer <key>`. Leave it unset and the API stays open, same
+as before this existed. `GET /health` is always open, even with a key
+configured, so load balancers/monitoring can hit it without credentials.
+Deliberately not named `ODYSSEY_API_KEY` — `packages/odyssey-core`'s
+`HttpSink` already uses that name for an unrelated, client-side setting;
+see `docs/environment-variables.md`'s "Naming collision to know about".
 
 ## Tests
 

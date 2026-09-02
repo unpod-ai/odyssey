@@ -6,8 +6,9 @@ env var juggling.
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
+from odyssey_api.deps import require_api_key
 from odyssey_api.routers import datasets, exports, health, journeys, models, runs
 
 
@@ -19,11 +20,11 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
     app.include_router(health.router)
-    app.include_router(journeys.router)
-    app.include_router(datasets.router)
-    app.include_router(models.router)
-    app.include_router(runs.router)
-    app.include_router(exports.router)
+    app.include_router(journeys.router, dependencies=[Depends(require_api_key)])
+    app.include_router(datasets.router, dependencies=[Depends(require_api_key)])
+    app.include_router(models.router, dependencies=[Depends(require_api_key)])
+    app.include_router(runs.router, dependencies=[Depends(require_api_key)])
+    app.include_router(exports.router, dependencies=[Depends(require_api_key)])
     return app
 
 
