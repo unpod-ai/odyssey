@@ -65,3 +65,8 @@ models/exported/*
 evaluation/reports/*
 !evaluation/reports/.gitkeep
 !evaluation/reports/templates/
+
+# collector runtime state / secrets — never commit a products roster (it holds api keys)
+collector-data/
+collector-products.json
+collector-keys.json

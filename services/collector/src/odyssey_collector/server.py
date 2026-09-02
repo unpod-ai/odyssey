@@ -611,7 +611,16 @@ class _Handler(BaseHTTPRequestHandler):
         every event in it — `fold()` would still dedupe it correctly on read,
         but the raw layer would carry redundant bytes indefinitely.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        base = self.server.config.data_dir
+        # The parse round-trip's scratch space lives under ``data_dir`` rather
+        # than the system temp dir: a hardened deployment (systemd
+        # ``ProtectSystem=strict`` with ``ReadWritePaths`` naming only the data
+        # directory) leaves ``/tmp``, ``/var/tmp`` and the working directory
+        # read-only, and ``tempfile`` then fails every ingest with a 500.
+        # ``data_dir`` is the one path this service cannot function without
+        # writing to, so it is the only safe place to put scratch bytes.
+        base.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=base) as tmp:
             received = Path(tmp) / "received.jsonl"
             received.write_bytes(body)
             result = read_events(received)
@@ -624,7 +633,6 @@ class _Handler(BaseHTTPRequestHandler):
             )
             raise BatchRejected(f"malformed batch: {reason}")
 
-        base = self.server.config.data_dir
         date_dir = (
             (base / _safe_stem(product_slug) / self.server.config.date_fn())
             if product_slug is not None

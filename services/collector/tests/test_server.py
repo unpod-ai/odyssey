@@ -9,6 +9,7 @@ own assumptions about it are internally consistent.
 from __future__ import annotations
 
 import json
+import tempfile
 import threading
 import urllib.error
 import urllib.request
@@ -779,6 +780,32 @@ def test_a_bad_gzip_body_is_rejected_with_400(running):
         urllib.request.urlopen(request)
     assert exc_info.value.code == 400
     assert not stored_path(running).exists()
+
+
+def test_ingest_works_when_the_system_temp_dir_is_unusable(running, monkeypatch):
+    """A hardened deployment (systemd ``ProtectSystem=strict``) leaves /tmp
+    read-only, and the parse round-trip used to fail every POST with a 500
+    there. Scratch space belongs under ``data_dir``, the one directory this
+    service already has to be able to write to.
+    """
+    monkeypatch.setattr(tempfile, "tempdir", "/nonexistent-temp-dir")
+
+    sent = evs()
+    HttpSink(endpoint(running)).send(JID, sent, header=HEADER)
+
+    result = read_events(stored_path(running))
+    assert result.clean
+    assert result.events == sent
+
+
+def test_scratch_dirs_do_not_leak_into_the_data_dir(running):
+    """The temp dir lives under data_dir; nothing of it may survive a request,
+    since anything left behind sits beside the date partitions readers scan.
+    """
+    HttpSink(endpoint(running)).send(JID, evs(), header=HEADER)
+
+    entries = {p.name for p in running.config.data_dir.iterdir()}
+    assert entries == {FIXED_DATE}
 
 
 def test_an_uncompressed_body_is_still_accepted(running):

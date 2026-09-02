@@ -14,6 +14,10 @@ Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true
 ProtectSystem=strict
+# ProtectSystem=strict makes the whole filesystem read-only apart from the
+# ReadWritePaths below, /tmp included. PrivateTmp gives the service its own
+# writable tmpfs /tmp so any transient scratch write still has somewhere to go.
+PrivateTmp=true
 ReadWritePaths=/var/apps/odyssey/collector-data
 StandardOutput=append:/var/log/qa_odyssey_collector.out.log
 StandardError=append:/var/log/qa_odyssey_collector.err.log
