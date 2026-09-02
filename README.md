@@ -26,7 +26,7 @@ It bridges the gap between raw, active agent interactions and heavy, offline GPU
 
 ## 🔄 The Closed-Loop Architecture
 
-The flowchart below represents the high-level data-flow architecture of the Odyssey ecosystem. Connections animate to show observability inputs converging into Odyssey core and flowing downstream into training systems:
+The flowchart below represents the high-level data-flow architecture of the Odyssey ecosystem. Connections animate to show observability inputs converging into Odyssey core, landing in a data collection platform, and flowing downstream into training systems:
 
 <div align="center">
   <img src="docs/assets/pipeline.svg" width="100%" alt="Odyssey Data Flow Architecture">
@@ -34,14 +34,14 @@ The flowchart below represents the high-level data-flow architecture of the Odys
 
 ### 🏛️ Operational Pillars
 
-#### 1️⃣ Edge Telemetry & Ingest (Real-Time Ingestion)
-Active agent applications are instrumented via a lightweight, zero-dependency SDK. Production traces are spooled locally in an append-only, crash-resilient disk buffer to guarantee zero data loss. Local spools asynchronously drain to the high-throughput, multi-tenant standard-library **Collector** (`:8787`), which partitions raw bytes onto durable storage.
+#### 1️⃣ Inputs / Observability Stack
+Odyssey sits downstream of observability and runtime systems such as **metrics**, **traces**, **Langfuse**, **LangChain**, **Pipecat**, and **LiveKit**. These sources emit the raw execution signals, telemetry, and session activity that Odyssey captures and normalizes.
 
-#### 2️⃣ Trajectory Curation & Training (Batch Curation)
-Immutable raw traces undergo a programmatic **7-stage declarative pipeline** (clean ➜ normalize ➜ annotate ➜ augment ➜ validate ➜ split) to filter noise and assemble high-density datasets (such as ChatML formats). The **Soup Adapter** programmatically translates these curated datasets into validated fine-tuning configurations (`soup.yaml`) for **Unsloth**, **SFT**, **DPO**, and **GRPO** training runs.
+#### 2️⃣ Odyssey Core & Data Collection Platform
+At the center, **Odyssey** acts as the orchestration layer that receives these signals, structures them into journeys/events, and routes them into the collection layer. The platform beneath it serves as the central intake and cold/hot storage boundary, giving the rest of the stack one consistent place to read from.
 
-#### 3️⃣ Model Validation & Lineage (Offline Evaluation)
-Training checkpoints and registered metadata are published to a decoupled **Model Registry**. Models are served on top-tier serverless inference engines (such as **Baseten** or **Cerebras**), and generations are scored offline via the **Evaluation Harness** against frozen benchmarks. Analytical reports feed back into the read-only **API** (`:8000`) and the Next.js **Dashboard** (`:3000`) for continuous performance iteration.
+#### 3️⃣ Outputs / Training Stack
+Once data is collected and organized, Odyssey feeds downstream systems such as **Hugging Face**, **Unsloth**, **Bedrock**, and other custom training loops. In the broader repo, that downstream path expands into data preparation, fine-tuning config generation, evaluation, the read-only **API** (`:8000`), and the Next.js **Dashboard** (`:3000`).
 
 ---
 

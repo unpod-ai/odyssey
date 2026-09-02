@@ -53,18 +53,20 @@
     .rightCardAccent { fill: #ff9b4a; }
     .cardTitle { font-size: 24px; font-weight: 700; fill: #2a2e3b; }
     .cardSub { font-size: 16px; fill: #9aa1b2; }
-    .smallTitle { font-size: 16px; font-weight: 700; fill: #2a2e3b; }
+    .smallTitle { font-size: 18px; font-weight: 700; fill: #2a2e3b; }
     .coreLabel { font-size: 14px; font-weight: 700; letter-spacing: 2.4px; fill: #d2d5de; text-transform: uppercase; }
     .coreText { font-size: 72px; font-weight: 800; fill: #ffffff; }
     .coreSub { font-size: 18px; font-weight: 500; fill: #b9bfce; }
     .foundationTag { fill: #ffffff; stroke: #e3e5eb; stroke-width: 1.1; rx: 20; }
     .foundationTagText { font-size: 15px; font-weight: 700; fill: #72798b; letter-spacing: 0.9px; text-transform: uppercase; }
-    .platformTitle { font-size: 28px; font-weight: 800; fill: #2d313f; }
-    .platformSub { font-size: 18px; fill: #8b90a0; }
+    .platformTitle { font-size: 21px; font-weight: 800; fill: #2d313f; }
+    .platformSub { font-size: 13px; fill: #8b90a0; }
     .boxedPill { fill: #eafaf0; stroke: #bce7ca; stroke-width: 1; rx: 12; }
     .boxedText { font-size: 16px; font-weight: 800; fill: #27a167; letter-spacing: 1px; }
-    .legend { font-size: 13px; fill: #8d92a1; }
-    .footer { font-size: 14px; fill: #9aa0af; }
+    .legend { font-size: 11px; fill: #8d92a1; }
+    .footer { font-size: 12px; fill: #9aa0af; }
+    .footerChip { fill: #ffffff; stroke: #e7e6e2; stroke-width: 1.1; rx: 15; }
+    .footerChipText { font-size: 11px; fill: #9aa0af; }
     .flowLeft, .flowRight {
       fill: none;
       stroke-width: 3.2;
@@ -113,10 +115,11 @@
   <rect width="1400" height="860" fill="url(#dots)" opacity="0.7"/>
 
   <text x="700" y="74" text-anchor="middle" class="title">Odyssey - Data Flow Architecture</text>
-  <text x="700" y="106" text-anchor="middle" class="caption">Observability signals converge into odyssey core • Foundation layer stores to Data Collection Platform • Training stack consumes downstream</text>
+  <text x="700" y="106" text-anchor="middle" class="caption">Observability signals converge into odyssey core • Foundation layer stores to Data Collection</text>
+  <text x="700" y="126" text-anchor="middle" class="caption">Platform • Training stack consumes downstream</text>
 
-  <g transform="translate(338,132)">
-    <rect width="194" height="36" rx="18" class="pill"/>
+  <g transform="translate(300,132)">
+    <rect width="236" height="36" rx="18" class="pill"/>
     <circle cx="18" cy="18" r="4" fill="#4f8dff"/>
     <text x="34" y="23" class="pillText" fill="#5b7fe8">INPUTS • OBSERVABILITY</text>
   </g>
@@ -125,8 +128,8 @@
     <circle cx="18" cy="18" r="4" fill="#ffffff"/>
     <text x="34" y="23" class="pillText" fill="#ffffff">CORE • odyssey</text>
   </g>
-  <g transform="translate(758,132)">
-    <rect width="194" height="36" rx="18" class="pill"/>
+  <g transform="translate(764,132)">
+    <rect width="220" height="36" rx="18" class="pill"/>
     <circle cx="18" cy="18" r="4" fill="#ff9b4a"/>
     <text x="34" y="23" class="pillText" fill="#ee8d35">OUTPUTS • TRAINING</text>
   </g>
@@ -200,15 +203,14 @@
       <text x="28" y="57" class="cardSub">AWS Bedrock</text>
       <circle cx="236" cy="36" r="4" fill="#ffab63"/>
     </g>
-    <g transform="translate(1050,664)">
-      <rect width="258" height="72" rx="18" class="card" stroke="#ffc58e" stroke-dasharray="6 6"/>
+    <g transform="translate(1000,664)">
+      <rect width="308" height="72" rx="18" class="card" stroke="#ffc58e" stroke-dasharray="6 6"/>
       <rect x="0" y="16" width="40" height="40" rx="12" fill="#ff6f1f"/>
       <circle cx="20" cy="36" r="9" fill="#ffffff" opacity="0.2"/>
       <circle cx="20" cy="36" r="4" fill="#ffffff"/>
-      <text x="58" y="30" class="smallTitle">other data training</text>
-      <text x="58" y="49" class="smallTitle">models</text>
-      <text x="58" y="64" class="cardSub">Custom Training Loop</text>
-      <circle cx="236" cy="36" r="4" fill="#ffab63"/>
+      <text x="58" y="37" class="smallTitle">other data training models</text>
+      <text x="58" y="62" class="cardSub">Custom Training Loop</text>
+      <circle cx="286" cy="36" r="4" fill="#ffab63"/>
     </g>
   </g>
 
@@ -219,52 +221,51 @@
     <circle cx="832" cy="363" r="4" fill="#ff9b4a"/>
     <circle cx="875" cy="363" r="4" fill="#4ae18b"/>
     <text x="700" y="433" text-anchor="middle" class="coreText">odyssey</text>
-    <text x="700" y="480" text-anchor="middle" class="coreSub">Data Orchestration  •  Real-time Flow</text>
+    <text x="724" y="488" text-anchor="middle" class="coreSub">Data Orchestration  •  Real-time Flow</text>
   </g>
 
   <g transform="translate(610,548)">
-    <rect width="180" height="34" rx="17" class="foundationTag"/>
+    <rect width="210" height="34" rx="17" class="foundationTag"/>
     <circle cx="18" cy="17" r="4" fill="#33353e"/>
     <text x="32" y="22" class="foundationTagText">Foundation Layer</text>
   </g>
 
   <g class="platformFloat" filter="url(#cardShadow)">
     <rect x="500" y="584" width="400" height="124" rx="20" class="card" stroke-dasharray="4 6"/>
-    <rect x="520" y="612" width="44" height="44" rx="12" fill="#14161d"/>
-    <rect x="532" y="623" width="20" height="20" rx="4" fill="#ffffff" opacity="0.9"/>
-    <text x="585" y="628" class="platformTitle">Data Collection Platform</text>
-    <text x="585" y="657" class="platformSub">Central Intake • Cold + Hot Store</text>
-    <rect x="760" y="631" width="78" height="30" class="boxedPill"/>
-    <text x="778" y="651" class="boxedText">BOXED</text>
-    <rect x="867" y="636" width="24" height="10" rx="5" fill="#14161d"/>
+    <text x="700" y="620" text-anchor="middle" class="platformTitle">Data Collection Platform</text>
+    <text x="700" y="641" text-anchor="middle" class="platformSub">Central Intake • Cold + Hot</text>
   </g>
 
-  <path d="M350 310 C430 320, 468 355, 492 390" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
-  <path d="M350 398 C430 402, 470 398, 492 402" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
-  <path d="M350 486 C432 492, 470 434, 492 416" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
-  <path d="M350 574 C430 580, 470 468, 492 430" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
-  <path d="M350 662 C430 648, 474 518, 492 444" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
-  <path d="M350 750 C432 712, 500 560, 564 454" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
+  <path d="M350 310 C412 318, 446 344, 478 374" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
+  <path d="M350 398 C412 402, 446 396, 478 392" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
+  <path d="M350 486 C412 490, 444 444, 476 418" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
+  <path d="M350 574 C414 562, 444 486, 480 434" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
+  <path d="M350 662 C418 636, 452 536, 494 448" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
+  <path d="M350 750 C424 700, 474 588, 548 458" class="flowLeft" marker-end="url(#arrowRightBlue)"/>
 
   <path d="M908 392 C962 352, 1008 314, 1050 310" class="flowRight" marker-end="url(#arrowRightOrange)"/>
   <path d="M908 408 C968 402, 1012 424, 1050 440" class="flowRight" marker-end="url(#arrowRightOrange)"/>
   <path d="M908 426 C970 456, 1015 510, 1050 570" class="flowRight" marker-end="url(#arrowRightOrange)"/>
-  <path d="M908 440 C970 520, 1012 624, 1050 700" class="flowRight" marker-end="url(#arrowRightOrange)"/>
+  <path d="M908 440 C954 520, 980 624, 1000 700" class="flowRight" marker-end="url(#arrowRightOrange)"/>
 
   <path d="M700 708 L700 748" class="flowRight" marker-end="url(#arrowRightOrange)"/>
 
-  <circle cx="446" cy="352" r="5" class="pulseBlue"/>
-  <circle cx="468" cy="442" r="5" class="pulseBlue glowDot"/>
-  <circle cx="472" cy="554" r="5" class="pulseBlue"/>
-  <circle cx="468" cy="666" r="5" class="pulseBlue glowDot"/>
-  <circle cx="518" cy="606" r="5" class="pulseBlue"/>
+  <circle cx="432" cy="338" r="5" class="pulseBlue"/>
+  <circle cx="448" cy="430" r="5" class="pulseBlue glowDot"/>
+  <circle cx="452" cy="532" r="5" class="pulseBlue"/>
+  <circle cx="452" cy="642" r="5" class="pulseBlue glowDot"/>
+  <circle cx="492" cy="586" r="5" class="pulseBlue"/>
   <circle cx="952" cy="362" r="5" class="pulseOrange"/>
   <circle cx="980" cy="482" r="5" class="pulseOrange glowDot"/>
   <circle cx="988" cy="608" r="5" class="pulseOrange"/>
-  <circle cx="994" cy="718" r="5" class="pulseOrange glowDot"/>
+  <circle cx="962" cy="718" r="5" class="pulseOrange glowDot"/>
 
-  <text x="104" y="816" class="legend">Blue = metrics • traces • langfuse • langchain • pipecat • livekit</text>
-  <text x="444" y="816" class="legend">Black = odyssey core</text>
-  <text x="650" y="816" class="legend">Orange = hugging face • unsloth • bedrock • custom training loops</text>
-  <text x="1038" y="816" class="footer">Odyssey • Data Flow Architecture</text>
+  <text x="96" y="812" class="legend">Blue = metrics • langfuse • livekit</text>
+  <text x="356" y="812" class="legend">Black = odyssey core</text>
+  <text x="600" y="812" class="legend">Orange = hugging face • training</text>
+  <text x="930" y="804" class="footer">Odyssey • Data Flow Architecture • recreated from notes • Inter • SaaS</text>
+  <g transform="translate(1088,734)">
+    <rect width="170" height="26" class="footerChip"/>
+    <text x="85" y="18" text-anchor="middle" class="footerChipText">Real data labels from notes • v2.0</text>
+  </g>
 </svg>
