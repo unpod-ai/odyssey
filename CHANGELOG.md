@@ -8,6 +8,13 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Changed
 
+- `docs/runbooks/run-services.md` now also covers `apps/web` in
+  production (`pnpm --filter @odyssey/web build` + `next start`, its own
+  systemd unit) — previously only `services/api`/`services/collector`
+  were covered and `apps/web` was explicitly out of scope. Both commands
+  verified against this repo (`pnpm build` succeeds, `next start` serves
+  a real `200`).
+
 - **BREAKING**: `services/collector`'s `Project` auth concept renamed to
   `Product` — `--keys-file`/`ODYSSEY_COLLECTOR_KEYS_FILE` →
   `--products-file`/`ODYSSEY_COLLECTOR_PRODUCTS_FILE`, the JSON shape's

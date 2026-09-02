@@ -1,9 +1,10 @@
-# Running `services/collector` and `services/api` in production
+# Running `services/collector`, `services/api`, and `apps/web` in production
 
 Every command below was actually run against this repo before being
 written down (`gunicorn -k uvicorn.workers.UvicornWorker ...` against a
-real `services/api`, a real `.venv/bin/odyssey-collector`) — not copied
-from generic docs.
+real `services/api`, a real `.venv/bin/odyssey-collector`, a real
+`pnpm build` + `next start` for `apps/web`) — not copied from generic
+docs.
 
 ## One venv for both, built once
 
@@ -189,6 +190,59 @@ systemctl status odyssey-api
 journalctl -u odyssey-api -f
 ```
 
+## `apps/web` — Next.js dashboard
+
+Needs `services/api` reachable first (`ODYSSEY_API_BASE_URL`). Uses
+Node/pnpm, not the Python `.venv` the two services above share — build
+once, run the built output with `next start` (verified: `pnpm build`
+succeeds, `next start` serves a real `200` on the built output).
+
+```bash
+cd /opt/odyssey
+corepack enable
+pnpm install --frozen-lockfile     # root pnpm workspace: apps/web + sdk/javascript
+pnpm --filter @odyssey/web build
+```
+
+`/etc/systemd/system/odyssey-web.service`:
+
+```ini
+[Unit]
+Description=odyssey-web (dashboard)
+After=network.target odyssey-api.service
+
+[Service]
+Type=simple
+User=odyssey
+Group=odyssey
+WorkingDirectory=/opt/odyssey/apps/web
+Environment=NODE_ENV=production
+Environment=ODYSSEY_API_BASE_URL=http://127.0.0.1:8000
+ExecStart=/opt/odyssey/apps/web/node_modules/.bin/next start -p 3000
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now odyssey-web
+systemctl status odyssey-web
+journalctl -u odyssey-web -f
+```
+
+A code change means rebuilding before restarting — `next start` serves
+whatever `pnpm --filter @odyssey/web build`'s last run produced, it does
+not rebuild on its own:
+
+```bash
+cd /opt/odyssey && git pull && pnpm --filter @odyssey/web build
+sudo systemctl restart odyssey-web
+```
+
 ## After deploying: regenerate the contract if `services/api` changed
 
 If this deploy includes a `services/api` route/schema change, run
@@ -199,10 +253,12 @@ before shipping — `services/api/openapi.json` is what both SDKs and
 
 ## What this runbook does not cover
 
-`apps/web` (Next.js) and object-store-backed deployment (S3/MinIO for
-`services/collector`'s storage, a real database for `services/api`) are
-out of scope here — see each member's own README for what's actually
-built vs. deferred, and [`../COMPONENTS.md`](../COMPONENTS.md) for the
-full list of deliberate scope cuts. `infra/{docker,k8s,terraform}` has no
-concrete target yet — this runbook is the "run a real process on a real
-box" version, not a container/orchestration one.
+Object-store-backed deployment (S3/MinIO for `services/collector`'s
+storage, a real database for `services/api`) is out of scope here — see
+each member's own README for what's actually built vs. deferred, and
+[`../COMPONENTS.md`](../COMPONENTS.md) for the full list of deliberate
+scope cuts. `infra/{docker,k8s,terraform}` has no concrete target yet —
+this runbook is the "run a real process on a real box" version, not a
+container/orchestration one. `apps/web` running behind a reverse proxy
+(nginx/Caddy, TLS termination) also isn't covered — `next start` alone
+is HTTP-only on the port given.

@@ -400,10 +400,11 @@ shard data lives in an object store. Written by `data_preparation`'s
   by which process reads it), `STRUCTURE.md` (the original proposal),
   `WORKING.md` (the real item-by-item scorecard), `NEXT.md` (session
   handoff notes), `adr/` (numbered decisions),
-  `runbooks/run-services.md` (gunicorn/systemd for
-  `services/api`/`services/collector` — the one runbook this repo has;
-  the rest of `docs/STRUCTURE.md`'s named runbooks stay unwritten, no
-  concrete backfill/release process exists yet).
+  `runbooks/run-services.md` (gunicorn/uvicorn/systemd for
+  `services/api`/`services/collector`, `next build`+`next start`/systemd
+  for `apps/web` — the one runbook this repo has; the rest of
+  `docs/STRUCTURE.md`'s named runbooks stay unwritten, no concrete
+  backfill/release process exists yet).
 - `infra/`, `openspec/` — scaffolding; no concrete deployment target yet
   (no k8s/terraform in use, no accepted `openspec` change proposals).
 
