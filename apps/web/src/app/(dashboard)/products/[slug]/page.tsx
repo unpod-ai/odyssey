@@ -5,13 +5,17 @@ import { DataTable } from "@/components/DataTable";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/Card";
 import { Badge } from "@/components/Badge";
+import { TableFilters } from "@/components/TableFilters";
 import { distinctProjects } from "@/lib/projects";
 import type { JourneySummaryOut, MetricsSnapshotOut, ProductOut } from "@odyssey/sdk";
 
 export default async function ProductDetailPage({
   params,
+  searchParams,
 }: PageProps<"/products/[slug]">) {
   const { slug } = await params;
+  const { project } = await searchParams;
+  const projectFilter = typeof project === "string" ? project : "";
   const client = apiClient();
 
   let products: ProductOut[] = [];
@@ -61,13 +65,16 @@ export default async function ProductDetailPage({
   }
 
   const projects = distinctProjects(snapshots);
+  const filteredSnapshots = projectFilter
+    ? snapshots.filter((m) => m.project === projectFilter)
+    : snapshots;
 
   return (
     <div>
       <PageHeader title={product.name} description={`Slug: ${product.slug}`} />
       <div className="stat-grid">
         <StatCard label="Journeys" value={journeys.length} />
-        <StatCard label="Metrics snapshots" value={snapshots.length} />
+        <StatCard label="Metrics snapshots" value={filteredSnapshots.length} />
         <StatCard label="Projects" value={projects.length} />
       </div>
 
@@ -75,9 +82,9 @@ export default async function ProductDetailPage({
       {projects.length ? (
         <div className="badge-list">
           {projects.map((p) => (
-            <Badge key={p} variant="neutral">
-              {p}
-            </Badge>
+            <Link key={p} href={`/products/${encodeURIComponent(slug)}?project=${encodeURIComponent(p)}`}>
+              <Badge variant={p === projectFilter ? "success" : "neutral"}>{p}</Badge>
+            </Link>
           ))}
         </div>
       ) : (
@@ -109,8 +116,18 @@ export default async function ProductDetailPage({
       />
 
       <h2>Metrics</h2>
+      <TableFilters
+        fields={[
+          {
+            key: "project",
+            label: "Project",
+            value: projectFilter,
+            options: projects.map((p) => ({ value: p, label: p })),
+          },
+        ]}
+      />
       <DataTable
-        rows={snapshots}
+        rows={filteredSnapshots}
         keyFor={(m) => `${m.hostname}-${m.ts}`}
         emptyLabel="No metrics snapshots yet for this product."
         columns={[

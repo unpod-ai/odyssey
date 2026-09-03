@@ -3,19 +3,24 @@ import { apiClient } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/Badge";
-import { ProductFilterNote } from "@/components/ProductFilter";
-import type { JourneySummaryOut } from "@odyssey/sdk";
+import { TableFilters } from "@/components/TableFilters";
+import type { JourneySummaryOut, ProductOut } from "@odyssey/sdk";
 
 export default async function JourneysPage({
   searchParams,
 }: PageProps<"/journeys">) {
   const { product } = await searchParams;
-  const productFilter = typeof product === "string" ? product : undefined;
+  const productFilter = typeof product === "string" ? product : "";
 
   let journeys: JourneySummaryOut[] = [];
+  let products: ProductOut[] = [];
   let error: string | null = null;
   try {
-    journeys = await apiClient().journeys.list({ product: productFilter });
+    const client = apiClient();
+    [journeys, products] = await Promise.all([
+      client.journeys.list({ product: productFilter || undefined }),
+      client.products.list(),
+    ]);
   } catch (err) {
     error = (err as Error).message;
   }
@@ -32,7 +37,16 @@ export default async function JourneysPage({
   return (
     <div>
       <PageHeader title="Journeys" description="Ingested agent journeys and their steps." />
-      {productFilter && <ProductFilterNote basePath="/journeys" product={productFilter} />}
+      <TableFilters
+        fields={[
+          {
+            key: "product",
+            label: "Product",
+            value: productFilter,
+            options: products.map((p) => ({ value: p.slug, label: p.name })),
+          },
+        ]}
+      />
       <DataTable
         title="Journeys"
         rows={journeys}

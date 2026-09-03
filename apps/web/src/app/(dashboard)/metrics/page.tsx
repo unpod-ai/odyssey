@@ -2,20 +2,27 @@ import { apiClient } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/Card";
-import { ProductFilterNote } from "@/components/ProductFilter";
+import { TableFilters } from "@/components/TableFilters";
 import { MetricsChart } from "@/components/MetricsChart";
-import type { MetricsSnapshotOut } from "@odyssey/sdk";
+import { distinctProjects } from "@/lib/projects";
+import type { MetricsSnapshotOut, ProductOut } from "@odyssey/sdk";
 
 export default async function MetricsPage({
   searchParams,
 }: PageProps<"/metrics">) {
-  const { product } = await searchParams;
-  const productFilter = typeof product === "string" ? product : undefined;
+  const { product, project } = await searchParams;
+  const productFilter = typeof product === "string" ? product : "";
+  const projectFilter = typeof project === "string" ? project : "";
 
   let snapshots: MetricsSnapshotOut[] = [];
+  let products: ProductOut[] = [];
   let error: string | null = null;
   try {
-    snapshots = await apiClient().metrics.list({ product: productFilter });
+    const client = apiClient();
+    [snapshots, products] = await Promise.all([
+      client.metrics.list({ product: productFilter || undefined }),
+      client.products.list(),
+    ]);
   } catch (err) {
     error = (err as Error).message;
   }
@@ -29,17 +36,25 @@ export default async function MetricsPage({
     );
   }
 
-  const hosts = new Set(snapshots.map((m) => m.hostname)).size;
-  const projects = new Set(snapshots.map((m) => m.project).filter((p): p is string => !!p)).size;
-  const latest = snapshots.length
-    ? snapshots.reduce((a, b) => (a.ts > b.ts ? a : b))
+  // `project` is a free-text tag, not a directory-scoped concept like
+  // `product` (see lib/projects.ts) -- services/api has no `?project=` to
+  // filter by server-side, so this narrows the already-fetched list.
+  const projectOptions = distinctProjects(snapshots);
+  const filteredSnapshots = projectFilter
+    ? snapshots.filter((m) => m.project === projectFilter)
+    : snapshots;
+
+  const hosts = new Set(filteredSnapshots.map((m) => m.hostname)).size;
+  const projects = new Set(filteredSnapshots.map((m) => m.project).filter((p): p is string => !!p)).size;
+  const latest = filteredSnapshots.length
+    ? filteredSnapshots.reduce((a, b) => (a.ts > b.ts ? a : b))
     : null;
 
   // One card per reporting host — a flat table of every snapshot became
   // unreadable once more than one machine was reporting, since the same
   // hostname/IP repeated down the hostname column instead of grouping.
   const hostGroups = new Map<string, MetricsSnapshotOut[]>();
-  for (const m of snapshots) {
+  for (const m of filteredSnapshots) {
     const list = hostGroups.get(m.hostname) ?? [];
     list.push(m);
     hostGroups.set(m.hostname, list);
@@ -49,9 +64,24 @@ export default async function MetricsPage({
   return (
     <div>
       <PageHeader title="Metrics" description="Host metrics reported by the collector." />
-      {productFilter && <ProductFilterNote basePath="/metrics" product={productFilter} />}
+      <TableFilters
+        fields={[
+          {
+            key: "product",
+            label: "Product",
+            value: productFilter,
+            options: products.map((p) => ({ value: p.slug, label: p.name })),
+          },
+          {
+            key: "project",
+            label: "Project",
+            value: projectFilter,
+            options: projectOptions.map((p) => ({ value: p, label: p })),
+          },
+        ]}
+      />
       <div className="stat-grid">
-        <StatCard label="Snapshots" value={snapshots.length} />
+        <StatCard label="Snapshots" value={filteredSnapshots.length} />
         <StatCard label="Hosts reporting" value={hosts} />
         <StatCard label="Projects" value={projects} sub="distinct project tags seen" />
         <StatCard label="Latest snapshot" value={latest?.ts ?? "—"} sub={latest?.hostname} />
@@ -67,7 +97,7 @@ export default async function MetricsPage({
           }
         />
       </div>
-      <MetricsChart snapshots={snapshots} />
+      <MetricsChart snapshots={filteredSnapshots} />
 
       {sortedHosts.length === 0 && (
         <p className="empty">No metrics snapshots yet — see `ODYSSEY_COLLECT_METRICS`.</p>
