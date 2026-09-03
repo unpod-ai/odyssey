@@ -119,6 +119,21 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Added
 
+- **`odyssey-collector --add-product-file`** — growing an already-running,
+  product-scoped deployment's roster previously meant hand-editing the
+  `--products-file` JSON on the box. New `_add_product` appends a product
+  (a fresh `secrets.token_urlsafe(32)` `api_key`, same generation `--init-
+  products-file` uses) to an existing roster, refuses a `slug` already
+  present, and refuses to run at all if the file doesn't exist yet
+  (bootstrapping stays `--init-products-file`'s explicit job, not an
+  implicit side effect here). Mirrors `--init-products-file`'s CLI shape
+  exactly — prints the new key once, doesn't start the server, no
+  `ODYSSEY_COLLECTOR_*` env var equivalent (same one-shot-action
+  reasoning). New tests cover append, duplicate-slug rejection, and
+  missing-roster rejection; verified end to end against a real CLI
+  process (init → add → duplicate rejected → missing-file rejected, all
+  matching documented behavior).
+
 - **`services/collector` opt-in per-request access logging** —
   `_Handler.log_message` was a hardcoded no-op (deliberately quiet
   stdout), with no way to see individual requests short of editing code.

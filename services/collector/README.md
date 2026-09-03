@@ -75,9 +75,24 @@ odyssey-collector --init-products-file ./collector-products.json \
 
 Writes one product with a fresh `secrets.token_urlsafe(32)` `api_key` —
 a real secret, not a placeholder — and prints it once. Refuses to
-overwrite an existing file. Add more products by editing the file
-directly (same as any other products-file edit — restart the server to
-pick it up).
+overwrite an existing file.
+
+### Adding a product to an already-running deployment
+
+`--add-product-file` appends to an existing roster the same way
+`--init-products-file` bootstraps a new one — a fresh random `api_key`,
+printed once, refuses a `slug` already present in the roster:
+
+```bash
+odyssey-collector --add-product-file ./collector-products.json \
+  --product-slug globex --product-name "Globex Inc"
+```
+
+Requires the file to already exist (bootstrap one with
+`--init-products-file` first) and does not start the server — restart the
+running collector afterwards to pick up the new product, same as any
+other products-file edit (the roster loads once at process start, not
+live).
 
 Each product's key writes into its own `<data_dir>/<slug>/<date>/` partition
 — isolation is structural (one caller's key can never resolve into another

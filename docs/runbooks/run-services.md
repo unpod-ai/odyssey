@@ -120,14 +120,32 @@ sudo systemctl restart odyssey-collector
 journalctl -u odyssey-collector -n 20   # confirm it started clean, not a FileNotFoundError
 ```
 
-**`--init-products-file`/`--product-slug`/`--product-name` have no
-`ODYSSEY_COLLECTOR_*` env var equivalent, deliberately.** They're a
-one-shot bootstrap action, not persistent server config — giving them an
-env var would mean a stray `Environment=` line in the unit file makes
-every `Restart=on-failure` restart re-run the bootstrap instead of
-serving (and since the file already exists after the first run, it would
-just exit 1 and restart-loop forever). Run it once, by hand, separately
-from `serve`.
+**`--init-products-file`/`--add-product-file`/`--product-slug`/
+`--product-name` have no `ODYSSEY_COLLECTOR_*` env var equivalent,
+deliberately.** They're one-shot bootstrap/roster-edit actions, not
+persistent server config — giving them an env var would mean a stray
+`Environment=` line in the unit file makes every `Restart=on-failure`
+restart re-run the action instead of serving (and since the target
+condition — file missing, or slug absent — is already satisfied after the
+first run, it would just exit 1 and restart-loop forever). Run each once,
+by hand, separately from `serve`.
+
+### Adding a product to an already-running deployment
+
+Once product-scoped mode is live, add a new tenant with `--add-product-file`
+instead of hand-editing the roster JSON on the box:
+
+```bash
+sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
+  --add-product-file /etc/odyssey/collector-products.json \
+  --product-slug globex --product-name "Globex Inc"
+sudo systemctl restart odyssey-collector   # the roster loads once at startup, not live
+journalctl -u odyssey-collector -n 20      # confirm it started clean
+```
+
+Prints the new `api_key` once, same as `--init-products-file`. Refuses a
+`slug` already present in the roster, and refuses to run at all if the
+file doesn't exist yet (bootstrap it with `--init-products-file` first).
 
 Every other collector CLI flag (`--host`/`--port`/`--data-dir`/
 `--api-key`/`--products-file`/`--timezone`) has an `ODYSSEY_COLLECTOR_*`

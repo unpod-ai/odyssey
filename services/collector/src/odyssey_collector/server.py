@@ -302,6 +302,40 @@ def _init_products_file(path: Path | str, slug: str, name: str) -> Product:
     return product
 
 
+def _add_product(path: Path | str, slug: str, name: str) -> Product:
+    """Append a new product to an already-bootstrapped ``--products-file``
+    roster (``odyssey-collector --add-product-file``, never a side effect
+    of a normal ``serve`` startup) -- growing an already-running
+    deployment's roster without hand-editing JSON on the box.
+
+    Requires the file to already exist and parse as a valid roster
+    (:func:`_load_products_file`'s own checks apply) -- creating one from
+    scratch is deliberately left to ``--init-products-file``, the explicit,
+    documented bootstrap path, rather than silently branching into two
+    different "roster didn't exist" behaviours here.
+    """
+    path = Path(path)
+    existing = _load_products_file(path)
+    if any(p.slug == slug for p in existing):
+        raise ValueError(f"{path}: a product with slug {slug!r} already exists")
+
+    product = Product(slug=slug, name=name, api_key=secrets.token_urlsafe(32))
+    updated = existing + (product,)
+    path.write_text(
+        json.dumps(
+            {
+                "products": [
+                    {"slug": p.slug, "name": p.name, "api_key": p.api_key}
+                    for p in updated
+                ]
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    return product
+
+
 class BatchRejected(ValueError):
     """A posted batch parsed but wasn't a clean, well-formed odyssey stream."""
 
@@ -729,14 +763,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--product-slug/--product-name",
     )
     parser.add_argument(
+        "--add-product-file",
+        default=None,
+        metavar="PATH",
+        help="add a new product (--product-slug/--product-name, a fresh "
+        "random api_key) to the existing --products-file roster at PATH "
+        "and exit -- does not start the server. Requires PATH to already "
+        "exist (bootstrap one first with --init-products-file). Refuses a "
+        "slug already present in the roster",
+    )
+    parser.add_argument(
         "--product-slug",
         default="default",
-        help="with --init-products-file (default: default)",
+        help="with --init-products-file/--add-product-file (default: default)",
     )
     parser.add_argument(
         "--product-name",
         default="Default",
-        help="with --init-products-file (default: Default)",
+        help="with --init-products-file/--add-product-file (default: Default)",
     )
     parser.add_argument(
         "--debug",
@@ -761,6 +805,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(
             f"save this key now -- it will not be printed again "
             f"(it's also in {args.init_products_file} in plaintext)",
+            file=sys.stderr,
+        )
+        return 0
+
+    if args.add_product_file is not None:
+        try:
+            product = _add_product(
+                args.add_product_file, args.product_slug, args.product_name
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"updated {args.add_product_file}")
+        print(f"product: slug={product.slug!r} name={product.name!r}")
+        print(f"api_key={product.api_key}")
+        print(
+            f"save this key now -- it will not be printed again "
+            f"(it's also in {args.add_product_file} in plaintext). Restart "
+            f"the running collector to pick it up.",
             file=sys.stderr,
         )
         return 0

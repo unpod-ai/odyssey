@@ -23,6 +23,7 @@ from odyssey.sinks import HttpSinkError
 from odyssey_collector.server import (
     CollectorConfig,
     Product,
+    _add_product,
     _init_products_file,
     _safe_stem,
     resolve_config,
@@ -486,6 +487,45 @@ def test_init_products_file_generates_a_different_key_each_time(tmp_path):
     a = _init_products_file(tmp_path / "a.json", slug="acme", name="Acme")
     b = _init_products_file(tmp_path / "b.json", slug="acme", name="Acme")
     assert a.api_key != b.api_key
+
+
+def test_add_product_appends_to_an_existing_roster(tmp_path):
+    """`odyssey-collector --add-product-file` -- growing an already-running
+    deployment's roster without hand-editing JSON on the box."""
+    path = tmp_path / "keys.json"
+    first = _init_products_file(path, slug="acme", name="Acme Corp")
+
+    added = _add_product(path, slug="globex", name="Globex Corp")
+
+    assert added.slug == "globex"
+    assert added.name == "Globex Corp"
+    assert len(added.api_key) >= 32  # a real secret, not a short placeholder
+    assert added.api_key != first.api_key
+
+    config = resolve_config(data_dir=tmp_path / "data", products_file=path)
+    assert config.products == (first, added)
+
+
+def test_add_product_refuses_a_duplicate_slug(tmp_path):
+    path = tmp_path / "keys.json"
+    first = _init_products_file(path, slug="acme", name="Acme Corp")
+
+    with pytest.raises(ValueError, match="acme"):
+        _add_product(path, slug="acme", name="Acme Again")
+
+    # the real roster on disk must be untouched by the failed call
+    config = resolve_config(data_dir=tmp_path / "data", products_file=path)
+    assert config.products == (first,)
+
+
+def test_add_product_requires_an_existing_roster(tmp_path):
+    """Refuses to create a roster from scratch -- that's --init-products-file's
+    job, and creating one implicitly here would silently pick a different
+    failure mode (an accidental single-product roster) than the explicit,
+    documented bootstrap path."""
+    path = tmp_path / "does-not-exist.json"
+    with pytest.raises(FileNotFoundError):
+        _add_product(path, slug="acme", name="Acme Corp")
 
 
 def test_a_slug_cannot_traverse_out_of_data_dir(tmp_path):
