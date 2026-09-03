@@ -6,11 +6,6 @@ import { Badge } from "@/components/Badge";
 import { ProductFilterNote } from "@/components/ProductFilter";
 import type { JourneySummaryOut } from "@odyssey/sdk";
 
-// Journeys land continuously (services/collector ingests in real time), so
-// this page must hit services/api on every request rather than serve the
-// `next build`-time snapshot the default static prerender would freeze in.
-export const dynamic = "force-dynamic";
-
 export default async function JourneysPage({
   searchParams,
 }: PageProps<"/journeys">) {

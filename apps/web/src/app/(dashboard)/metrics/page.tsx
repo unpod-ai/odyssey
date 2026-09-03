@@ -6,11 +6,6 @@ import { ProductFilterNote } from "@/components/ProductFilter";
 import { MetricsChart } from "@/components/MetricsChart";
 import type { MetricsSnapshotOut } from "@odyssey/sdk";
 
-// Snapshots land continuously (services/collector's POST /metrics), so this
-// page must hit services/api on every request rather than serve the
-// `next build`-time snapshot the default static prerender would freeze in.
-export const dynamic = "force-dynamic";
-
 export default async function MetricsPage({
   searchParams,
 }: PageProps<"/metrics">) {
