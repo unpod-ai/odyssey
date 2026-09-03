@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Nav } from "@/components/Nav";
+import { Sidebar } from "@/components/Sidebar";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -11,8 +11,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en">
       <body>
-        <Nav />
-        <main>{children}</main>
+        <div className="shell">
+          <Sidebar />
+          <main>{children}</main>
+        </div>
       </body>
     </html>
   );

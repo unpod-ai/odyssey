@@ -22,23 +22,27 @@ export function DataTable<T>({
     return <p className="empty">{emptyLabel}</p>;
   }
   return (
-    <table>
-      <thead>
-        <tr>
-          {columns.map((col) => (
-            <th key={col.header}>{col.header}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row) => (
-          <tr key={keyFor(row)}>
-            {columns.map((col) => (
-              <td key={col.header}>{col.render(row)}</td>
+    <div className="card table-card">
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              {columns.map((col) => (
+                <th key={col.header}>{col.header}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={keyFor(row)}>
+                {columns.map((col) => (
+                  <td key={col.header}>{col.render(row)}</td>
+                ))}
+              </tr>
             ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }

@@ -1,5 +1,6 @@
 import { apiClient } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
+import { PageHeader } from "@/components/PageHeader";
 import type { ExportArtifactOut } from "@odyssey/sdk";
 
 export default async function ExportsPage() {
@@ -12,12 +13,17 @@ export default async function ExportsPage() {
   }
 
   if (error) {
-    return <p className="error">Failed to load exports: {error}</p>;
+    return (
+      <div>
+        <PageHeader title="Exports" description="SFT/DPO export shards." />
+        <p className="error">Failed to load exports: {error}</p>
+      </div>
+    );
   }
 
   return (
     <div>
-      <h1>Exports</h1>
+      <PageHeader title="Exports" description="SFT/DPO export shards." />
       <DataTable
         rows={exportsList}
         keyFor={(e) => e.path}

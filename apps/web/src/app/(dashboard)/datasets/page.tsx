@@ -1,5 +1,6 @@
 import { apiClient } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
+import { PageHeader } from "@/components/PageHeader";
 import type { DatasetOut } from "@odyssey/sdk";
 
 export default async function DatasetsPage() {
@@ -12,12 +13,17 @@ export default async function DatasetsPage() {
   }
 
   if (error) {
-    return <p className="error">Failed to load datasets: {error}</p>;
+    return (
+      <div>
+        <PageHeader title="Datasets" description="Registered datasets and their versions." />
+        <p className="error">Failed to load datasets: {error}</p>
+      </div>
+    );
   }
 
   return (
     <div>
-      <h1>Datasets</h1>
+      <PageHeader title="Datasets" description="Registered datasets and their versions." />
       <DataTable
         rows={datasets}
         keyFor={(d) => d.name}

@@ -1,0 +1,18 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Odyssey">
+  <defs>
+    <linearGradient id="odyssey-mark-grad" x1="6" y1="6" x2="42" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#14e8c4"/>
+    </linearGradient>
+  </defs>
+  <circle
+    cx="24" cy="24" r="16"
+    fill="none"
+    stroke="url(#odyssey-mark-grad)"
+    stroke-width="5"
+    stroke-linecap="round"
+    stroke-dasharray="23.51 10"
+    transform="rotate(-90 24 24)"
+  />
+  <circle cx="24" cy="8" r="4" fill="url(#odyssey-mark-grad)"/>
+</svg>

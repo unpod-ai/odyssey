@@ -1,5 +1,6 @@
 import { apiClient } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
+import { PageHeader } from "@/components/PageHeader";
 import type { ModelOut } from "@odyssey/sdk";
 
 export default async function ModelsPage() {
@@ -12,12 +13,17 @@ export default async function ModelsPage() {
   }
 
   if (error) {
-    return <p className="error">Failed to load models: {error}</p>;
+    return (
+      <div>
+        <PageHeader title="Models" description="Registered models and base checkpoints." />
+        <p className="error">Failed to load models: {error}</p>
+      </div>
+    );
   }
 
   return (
     <div>
-      <h1>Models</h1>
+      <PageHeader title="Models" description="Registered models and base checkpoints." />
       <DataTable
         rows={models}
         keyFor={(m) => m.name}

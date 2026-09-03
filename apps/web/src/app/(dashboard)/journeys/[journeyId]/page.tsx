@@ -1,5 +1,8 @@
 import { notFound } from "next/navigation";
 import { apiClient, OdysseyAPINotFoundError } from "@/lib/api";
+import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/Card";
+import { Badge } from "@/components/Badge";
 import type { JourneyDetailOut } from "@odyssey/sdk";
 
 async function loadJourney(journeyId: string): Promise<JourneyDetailOut> {
@@ -21,36 +24,49 @@ export default async function JourneyDetailPage({
 
   return (
     <div>
-      <h1>{journey.journey_id}</h1>
-      <p>Complete: {journey.complete ? "yes" : "no"}</p>
-      {journey.incomplete_reason && <p>Reason: {journey.incomplete_reason}</p>}
-      <h2>Metrics</h2>
-      <ul>
-        <li>steps: {journey.metrics.steps ?? "—"}</li>
-        <li>aggregated_reward: {journey.metrics.aggregated_reward ?? "—"}</li>
-        <li>num_tool_calls: {journey.metrics.num_tool_calls ?? "—"}</li>
-        <li>num_tool_failures: {journey.metrics.num_tool_failures ?? "—"}</li>
-        <li>tool_error_rate: {journey.metrics.tool_error_rate ?? "—"}</li>
-      </ul>
+      <PageHeader
+        title={journey.journey_id}
+        description={journey.incomplete_reason ? `Incomplete: ${journey.incomplete_reason}` : undefined}
+      />
+      <div className="stat-grid">
+        <StatCard
+          label="Status"
+          value={
+            <Badge variant={journey.complete ? "success" : "neutral"}>
+              {journey.complete ? "complete" : "incomplete"}
+            </Badge>
+          }
+        />
+        <StatCard label="Steps" value={journey.metrics.steps ?? "—"} />
+        <StatCard label="Aggregated reward" value={journey.metrics.aggregated_reward ?? "—"} />
+        <StatCard label="Tool calls" value={journey.metrics.num_tool_calls ?? "—"} />
+        <StatCard label="Tool failures" value={journey.metrics.num_tool_failures ?? "—"} />
+        <StatCard label="Tool error rate" value={journey.metrics.tool_error_rate ?? "—"} />
+      </div>
+
       <h2>Steps ({journey.steps.length})</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Trainable status</th>
-            <th>Messages</th>
-          </tr>
-        </thead>
-        <tbody>
-          {journey.steps.map((step) => (
-            <tr key={step.index}>
-              <td>{step.index}</td>
-              <td>{step.trainable_status}</td>
-              <td>{step.message_count}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="card table-card">
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Trainable status</th>
+                <th>Messages</th>
+              </tr>
+            </thead>
+            <tbody>
+              {journey.steps.map((step) => (
+                <tr key={step.index}>
+                  <td>{step.index}</td>
+                  <td>{step.trainable_status}</td>
+                  <td>{step.message_count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

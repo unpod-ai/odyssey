@@ -1,5 +1,6 @@
 import { apiClient } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
+import { PageHeader } from "@/components/PageHeader";
 import type { EvalRunOut } from "@odyssey/sdk";
 
 export default async function RunsPage() {
@@ -12,12 +13,17 @@ export default async function RunsPage() {
   }
 
   if (error) {
-    return <p className="error">Failed to load eval runs: {error}</p>;
+    return (
+      <div>
+        <PageHeader title="Eval runs" description="Benchmark scores from `odyssey eval run`." />
+        <p className="error">Failed to load eval runs: {error}</p>
+      </div>
+    );
   }
 
   return (
     <div>
-      <h1>Eval runs</h1>
+      <PageHeader title="Eval runs" description="Benchmark scores from `odyssey eval run`." />
       <DataTable
         rows={runs}
         keyFor={(r) => r.report_path}
