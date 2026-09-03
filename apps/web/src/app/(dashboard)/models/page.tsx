@@ -25,15 +25,17 @@ export default async function ModelsPage() {
     <div>
       <PageHeader title="Models" description="Registered models and base checkpoints." />
       <DataTable
+        title="Models"
         rows={models}
         keyFor={(m) => m.name}
         emptyLabel="No models registered yet."
         columns={[
-          { header: "Name", render: (m) => m.name },
-          { header: "Versions", render: (m) => m.versions.length },
+          { header: "Name", render: (m) => m.name, sortValue: (m) => m.name },
+          { header: "Versions", render: (m) => m.versions.length, sortValue: (m) => m.versions.length },
           {
             header: "Latest base model",
             render: (m) => m.versions.at(-1)?.base_model ?? "—",
+            sortValue: (m) => m.versions.at(-1)?.base_model ?? null,
           },
         ]}
       />

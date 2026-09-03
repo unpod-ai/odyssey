@@ -3,6 +3,7 @@ import { apiClient, OdysseyAPINotFoundError } from "@/lib/api";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/Card";
 import { Badge } from "@/components/Badge";
+import { DataTable } from "@/components/DataTable";
 import type { JourneyDetailOut } from "@odyssey/sdk";
 
 async function loadJourney(journeyId: string): Promise<JourneyDetailOut> {
@@ -44,29 +45,21 @@ export default async function JourneyDetailPage({
         <StatCard label="Tool error rate" value={journey.metrics.tool_error_rate ?? "—"} />
       </div>
 
-      <h2>Steps ({journey.steps.length})</h2>
-      <div className="card table-card">
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Trainable status</th>
-                <th>Messages</th>
-              </tr>
-            </thead>
-            <tbody>
-              {journey.steps.map((step) => (
-                <tr key={step.index}>
-                  <td>{step.index}</td>
-                  <td>{step.trainable_status}</td>
-                  <td>{step.message_count}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <DataTable
+        title={`Steps (${journey.steps.length})`}
+        rows={journey.steps}
+        keyFor={(step) => String(step.index)}
+        emptyLabel="This journey has no recorded steps."
+        columns={[
+          { header: "#", render: (step) => step.index, sortValue: (step) => step.index },
+          {
+            header: "Trainable status",
+            render: (step) => step.trainable_status,
+            sortValue: (step) => step.trainable_status,
+          },
+          { header: "Messages", render: (step) => step.message_count, sortValue: (step) => step.message_count },
+        ]}
+      />
     </div>
   );
 }

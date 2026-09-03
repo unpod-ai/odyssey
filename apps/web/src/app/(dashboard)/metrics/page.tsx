@@ -35,6 +35,17 @@ export default async function MetricsPage({
     ? snapshots.reduce((a, b) => (a.ts > b.ts ? a : b))
     : null;
 
+  // One card per reporting host — a flat table of every snapshot became
+  // unreadable once more than one machine was reporting, since the same
+  // hostname/IP repeated down the hostname column instead of grouping.
+  const hostGroups = new Map<string, MetricsSnapshotOut[]>();
+  for (const m of snapshots) {
+    const list = hostGroups.get(m.hostname) ?? [];
+    list.push(m);
+    hostGroups.set(m.hostname, list);
+  }
+  const sortedHosts = [...hostGroups.keys()].sort((a, b) => a.localeCompare(b));
+
   return (
     <div>
       <PageHeader title="Metrics" description="Host metrics reported by the collector." />
@@ -57,26 +68,51 @@ export default async function MetricsPage({
         />
       </div>
       <MetricsChart snapshots={snapshots} />
-      <DataTable
-        rows={snapshots}
-        keyFor={(m) => `${m.hostname}-${m.ts}`}
-        emptyLabel="No metrics snapshots yet — see `ODYSSEY_COLLECT_METRICS`."
-        columns={[
-          { header: "Timestamp", render: (m) => m.ts },
-          { header: "Hostname", render: (m) => m.hostname },
-          { header: "OS", render: (m) => m.os },
-          { header: "CPUs", render: (m) => m.cpu_count ?? "—" },
-          {
-            header: "Disk free / total",
-            render: (m) =>
-              m.disk_free_bytes != null && m.disk_total_bytes != null
-                ? `${(m.disk_free_bytes / 1e9).toFixed(1)} / ${(m.disk_total_bytes / 1e9).toFixed(1)} GB`
-                : "—",
-          },
-          { header: "Project", render: (m) => m.project ?? "—" },
-          { header: "Public IP", render: (m) => m.public_ip ?? "—" },
-        ]}
-      />
+
+      {sortedHosts.length === 0 && (
+        <p className="empty">No metrics snapshots yet — see `ODYSSEY_COLLECT_METRICS`.</p>
+      )}
+
+      {sortedHosts.map((hostname) => {
+        const rows = hostGroups
+          .get(hostname)!
+          .slice()
+          .sort((a, b) => b.ts.localeCompare(a.ts));
+        const latestForHost = rows[0];
+        return (
+          <div key={hostname} className="host-group">
+            <div className="host-group-header">
+              <span className="host-group-name mono">{hostname}</span>
+              <span className="host-group-meta">
+                <span className="host-group-chip">{latestForHost.os ?? "unknown OS"}</span>
+                {latestForHost.cpu_count != null && (
+                  <span className="host-group-chip">{latestForHost.cpu_count} CPUs</span>
+                )}
+                {latestForHost.public_ip && (
+                  <span className="host-group-chip mono">{latestForHost.public_ip}</span>
+                )}
+              </span>
+            </div>
+            <DataTable
+              rows={rows}
+              keyFor={(m) => `${m.hostname}-${m.ts}`}
+              emptyLabel="No snapshots for this host."
+              columns={[
+                { header: "Timestamp", render: (m) => m.ts, sortValue: (m) => m.ts },
+                {
+                  header: "Disk free / total",
+                  render: (m) =>
+                    m.disk_free_bytes != null && m.disk_total_bytes != null
+                      ? `${(m.disk_free_bytes / 1e9).toFixed(1)} / ${(m.disk_total_bytes / 1e9).toFixed(1)} GB`
+                      : "—",
+                  sortValue: (m) => m.disk_free_bytes ?? null,
+                },
+                { header: "Project", render: (m) => m.project ?? "—", sortValue: (m) => m.project ?? null },
+              ]}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -39,6 +39,7 @@ export default async function ProductsPage() {
         description="Registered tenants (`services/collector --products-file` roster). Only populated in a multi-product deployment."
       />
       <DataTable
+        title="Products"
         rows={products}
         keyFor={(p) => p.slug}
         emptyLabel="No products configured — this is a single-tenant deployment, or ODYSSEY_API_PRODUCTS_FILE is unset."
@@ -46,9 +47,14 @@ export default async function ProductsPage() {
           {
             header: "Name",
             render: (p) => <Link href={`/products/${encodeURIComponent(p.slug)}`}>{p.name}</Link>,
+            sortValue: (p) => p.name,
           },
-          { header: "Slug", render: (p) => p.slug },
-          { header: "Projects", render: (p) => projectCounts[p.slug] ?? 0 },
+          { header: "Slug", render: (p) => p.slug, sortValue: (p) => p.slug },
+          {
+            header: "Projects",
+            render: (p) => projectCounts[p.slug] ?? 0,
+            sortValue: (p) => projectCounts[p.slug] ?? 0,
+          },
           {
             header: "Journeys",
             render: (p) => (

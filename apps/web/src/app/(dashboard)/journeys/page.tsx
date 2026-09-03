@@ -34,18 +34,25 @@ export default async function JourneysPage({
       <PageHeader title="Journeys" description="Ingested agent journeys and their steps." />
       {productFilter && <ProductFilterNote basePath="/journeys" product={productFilter} />}
       <DataTable
+        title="Journeys"
         rows={journeys}
         keyFor={(j) => j.journey_id}
         emptyLabel="No journeys yet."
         columns={[
           {
             header: "Journey ID",
-            render: (j) => <Link href={`/journeys/${encodeURIComponent(j.journey_id)}`}>{j.journey_id}</Link>,
+            render: (j) => (
+              <Link href={`/journeys/${encodeURIComponent(j.journey_id)}`} className="mono">
+                {j.journey_id}
+              </Link>
+            ),
+            sortValue: (j) => j.journey_id,
           },
-          { header: "Date", render: (j) => j.date },
+          { header: "Date", render: (j) => j.date, sortValue: (j) => j.date },
           {
             header: "Complete",
             render: (j) => <Badge variant={j.complete ? "success" : "neutral"}>{j.complete ? "yes" : "no"}</Badge>,
+            sortValue: (j) => (j.complete ? 1 : 0),
           },
         ]}
       />

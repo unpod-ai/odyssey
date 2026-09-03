@@ -25,15 +25,17 @@ export default async function DatasetsPage() {
     <div>
       <PageHeader title="Datasets" description="Registered datasets and their versions." />
       <DataTable
+        title="Datasets"
         rows={datasets}
         keyFor={(d) => d.name}
         emptyLabel="No datasets registered yet."
         columns={[
-          { header: "Name", render: (d) => d.name },
-          { header: "Versions", render: (d) => d.versions.length },
+          { header: "Name", render: (d) => d.name, sortValue: (d) => d.name },
+          { header: "Versions", render: (d) => d.versions.length, sortValue: (d) => d.versions.length },
           {
             header: "Latest",
             render: (d) => (d.versions.length ? `v${Math.max(...d.versions.map((v) => v.version))}` : "—"),
+            sortValue: (d) => (d.versions.length ? Math.max(...d.versions.map((v) => v.version)) : null),
           },
         ]}
       />

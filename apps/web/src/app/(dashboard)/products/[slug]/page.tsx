@@ -92,12 +92,18 @@ export default async function ProductDetailPage({
         columns={[
           {
             header: "Journey ID",
-            render: (j) => <Link href={`/journeys/${encodeURIComponent(j.journey_id)}`}>{j.journey_id}</Link>,
+            render: (j) => (
+              <Link href={`/journeys/${encodeURIComponent(j.journey_id)}`} className="mono">
+                {j.journey_id}
+              </Link>
+            ),
+            sortValue: (j) => j.journey_id,
           },
-          { header: "Date", render: (j) => j.date },
+          { header: "Date", render: (j) => j.date, sortValue: (j) => j.date },
           {
             header: "Complete",
             render: (j) => <Badge variant={j.complete ? "success" : "neutral"}>{j.complete ? "yes" : "no"}</Badge>,
+            sortValue: (j) => (j.complete ? 1 : 0),
           },
         ]}
       />
@@ -108,15 +114,20 @@ export default async function ProductDetailPage({
         keyFor={(m) => `${m.hostname}-${m.ts}`}
         emptyLabel="No metrics snapshots yet for this product."
         columns={[
-          { header: "Timestamp", render: (m) => m.ts },
-          { header: "Hostname", render: (m) => m.hostname },
-          { header: "Project", render: (m) => m.project ?? "—" },
+          { header: "Timestamp", render: (m) => m.ts, sortValue: (m) => m.ts },
+          {
+            header: "Hostname",
+            render: (m) => <span className="mono">{m.hostname}</span>,
+            sortValue: (m) => m.hostname,
+          },
+          { header: "Project", render: (m) => m.project ?? "—", sortValue: (m) => m.project ?? null },
           {
             header: "Disk free / total",
             render: (m) =>
               m.disk_free_bytes != null && m.disk_total_bytes != null
                 ? `${(m.disk_free_bytes / 1e9).toFixed(1)} / ${(m.disk_total_bytes / 1e9).toFixed(1)} GB`
                 : "—",
+            sortValue: (m) => m.disk_free_bytes ?? null,
           },
         ]}
       />

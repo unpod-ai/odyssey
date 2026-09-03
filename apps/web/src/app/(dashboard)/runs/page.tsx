@@ -25,13 +25,14 @@ export default async function RunsPage() {
     <div>
       <PageHeader title="Eval runs" description="Benchmark scores from `odyssey eval run`." />
       <DataTable
+        title="Eval runs"
         rows={runs}
         keyFor={(r) => r.report_path}
         emptyLabel="No eval reports yet — see `odyssey eval run`."
         columns={[
-          { header: "Benchmark", render: (r) => r.benchmark_name },
-          { header: "Metric", render: (r) => r.metric_name },
-          { header: "Mean score", render: (r) => r.mean_score.toFixed(3) },
+          { header: "Benchmark", render: (r) => r.benchmark_name, sortValue: (r) => r.benchmark_name },
+          { header: "Metric", render: (r) => r.metric_name, sortValue: (r) => r.metric_name },
+          { header: "Mean score", render: (r) => r.mean_score.toFixed(3), sortValue: (r) => r.mean_score },
         ]}
       />
     </div>

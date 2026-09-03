@@ -20,6 +20,7 @@
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04);
   --shadow-md: 0 4px 16px rgba(16, 24, 40, 0.06);
   --sidebar-width: 232px;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -298,6 +299,25 @@ h2 {
   overflow: hidden;
 }
 
+.table-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1.1rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.table-card-count {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.75rem;
+  background: var(--neutral-soft);
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+}
+
 .table-scroll {
   overflow-x: auto;
 }
@@ -378,6 +398,28 @@ tbody tr:hover {
   color: var(--danger);
   background: var(--danger-soft);
   border: 1px solid var(--danger-soft);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.9rem;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--accent);
 }
 
 .meta-list {
@@ -467,6 +509,181 @@ tbody tr:hover {
   color: var(--text);
 }
 
+/* Metrics grouped by host */
+
+.host-group {
+  margin-bottom: 1.75rem;
+}
+
+.host-group-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.host-group-name {
+  font-size: 0.98rem;
+  font-weight: 650;
+  font-family: var(--font-mono);
+}
+
+.host-group-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.host-group-chip {
+  /* var(--badge-neutral-text), not --text-muted -- at this 0.72rem size
+     --text-muted lands at 4.39:1 on --neutral-soft, just under the 4.5:1
+     small-text contrast minimum. */
+  color: var(--badge-neutral-text);
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: var(--neutral-soft);
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* Monospace treatment for IDs/hashes/hostnames so they read as data, not
+ * prose -- extended from the metrics host name to journey IDs and export
+ * hashes for a consistent identifier style across the dashboard. */
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+/* Sortable table headers */
+
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  /* Padding + matching negative margin: the visible label/icon keep their
+     original position, but the clickable box grows to meet the WCAG 2.2 AA
+     24x24 CSS px target-size minimum -- the text+icon alone are ~16px tall. */
+  padding: 0.45rem 0.3rem;
+  margin: -0.45rem -0.3rem;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.th-sort:hover {
+  color: var(--text);
+}
+
+.th-sort svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  opacity: 0.55;
+}
+
+.th-sort[data-active="true"] svg {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/* Mobile sort menu -- hidden by default; the table-collapse breakpoint
+ * below swaps it in since the real th-sort buttons are clipped off-screen
+ * along with the rest of <thead> at that width. */
+.mobile-sort {
+  display: none;
+}
+
+.mobile-sort-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.mobile-sort-select {
+  flex: 1;
+  min-height: 44px;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+/* Loading skeletons */
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--neutral-soft) 25%,
+    var(--surface-hover) 37%,
+    var(--neutral-soft) 63%
+  );
+  background-size: 400% 100%;
+  border-radius: var(--radius-sm);
+  animation: skeleton-shimmer 1.4s ease infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+.skeleton-title {
+  width: 180px;
+  height: 1.375rem;
+  margin-bottom: 0.5rem;
+}
+
+.skeleton-desc {
+  width: 320px;
+  height: 0.9rem;
+}
+
+.skeleton-label {
+  width: 70%;
+  height: 0.7rem;
+  margin-bottom: 0.6rem;
+}
+
+.skeleton-value {
+  width: 45%;
+  height: 1.4rem;
+}
+
+.skeleton-table {
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.skeleton-row {
+  height: 1.1rem;
+  width: 100%;
+}
+
+.skeleton-row:nth-child(2) {
+  width: 92%;
+}
+
+.skeleton-row:nth-child(4) {
+  width: 85%;
+}
+
 /* Responsive: collapse the sidebar into a horizontal top bar below tablet
  * width, since a fixed 232px rail eats too much of a narrow viewport. */
 
@@ -498,5 +715,107 @@ tbody tr:hover {
 
   main {
     padding: 1.25rem 1rem 2rem;
+  }
+
+  .stat-grid {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 0.6rem;
+  }
+
+  .page-header h1,
+  h1 {
+    font-size: 1.2rem;
+  }
+}
+
+/* Below tablet width, tables stop scrolling sideways and instead render
+ * each row as a labelled card stack -- a wide multi-column table can't be
+ * shrunk to a phone screen without becoming unreadable. */
+
+@media (max-width: 640px) {
+  .mobile-sort {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .table-card {
+    border: none;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .table-card-header {
+    padding: 0 0 0.5rem;
+    border-bottom: none;
+  }
+
+  .table-scroll {
+    overflow-x: visible;
+  }
+
+  table,
+  thead,
+  tbody,
+  tr,
+  td {
+    display: block;
+    width: 100%;
+  }
+
+  thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+
+  tbody tr {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+  }
+
+  tbody tr:hover {
+    background: var(--surface);
+  }
+
+  td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.55rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+  }
+
+  td:last-child {
+    border-bottom: none;
+  }
+
+  td::before {
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-align: left;
+    flex-shrink: 0;
+  }
+
+  .chart-card .chart-tooltip {
+    font-size: 0.78rem;
   }
 }
