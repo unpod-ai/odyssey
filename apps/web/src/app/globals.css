@@ -21,6 +21,17 @@
   --shadow-md: 0 4px 16px rgba(16, 24, 40, 0.06);
   --sidebar-width: 232px;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Categorical palette for multi-series charts (one host = one slot, fixed
+   * order, never cycled/reassigned by rank) -- validated for CVD-safety and
+   * contrast against this file's light/dark surfaces via dataviz skill's
+   * validate_palette.js. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -42,6 +53,13 @@
     --neutral-soft: #1c1f24;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
   }
 }
 
@@ -507,6 +525,51 @@ tbody tr:hover {
 
 .chart-tooltip strong {
   color: var(--text);
+}
+
+.chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chart-legend-item[data-hidden="true"] {
+  color: var(--text-faint);
+  opacity: 0.5;
+}
+
+.chart-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.chart-series-label {
+  font-size: 9px;
+  font-weight: 600;
 }
 
 /* Metrics grouped by host */
