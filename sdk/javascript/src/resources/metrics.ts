@@ -8,7 +8,10 @@ import type { MetricsSnapshotOut } from "../types.generated.js";
 export class MetricsResource {
   constructor(private readonly transport: Transport) {}
 
-  async list(): Promise<MetricsSnapshotOut[]> {
-    return this.transport.get<MetricsSnapshotOut[]>("/metrics");
+  async list(options: { product?: string } = {}): Promise<MetricsSnapshotOut[]> {
+    const params = new URLSearchParams();
+    if (options.product != null) params.set("product", options.product);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return this.transport.get<MetricsSnapshotOut[]>(`/metrics${query}`);
   }
 }

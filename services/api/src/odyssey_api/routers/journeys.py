@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from odyssey_schemas import (
@@ -19,12 +19,16 @@ router = APIRouter(prefix="/journeys", tags=["journeys"])
 
 @router.get("", response_model=List[JourneySummaryOut])
 def list_journeys(
+    product: Optional[str] = None,
     settings: Settings = Depends(deps.get_settings_dep),
 ) -> List[JourneySummaryOut]:
+    """``?product=<slug>`` narrows to one product's partition in a
+    product-scoped (`--products-file`) collector deployment — see
+    `domain.journeys.list_journeys_with_status`."""
     return [
         JourneySummaryOut(journey_id=journey_id, date=date, complete=complete)
         for journey_id, date, complete in domain.list_journeys_with_status(
-            settings.journeys_dir
+            settings.journeys_dir, product
         )
     ]
 

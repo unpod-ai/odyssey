@@ -8,8 +8,11 @@ import type { JourneyDetailOut, JourneySummaryOut } from "../types.generated.js"
 export class JourneysResource {
   constructor(private readonly transport: Transport) {}
 
-  async list(): Promise<JourneySummaryOut[]> {
-    return this.transport.get<JourneySummaryOut[]>("/journeys");
+  async list(options: { product?: string } = {}): Promise<JourneySummaryOut[]> {
+    const params = new URLSearchParams();
+    if (options.product != null) params.set("product", options.product);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return this.transport.get<JourneySummaryOut[]>(`/journeys${query}`);
   }
 
   async get(journey_id: string): Promise<JourneyDetailOut> {

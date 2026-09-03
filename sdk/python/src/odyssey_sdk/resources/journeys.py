@@ -4,7 +4,9 @@ services/api/openapi.json. Do not edit by hand — see codegen.py.
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
+
+from urllib.parse import urlencode
 
 from odyssey_schemas import (
     JourneyDetailOut,
@@ -18,8 +20,11 @@ class JourneysResource:
     def __init__(self, transport) -> None:
         self._transport = transport
 
-    def list(self) -> List[JourneySummaryOut]:
-        data = self._transport.get("/journeys")
+    def list(self, *, product: Optional[str] = None) -> List[JourneySummaryOut]:
+        params = {"product": product}
+        params = {k: v for k, v in params.items() if v is not None}
+        query = ("?" + urlencode(params)) if params else ""
+        data = self._transport.get(f"/journeys{query}")
         return [JourneySummaryOut.model_validate(x) for x in data]
 
     def get(self, journey_id: str) -> JourneyDetailOut:

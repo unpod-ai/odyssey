@@ -20,6 +20,7 @@ describe("codegen", () => {
       "journeys",
       "metrics",
       "models",
+      "products",
       "runs",
     ]);
     expect(resources.journeys).toContain("class JourneysResource");

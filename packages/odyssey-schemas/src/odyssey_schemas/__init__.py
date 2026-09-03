@@ -28,6 +28,7 @@ __all__ = [
     "EvalRunOut",
     "ExportArtifactOut",
     "MetricsSnapshotOut",
+    "ProductOut",
 ]
 
 
@@ -112,3 +113,8 @@ class MetricsSnapshotOut(BaseModel):
     disk_free_bytes: Optional[int] = None
     project: Optional[str] = None
     public_ip: Optional[str] = None
+
+
+class ProductOut(BaseModel):
+    slug: str
+    name: str

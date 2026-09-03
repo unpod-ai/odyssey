@@ -21,6 +21,7 @@ def test_render_all_produces_one_module_per_resource():
         "runs",
         "exports",
         "metrics",
+        "products",
     }
     assert "class JourneysResource:" in rendered["journeys"]
 

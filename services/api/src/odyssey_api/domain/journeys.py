@@ -7,7 +7,7 @@ looks identical here to how it looks everywhere else in the repo.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from odyssey.export import fold_shard
 from odyssey.fold import FoldResult
@@ -26,11 +26,15 @@ class JourneyNotFoundError(LookupError):
     pass
 
 
-def list_journeys(journeys_dir: Path) -> List[Tuple[str, str]]:
-    return filesystem.list_journeys(journeys_dir)
+def list_journeys(
+    journeys_dir: Path, product_slug: Optional[str] = None
+) -> List[Tuple[str, str]]:
+    return filesystem.list_journeys(journeys_dir, product_slug)
 
 
-def list_journeys_with_status(journeys_dir: Path) -> List[Tuple[str, str, bool]]:
+def list_journeys_with_status(
+    journeys_dir: Path, product_slug: Optional[str] = None
+) -> List[Tuple[str, str, bool]]:
     """``[(journey_id, date, complete), ...]`` — folds every shard once
     (not the two-pass "list then re-find-then-fold" a naive router would
     do) to answer whether it's `trainable` per `fold.FoldResult.complete`.
@@ -44,7 +48,7 @@ def list_journeys_with_status(journeys_dir: Path) -> List[Tuple[str, str, bool]]
     lives one level deeper at `<journeys_dir>/<product_slug>/<journey_date>/...`.
     """
     out: List[Tuple[str, str, bool]] = []
-    for journey_id, journey_date in filesystem.list_journeys(journeys_dir):
+    for journey_id, journey_date in filesystem.list_journeys(journeys_dir, product_slug):
         shard = filesystem.find_journey_path(journeys_dir, journey_id)
         try:
             if shard is None:

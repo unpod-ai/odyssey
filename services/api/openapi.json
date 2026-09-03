@@ -418,6 +418,24 @@
         "title": "ModelVersionOut",
         "type": "object"
       },
+      "ProductOut": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name"
+        ],
+        "title": "ProductOut",
+        "type": "object"
+      },
       "StepOut": {
         "properties": {
           "index": {
@@ -626,7 +644,26 @@
     },
     "/journeys": {
       "get": {
+        "description": "``?product=<slug>`` narrows to one product's partition in a\nproduct-scoped (`--products-file`) collector deployment \u2014 see\n`domain.journeys.list_journeys_with_status`.",
         "operationId": "list_journeys_journeys_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "product",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Product"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -641,6 +678,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -703,7 +750,26 @@
     },
     "/metrics": {
       "get": {
+        "description": "A snapshot missing `MetricsSnapshotOut`'s required fields (older\nprobe payloads predate ``ts``/``os`` being sent on every snapshot) is\nskipped rather than 500ing the whole listing \u2014 the same\n\"malformed entries don't take down the rest\" defensiveness\n`domain.list_metrics` already applies to unparseable JSON lines.\n``?product=<slug>`` narrows to one product's ``metrics/`` directory,\nsame filter `/journeys` supports.",
         "operationId": "list_metrics_metrics_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "product",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Product"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -718,6 +784,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -805,6 +881,36 @@
         "summary": "Get Model",
         "tags": [
           "models"
+        ]
+      }
+    },
+    "/products": {
+      "get": {
+        "operationId": "list_products_products_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProductOut"
+                  },
+                  "title": "Response List Products Products Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Products",
+        "tags": [
+          "products"
         ]
       }
     },

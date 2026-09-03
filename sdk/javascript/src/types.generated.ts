@@ -78,6 +78,11 @@ export interface ModelVersionOut {
   version: number;
 }
 
+export interface ProductOut {
+  name: string;
+  slug: string;
+}
+
 export interface StepOut {
   index: number;
   message_count: number;

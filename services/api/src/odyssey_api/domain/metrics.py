@@ -7,12 +7,14 @@ read.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from odyssey_api.repositories import filesystem
 
 __all__ = ["list_metrics"]
 
 
-def list_metrics(journeys_dir: Path) -> List[Dict[str, Any]]:
-    return filesystem.list_metrics(journeys_dir)
+def list_metrics(
+    journeys_dir: Path, product_slug: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    return filesystem.list_metrics(journeys_dir, product_slug)

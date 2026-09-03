@@ -149,6 +149,82 @@ def test_datasets_and_models(tmp_path):
     assert client.get("/models/nope").status_code == 404
 
 
+def test_products_list_drops_api_key(tmp_path):
+    products_file = tmp_path / "products.json"
+    products_file.write_text(
+        json.dumps(
+            {
+                "products": [
+                    {"slug": "unpod", "name": "Unpod", "api_key": "secret-key"},
+                ]
+            }
+        )
+    )
+    settings = Settings(products_file=products_file)
+    client = _client(settings)
+
+    resp = client.get("/products")
+    assert resp.status_code == 200
+    assert resp.json() == [{"slug": "unpod", "name": "Unpod"}]
+    assert "secret-key" not in resp.text
+
+
+def test_products_list_empty_when_unset():
+    client = _client(Settings())
+    resp = client.get("/products")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_journeys_and_metrics_product_filter(tmp_path):
+    journeys_dir = tmp_path / "journeys"
+    for slug, jid in (("unpod", "j_a"), ("otherpod", "j_b")):
+        date_dir = journeys_dir / slug / "2026-08-28"
+        date_dir.mkdir(parents=True)
+        header = JourneyHeader(journey_id=jid, data_source="livekit")
+        write_events(
+            date_dir / f"{jid}.jsonl",
+            [
+                JourneyEvent(
+                    journey_id=jid,
+                    seq=0,
+                    kind="message",
+                    event_id="e0",
+                    message=Message(role="user", content="hi"),
+                ),
+                JourneyEvent(
+                    journey_id=jid,
+                    seq=1,
+                    kind="terminal",
+                    event_id="e1",
+                    terminal=Terminal(termination_reason="ENV_DONE"),
+                ),
+            ],
+            header=header,
+        )
+        metrics_dir = journeys_dir / slug / "metrics"
+        metrics_dir.mkdir()
+        (metrics_dir / "2026-08-28.jsonl").write_text(
+            json.dumps({"ts": "2026-08-28T00:00:00Z", "hostname": slug, "os": "linux"})
+            + "\n",
+            encoding="utf-8",
+        )
+
+    settings = Settings(journeys_dir=journeys_dir)
+    client = _client(settings)
+
+    filtered = client.get("/journeys", params={"product": "unpod"})
+    assert filtered.status_code == 200
+    assert [j["journey_id"] for j in filtered.json()] == ["j_a"]
+
+    filtered_metrics = client.get("/metrics", params={"product": "unpod"})
+    assert filtered_metrics.status_code == 200
+    assert [m["hostname"] for m in filtered_metrics.json()] == ["unpod"]
+
+    unfiltered = client.get("/journeys")
+    assert {j["journey_id"] for j in unfiltered.json()} == {"j_a", "j_b"}
+
+
 def test_runs_and_exports(tmp_path):
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir()

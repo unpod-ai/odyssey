@@ -4,18 +4,20 @@ both call this module; nothing else should hand-edit `resources/*.py`.
 
 Deliberately narrow: this repo's `services/api` exposes only `GET`
 endpoints today (item 8.2), each returning either one object or an array
-of one object type, with at most one path parameter. The generator
-raises rather than silently guessing on anything outside that shape —
-the same "narrow but real, not speculative" discipline every other
-codegen-shaped module in this repo follows (`odyssey_dataprep.datasets`,
+of one object type, with at most one path parameter and any number of
+optional string query parameters (e.g. `/journeys?product=`). The
+generator raises rather than silently guessing on anything outside that
+shape — the same "narrow but real, not speculative" discipline every
+other codegen-shaped module in this repo follows (`odyssey_dataprep.datasets`,
 `odyssey_eval.runner`'s dynamic metric loading, etc).
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 __all__ = ["render_resource", "generate", "check_drift"]
 
@@ -33,11 +35,21 @@ class UnsupportedOperationError(NotImplementedError):
     pass
 
 
+@dataclass(frozen=True)
+class Operation:
+    method_name: str
+    path: str
+    path_params: List[str]
+    query_params: List[str] = field(default_factory=list)
+    model: str = ""
+    is_list: bool = False
+
+
 def _singular(word: str) -> str:
     return word[:-1] if word.endswith("s") else word
 
 
-def _model_ref(schema: Dict[str, Any]) -> Tuple[str, bool]:
+def _model_ref(schema: Dict[str, Any]) -> tuple[str, bool]:
     if schema.get("type") == "array":
         return schema["items"]["$ref"].rsplit("/", 1)[-1], True
     if "$ref" in schema:
@@ -45,21 +57,29 @@ def _model_ref(schema: Dict[str, Any]) -> Tuple[str, bool]:
     raise UnsupportedOperationError(f"unsupported response schema: {schema}")
 
 
+def _is_optional_string_schema(schema: Dict[str, Any]) -> bool:
+    if schema.get("type") == "string":
+        return True
+    any_of = schema.get("anyOf")
+    if any_of:
+        types = {s.get("type") for s in any_of}
+        return types == {"string", "null"}
+    return False
+
+
 def load_openapi() -> Dict[str, Any]:
     return json.loads(_OPENAPI_PATH.read_text(encoding="utf-8"))
 
 
-def _operations_by_resource(
-    openapi: Dict[str, Any],
-) -> Dict[str, List[Tuple[str, str, List[str], str, bool]]]:
-    """``{resource: [(method_name, path, path_params, model, is_list), ...]}``.
+def _operations_by_resource(openapi: Dict[str, Any]) -> Dict[str, List[Operation]]:
+    """``{resource: [Operation, ...]}``.
 
     ``resource`` is a path's first segment (``/journeys/{id}`` and
     ``/journeys`` both belong to ``journeys``); ``/health`` has no
     resource grouping and is skipped here (hand-written on `OdysseySDK`
     itself — see `client.py`).
     """
-    by_resource: Dict[str, List[Tuple[str, str, List[str], str, bool]]] = {}
+    by_resource: Dict[str, List[Operation]] = {}
     for path, methods in sorted(openapi["paths"].items()):
         segments = [s for s in path.split("/") if s]
         if segments == ["health"]:
@@ -69,29 +89,44 @@ def _operations_by_resource(
                 f"{path}: only a single GET operation per path is supported, got {list(methods)}"
             )
         op = methods["get"]
-        params = [p["name"] for p in op.get("parameters", []) if p.get("in") == "path"]
-        if len(params) > 1:
+        path_params = [
+            p["name"] for p in op.get("parameters", []) if p.get("in") == "path"
+        ]
+        if len(path_params) > 1:
             raise UnsupportedOperationError(f"{path}: more than one path parameter")
+        query_params = []
+        for p in op.get("parameters", []):
+            if p.get("in") != "query":
+                continue
+            if not _is_optional_string_schema(p.get("schema", {})):
+                raise UnsupportedOperationError(
+                    f"{path}: query parameter {p['name']!r} must be an optional string"
+                )
+            query_params.append(p["name"])
         schema = op["responses"]["200"]["content"]["application/json"]["schema"]
         model, is_list = _model_ref(schema)
 
         resource = segments[0]
-        method_name = "get" if params else "list"
+        method_name = "get" if path_params else "list"
         by_resource.setdefault(resource, []).append(
-            (method_name, path, params, model, is_list)
+            Operation(method_name, path, path_params, query_params, model, is_list)
         )
     return by_resource
 
 
-def render_resource(
-    resource: str, ops: List[Tuple[str, str, List[str], str, bool]]
-) -> str:
-    models = sorted({model for _, _, _, model, _ in ops})
+def render_resource(resource: str, ops: List[Operation]) -> str:
+    models = sorted({op.model for op in ops})
     class_name = "".join(p.capitalize() for p in resource.split("_")) + "Resource"
+    has_query_params = any(op.query_params for op in ops)
 
     lines = [_BANNER, "from __future__ import annotations", ""]
-    if any(is_list for _, _, _, _, is_list in ops):
-        lines += ["from typing import List", ""]
+    typing_imports = (["List"] if any(op.is_list for op in ops) else []) + (
+        ["Optional"] if has_query_params else []
+    )
+    if typing_imports:
+        lines += [f"from typing import {', '.join(typing_imports)}", ""]
+    if has_query_params:
+        lines += ["from urllib.parse import urlencode", ""]
     lines += [
         (
             "from odyssey_schemas import ("
@@ -106,23 +141,35 @@ def render_resource(
         "",
         "class " + class_name + ":",
         '    """Generated from `'
-        + "`, `".join(sorted({path for _, path, *_ in ops}))
+        + "`, `".join(sorted({op.path for op in ops}))
         + '`."""',
         "",
         "    def __init__(self, transport) -> None:",
         "        self._transport = transport",
         "",
     ]
-    for method_name, path, params, model, is_list in ops:
-        sig = ", ".join(["self"] + [f"{p}: str" for p in params])
-        return_type = f"List[{model}]" if is_list else model
-        path_literal = f'f"{path}"' if params else f'"{path}"'
-        lines += [f"    def {method_name}({sig}) -> {return_type}:"]
-        lines += [f"        data = self._transport.get({path_literal})"]
-        if is_list:
-            lines += [f"        return [{model}.model_validate(x) for x in data]"]
+    for op in ops:
+        sig_parts = ["self"] + [f"{p}: str" for p in op.path_params]
+        if op.query_params:
+            sig_parts += ["*"] + [f"{q}: Optional[str] = None" for q in op.query_params]
+        sig = ", ".join(sig_parts)
+        return_type = f"List[{op.model}]" if op.is_list else op.model
+        lines += [f"    def {op.method_name}({sig}) -> {return_type}:"]
+        if op.query_params:
+            pairs = ", ".join(f'"{q}": {q}' for q in op.query_params)
+            lines += [f"        params = {{{pairs}}}"]
+            lines += [
+                "        params = {k: v for k, v in params.items() if v is not None}"
+            ]
+            lines += ['        query = ("?" + urlencode(params)) if params else ""']
+            path_literal = f'f"{op.path}{{query}}"'
         else:
-            lines += [f"        return {model}.model_validate(data)"]
+            path_literal = f'f"{op.path}"' if op.path_params else f'"{op.path}"'
+        lines += [f"        data = self._transport.get({path_literal})"]
+        if op.is_list:
+            lines += [f"        return [{op.model}.model_validate(x) for x in data]"]
+        else:
+            lines += [f"        return {op.model}.model_validate(data)"]
         lines += [""]
     return "\n".join(lines).rstrip() + "\n"
 

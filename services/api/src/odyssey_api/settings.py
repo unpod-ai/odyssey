@@ -12,7 +12,11 @@ layouts. The three registry paths are
 `odyssey_dataprep.datasets` / `odyssey_training.models_registry` /
 `odyssey_eval.eval_datasets`'s own `registry.yaml` files, and
 ``eval_reports_dir``/``exports_dir`` are directories a caller points a CLI
-command at. This service never writes to any of them.
+command at. ``products_file`` is `services/collector`'s own
+``--products-file`` roster (unset by default — most deployments run
+single-tenant); ``/products`` returns an empty list, not an error, when
+it's unset or missing, mirroring every other optional resource here.
+This service never writes to any of them.
 """
 
 from __future__ import annotations
@@ -62,6 +66,11 @@ class Settings:
     )
     exports_dir: Path = field(
         default_factory=lambda: _env_path("ODYSSEY_API_EXPORTS_DIR", "./exports")
+    )
+    products_file: Optional[Path] = field(
+        default_factory=lambda: (
+            Path(v) if (v := os.environ.get("ODYSSEY_API_PRODUCTS_FILE")) else None
+        )
     )
     api_key: Optional[str] = field(
         default_factory=lambda: os.environ.get("ODYSSEY_API_AUTH_KEY")

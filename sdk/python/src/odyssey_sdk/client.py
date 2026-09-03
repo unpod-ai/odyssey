@@ -20,6 +20,7 @@ from odyssey_sdk.resources.exports import ExportsResource
 from odyssey_sdk.resources.journeys import JourneysResource
 from odyssey_sdk.resources.metrics import MetricsResource
 from odyssey_sdk.resources.models import ModelsResource
+from odyssey_sdk.resources.products import ProductsResource
 from odyssey_sdk.resources.runs import RunsResource
 
 __all__ = ["OdysseySDK", "Transport"]
@@ -54,9 +55,10 @@ class Transport:
 
 class OdysseySDK:
     """The client. `client.journeys.list()` / `client.journeys.get(id)`,
-    `client.datasets`/`client.models`/`client.runs`/`client.exports`
-    mirror the same shape; `client.health()` is the one endpoint outside
-    the resource pattern (nothing to paginate or fetch by id)."""
+    `client.datasets`/`client.models`/`client.runs`/`client.exports`/
+    `client.products` mirror the same shape; `client.health()` is the one
+    endpoint outside the resource pattern (nothing to paginate or fetch
+    by id)."""
 
     def __init__(self, base_url: str, api_key: Optional[str] = None) -> None:
         if api_key is None:
@@ -68,6 +70,7 @@ class OdysseySDK:
         self.runs = RunsResource(self._transport)
         self.exports = ExportsResource(self._transport)
         self.metrics = MetricsResource(self._transport)
+        self.products = ProductsResource(self._transport)
 
     def health(self) -> HealthOut:
         return HealthOut.model_validate(self._transport.get("/health"))
