@@ -63,6 +63,15 @@ class IndexHandle:
         finally:
             conn.close()
 
+    def execute(self, sql: str, params: tuple = ()) -> None:
+        conn = connect(self._settings.db_uri)
+        try:
+            with self._lock:
+                conn.execute(sql, params)
+                conn.commit()
+        finally:
+            conn.close()
+
     def stop(self) -> None:
         self._stop_event.set()
         self._thread.join(timeout=5)

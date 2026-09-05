@@ -30,6 +30,15 @@ def _reset_index_manager():
     manager.reset_for_tests()
 
 
+def _seed_product(settings: Settings, slug: str, name: str) -> None:
+    index = manager.get_index(settings)
+    index.execute(
+        "INSERT INTO products (slug, name, api_key_hash, revoked, created_at) "
+        "VALUES (?, ?, 'test-hash', 0, '2026-01-01T00:00:00+00:00')",
+        (slug, name),
+    )
+
+
 def _client(settings: Settings) -> TestClient:
     if not settings.db_uri or settings.db_uri == Settings().db_uri:
         # Absolute path under the OS temp dir (four-slash sqlite URI, per
@@ -174,23 +183,16 @@ def test_datasets_and_models(tmp_path):
 
 
 def test_products_list_drops_api_key(tmp_path):
-    products_file = tmp_path / "products.json"
-    products_file.write_text(
-        json.dumps(
-            {
-                "products": [
-                    {"slug": "unpod", "name": "Unpod", "api_key": "secret-key"},
-                ]
-            }
-        )
-    )
-    settings = Settings(products_file=products_file)
+    tmp_db = tmp_path / "db.sqlite3"
+    settings = Settings(db_uri=f"sqlite:///{tmp_db}")
+    _seed_product(settings, "unpod", "Unpod")
     client = _client(settings)
 
     resp = client.get("/products")
     assert resp.status_code == 200
     assert resp.json() == [{"slug": "unpod", "name": "Unpod"}]
     assert "secret-key" not in resp.text
+    assert "test-hash" not in resp.text
 
 
 def test_products_list_empty_when_unset():
