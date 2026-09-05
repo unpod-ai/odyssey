@@ -12,7 +12,9 @@ from odyssey_schemas import (
 )
 
 from odyssey_api import deps
+from odyssey_api.deps import get_index_dep
 from odyssey_api.domain import journeys as domain
+from odyssey_api.index.manager import IndexHandle
 from odyssey_api.pagination import paginate
 from odyssey_api.settings import Settings
 
@@ -25,20 +27,16 @@ def list_journeys(
     date: Optional[str] = None,
     cursor: Optional[str] = None,
     limit: Optional[int] = None,
-    settings: Settings = Depends(deps.get_settings_dep),
+    index: IndexHandle = Depends(get_index_dep),
 ) -> JourneyPageOut:
-    """``?product=<slug>`` narrows to one product's partition in a
-    product-scoped (`--products-file`) collector deployment — see
-    `domain.journeys.list_journeys_with_status`. ``?date=<YYYY-MM-DD>``
-    narrows to journeys reported on that date. ``?cursor=``/``?limit=``
-    paginate the (already-filtered) result — see
-    `odyssey_api.pagination.paginate`."""
+    """``?product=<slug>``/``?date=<YYYY-MM-DD>`` filter server-side against
+    the SQLite index (see `odyssey_api.index`) rather than the filesystem.
+    ``?cursor=``/``?limit=`` paginate the (already-filtered) result."""
     all_journeys = [
         JourneySummaryOut(journey_id=journey_id, date=journey_date, complete=complete)
-        for journey_id, journey_date, complete in domain.list_journeys_with_status(
-            settings.journeys_dir, product
+        for journey_id, journey_date, complete in domain.list_journeys_with_status_indexed(
+            index, product, date
         )
-        if date is None or journey_date == date
     ]
     items, next_cursor, has_more, total = paginate(all_journeys, cursor, limit)
     return JourneyPageOut(items=items, next_cursor=next_cursor, has_more=has_more, total=total)

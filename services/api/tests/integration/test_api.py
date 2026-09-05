@@ -4,13 +4,17 @@ this repo's own established convention (see 5.9/6.1/7's own test suites)."""
 from __future__ import annotations
 
 import json
+import uuid
+from dataclasses import replace
 
+import pytest
 import yaml
 from fastapi.testclient import TestClient
 from odyssey.jsonl import write_events
 from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
 
 from odyssey_api import deps
+from odyssey_api.index import manager
 from odyssey_api.main import create_app
 from odyssey_api.settings import Settings
 
@@ -18,7 +22,16 @@ JID = "j_api"
 HEADER = JourneyHeader(journey_id=JID, data_source="livekit")
 
 
+@pytest.fixture(autouse=True)
+def _reset_index_manager():
+    manager.reset_for_tests()
+    yield
+    manager.reset_for_tests()
+
+
 def _client(settings: Settings) -> TestClient:
+    if not settings.db_uri or settings.db_uri == Settings().db_uri:
+        settings = replace(settings, db_uri=f"sqlite:///{uuid.uuid4().hex}.sqlite3")
     app = create_app()
     app.dependency_overrides[deps.get_settings_dep] = lambda: settings
     return TestClient(app)
@@ -361,3 +374,52 @@ def test_protected_route_open_by_default_when_no_api_key_configured(monkeypatch)
     client = _client(Settings())
     resp = client.get("/journeys")
     assert resp.status_code == 200
+
+
+def test_journeys_list_does_not_fold_every_shard_per_request(tmp_path, monkeypatch):
+    """Regression test for the O(n^2) read path: with the index in place,
+    fold() must run once per journey (at index time), not once per
+    journey per request."""
+    import odyssey.export as export_module
+
+    # `odyssey.export.fold_shard` calls `fold` via a name bound directly
+    # into `odyssey.export`'s own namespace (`from odyssey.fold import
+    # fold`), not via an `odyssey.fold.fold` attribute lookup, so that's
+    # the name that must be patched to observe calls made through
+    # `fold_shard` (the function the filesystem-backed, pre-index listing
+    # path used to call once per journey per request).
+
+    journeys_dir = tmp_path / "journeys"
+    for i in range(5):
+        jid = f"perf_{i}"
+        date_dir = journeys_dir / "2026-08-28"
+        date_dir.mkdir(parents=True, exist_ok=True)
+        write_events(
+            date_dir / f"{jid}.jsonl",
+            [
+                JourneyEvent(journey_id=jid, seq=0, kind="message", event_id="e0", message=Message(role="user", content="hi")),
+                JourneyEvent(journey_id=jid, seq=1, kind="terminal", event_id="e1", terminal=Terminal(termination_reason="ENV_DONE")),
+            ],
+            header=JourneyHeader(journey_id=jid, data_source="livekit"),
+        )
+
+    settings = Settings(journeys_dir=journeys_dir, db_uri=f"sqlite:///{tmp_path}/db.sqlite3", index_interval_seconds=3600)
+    client = _client(settings)
+
+    client.get("/journeys")  # triggers the index's first (blocking) pass
+
+    call_count = 0
+    real_fold = export_module.fold
+
+    def counting_fold(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return real_fold(*args, **kwargs)
+
+    monkeypatch.setattr(export_module, "fold", counting_fold)
+
+    resp = client.get("/journeys")
+
+    assert resp.status_code == 200
+    assert len(resp.json()["items"]) == 5
+    assert call_count == 0  # no refolding on a request against an already-indexed, unchanged set

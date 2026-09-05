@@ -12,12 +12,14 @@ from typing import List, Optional, Tuple
 from odyssey.export import fold_shard
 from odyssey.fold import FoldResult
 
+from odyssey_api.index.manager import IndexHandle
 from odyssey_api.repositories import filesystem
 
 __all__ = [
     "JourneyNotFoundError",
     "list_journeys",
     "list_journeys_with_status",
+    "list_journeys_with_status_indexed",
     "get_journey",
 ]
 
@@ -58,6 +60,27 @@ def list_journeys_with_status(
             complete = False
         out.append((journey_id, journey_date, complete))
     return out
+
+
+def list_journeys_with_status_indexed(
+    index: IndexHandle, product_slug: Optional[str], date: Optional[str]
+) -> List[Tuple[str, str, bool]]:
+    """Index-backed replacement for `list_journeys_with_status`: reads
+    `journey_id`/`date`/`complete` straight out of the `journeys` table
+    (populated at index time by `odyssey_api.index.journeys_indexer`)
+    instead of re-walking `journeys_dir` and re-folding every shard on
+    every request."""
+    sql = "SELECT journey_id, date, complete FROM journeys WHERE 1=1"
+    params: list = []
+    if product_slug is not None:
+        sql += " AND product_slug = ?"
+        params.append(product_slug)
+    if date is not None:
+        sql += " AND date = ?"
+        params.append(date)
+    sql += " ORDER BY date, journey_id"
+    rows = index.query(sql, tuple(params))
+    return [(r["journey_id"], r["date"], bool(r["complete"])) for r in rows]
 
 
 def get_journey(journeys_dir: Path, journey_id: str) -> FoldResult:

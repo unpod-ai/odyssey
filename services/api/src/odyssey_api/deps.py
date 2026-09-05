@@ -10,15 +10,20 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from odyssey_api.index.manager import IndexHandle, get_index
 from odyssey_api.settings import Settings, get_settings
 
-__all__ = ["get_settings_dep", "require_api_key"]
+__all__ = ["get_settings_dep", "get_index_dep", "require_api_key"]
 
 _bearer = HTTPBearer(auto_error=False)
 
 
 def get_settings_dep() -> Settings:
     return get_settings()
+
+
+def get_index_dep(settings: Settings = Depends(get_settings_dep)) -> IndexHandle:
+    return get_index(settings)
 
 
 def require_api_key(
