@@ -5,7 +5,6 @@ services/api/openapi.json. Do not edit by hand — see codegen.py.
 from __future__ import annotations
 
 from typing import Optional
-
 from urllib.parse import urlencode
 
 from odyssey_schemas import (
@@ -20,7 +19,13 @@ class MetricsResource:
     def __init__(self, transport) -> None:
         self._transport = transport
 
-    def list(self, *, product: Optional[str] = None, cursor: Optional[str] = None, limit: Optional[int] = None) -> MetricsPageOut:
+    def list(
+        self,
+        *,
+        product: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> MetricsPageOut:
         params = {"product": product, "cursor": cursor, "limit": limit}
         params = {k: v for k, v in params.items() if v is not None}
         query = ("?" + urlencode(params)) if params else ""

@@ -31,6 +31,7 @@ from odyssey_collector.server import (
     serve,
 )
 
+
 @pytest.fixture(autouse=True)
 def _isolated_env(monkeypatch):
     """``ODYSSEY_DB_URI`` is a shared, non-``ODYSSEY_COLLECTOR_``-prefixed

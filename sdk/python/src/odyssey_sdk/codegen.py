@@ -140,6 +140,29 @@ def _operations_by_resource(openapi: Dict[str, Any]) -> Dict[str, List[Operation
     return by_resource
 
 
+_LINE_LENGTH = 88
+
+
+def _render_def_line(
+    method_name: str, sig_parts: List[str], sig: str, return_type: str
+) -> List[str]:
+    """Mirrors black's wrapping for a `def` signature that's too long for
+    one line -- generated output must already be black-formatted, since
+    `check_drift()` compares raw generator output byte-for-byte against
+    what's on disk, with no separate formatting pass in between."""
+    one_line = f"    def {method_name}({sig}) -> {return_type}:"
+    if len(one_line) <= _LINE_LENGTH:
+        return [one_line]
+    collapsed = f"        {sig}"
+    if len(collapsed) <= _LINE_LENGTH:
+        return [f"    def {method_name}(", collapsed, f"    ) -> {return_type}:"]
+    return (
+        [f"    def {method_name}("]
+        + [f"        {p}," for p in sig_parts]
+        + [f"    ) -> {return_type}:"]
+    )
+
+
 def render_resource(resource: str, ops: List[Operation]) -> str:
     models = sorted({op.model for op in ops})
     class_name = "".join(p.capitalize() for p in resource.split("_")) + "Resource"
@@ -150,9 +173,11 @@ def render_resource(resource: str, ops: List[Operation]) -> str:
         ["Optional"] if has_query_params else []
     )
     if typing_imports:
-        lines += [f"from typing import {', '.join(typing_imports)}", ""]
+        lines += [f"from typing import {', '.join(typing_imports)}"]
     if has_query_params:
-        lines += ["from urllib.parse import urlencode", ""]
+        lines += ["from urllib.parse import urlencode"]
+    if typing_imports or has_query_params:
+        lines += [""]
     lines += [
         (
             "from odyssey_schemas import ("
@@ -177,10 +202,12 @@ def render_resource(resource: str, ops: List[Operation]) -> str:
     for op in ops:
         sig_parts = ["self"] + [f"{p}: str" for p in op.path_params]
         if op.query_params:
-            sig_parts += ["*"] + [f"{q}: Optional[{t}] = None" for q, t in op.query_params]
+            sig_parts += ["*"] + [
+                f"{q}: Optional[{t}] = None" for q, t in op.query_params
+            ]
         sig = ", ".join(sig_parts)
         return_type = f"List[{op.model}]" if op.is_list else op.model
-        lines += [f"    def {op.method_name}({sig}) -> {return_type}:"]
+        lines += _render_def_line(op.method_name, sig_parts, sig, return_type)
         if op.query_params:
             pairs = ", ".join(f'"{q}": {q}' for q, _ in op.query_params)
             lines += [f"        params = {{{pairs}}}"]
