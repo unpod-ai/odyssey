@@ -630,13 +630,130 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="log every request (method, path, status) to stdout via the "
         "'odyssey_collector.requests' logger; default: off (ODYSSEY_COLLECTOR_DEBUG)",
     )
+    parser.add_argument(
+        "--db-uri",
+        default=None,
+        help="shared SQLite file (see packages/odyssey-store) for product-scoped "
+        "auth and management flags below; default: $ODYSSEY_DB_URI. "
+        "Mutually exclusive with --api-key",
+    )
+    parser.add_argument(
+        "--auth-cache-ttl-seconds",
+        type=float,
+        default=None,
+        help="how long an auth-check result is cached in memory before "
+        "re-reading --db-uri; default: 60 ($ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS)",
+    )
+    parser.add_argument(
+        "--product-slug",
+        default="default",
+        help="slug for --create-product; default: 'default'",
+    )
+    parser.add_argument(
+        "--product-name",
+        default="Default",
+        help="name for --create-product; default: 'Default'",
+    )
+    parser.add_argument(
+        "--create-product",
+        action="store_true",
+        help="create a new product (--product-slug/--product-name) in --db-uri, "
+        "print its api_key once, and exit -- does not start the server",
+    )
+    parser.add_argument(
+        "--list-products",
+        action="store_true",
+        help="list every product in --db-uri (slug/name/revoked/created_at, "
+        "never a key) and exit -- does not start the server",
+    )
+    parser.add_argument(
+        "--revoke-product",
+        default=None,
+        metavar="SLUG",
+        help="revoke a product's key in --db-uri and exit -- does not start the server",
+    )
+    parser.add_argument(
+        "--rotate-product",
+        default=None,
+        metavar="SLUG",
+        help="revoke a product's current key and issue a new one in --db-uri, "
+        "print it once, and exit -- does not start the server",
+    )
+    parser.add_argument(
+        "--migrate-products-from-json",
+        default=None,
+        metavar="PATH",
+        help="one-time cutover: read an old --products-file-style JSON roster "
+        "at PATH, hash each existing api_key as-is, and insert into --db-uri; "
+        "exit -- does not start the server",
+    )
     args = parser.parse_args(argv)
+
+    admin_actions = [
+        args.create_product,
+        args.list_products,
+        args.revoke_product is not None,
+        args.rotate_product is not None,
+        args.migrate_products_from_json is not None,
+    ]
+    if any(admin_actions):
+        if not args.db_uri and not os.environ.get(ENV_DB_URI):
+            print("--db-uri (or $ODYSSEY_DB_URI) is required for product management flags", file=sys.stderr)
+            return 1
+        db_uri = args.db_uri or os.environ[ENV_DB_URI]
+
+        from odyssey_collector.products_db import (
+            create_product,
+            list_products,
+            migrate_products_from_json,
+            revoke_product,
+            rotate_product,
+        )
+
+        if args.create_product:
+            created = create_product(db_uri, args.product_slug, args.product_name)
+            print(f"product: slug={created.slug!r} name={created.name!r}")
+            print(f"api_key={created.api_key}")
+            print("save this key now -- it will not be printed again", file=sys.stderr)
+            return 0
+
+        if args.list_products:
+            for p in list_products(db_uri):
+                print(f"slug={p['slug']!r} name={p['name']!r} revoked={p['revoked']} created_at={p['created_at']}")
+            return 0
+
+        if args.revoke_product is not None:
+            try:
+                revoke_product(db_uri, args.revoke_product)
+            except KeyError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            print(f"revoked {args.revoke_product!r}")
+            return 0
+
+        if args.rotate_product is not None:
+            try:
+                rotated = rotate_product(db_uri, args.rotate_product)
+            except KeyError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            print(f"product: slug={rotated.slug!r} name={rotated.name!r}")
+            print(f"api_key={rotated.api_key}")
+            print("save this key now -- it will not be printed again", file=sys.stderr)
+            return 0
+
+        if args.migrate_products_from_json is not None:
+            count = migrate_products_from_json(db_uri, Path(args.migrate_products_from_json))
+            print(f"migrated {count} product(s) into {db_uri}")
+            return 0
 
     config = resolve_config(
         host=args.host,
         port=args.port,
         data_dir=args.data_dir,
         api_key=args.api_key,
+        db_uri=args.db_uri,
+        auth_cache_ttl_seconds=args.auth_cache_ttl_seconds,
         timezone=args.timezone,
         debug=args.debug,
     )
