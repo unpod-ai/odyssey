@@ -27,7 +27,9 @@ def create_product(db_uri: str, slug: str, name: str) -> CreatedProduct:
     api_key = secrets.token_urlsafe(32)
     conn = connect(db_uri)
     try:
-        existing = conn.execute("SELECT 1 FROM products WHERE slug = ?", (slug,)).fetchone()
+        existing = conn.execute(
+            "SELECT 1 FROM products WHERE slug = ?", (slug,)
+        ).fetchone()
         if existing is not None:
             raise ValueError(f"a product with slug {slug!r} already exists")
         try:
@@ -52,7 +54,12 @@ def list_products(db_uri: str) -> List[Dict[str, Any]]:
     finally:
         conn.close()
     return [
-        {"slug": r["slug"], "name": r["name"], "revoked": bool(r["revoked"]), "created_at": r["created_at"]}
+        {
+            "slug": r["slug"],
+            "name": r["name"],
+            "revoked": bool(r["revoked"]),
+            "created_at": r["created_at"],
+        }
         for r in rows
     ]
 
@@ -71,7 +78,9 @@ def revoke_product(db_uri: str, slug: str) -> None:
 def rotate_product(db_uri: str, slug: str) -> CreatedProduct:
     conn = connect(db_uri)
     try:
-        row = conn.execute("SELECT name FROM products WHERE slug = ?", (slug,)).fetchone()
+        row = conn.execute(
+            "SELECT name FROM products WHERE slug = ?", (slug,)
+        ).fetchone()
         if row is None:
             raise KeyError(f"no product with slug {slug!r}")
         new_key = secrets.token_urlsafe(32)
@@ -116,9 +125,7 @@ def migrate_products_from_json(db_uri: str, json_path: Path) -> int:
 
     keys = [entry["api_key"] for entry in entries]
     if len(set(keys)) != len(keys):
-        raise ValueError(
-            f"{json_path}: the same api_key is registered to two products"
-        )
+        raise ValueError(f"{json_path}: the same api_key is registered to two products")
 
     conn = connect(db_uri)
     try:
@@ -132,7 +139,12 @@ def migrate_products_from_json(db_uri: str, json_path: Path) -> int:
                     ON CONFLICT(slug) DO UPDATE SET
                         name = excluded.name, api_key_hash = excluded.api_key_hash
                     """,
-                    (entry["slug"], entry["name"], hash_api_key(entry["api_key"]), _now()),
+                    (
+                        entry["slug"],
+                        entry["name"],
+                        hash_api_key(entry["api_key"]),
+                        _now(),
+                    ),
                 )
                 count += 1
         except sqlite3.IntegrityError:

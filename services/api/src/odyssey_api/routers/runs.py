@@ -3,11 +3,12 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends
+from odyssey_schemas import EvalRunOut, EvalRunPageOut
+
 from odyssey_api import deps
 from odyssey_api.domain import eval_runs as domain
 from odyssey_api.pagination import paginate
 from odyssey_api.settings import Settings
-from odyssey_schemas import EvalRunOut, EvalRunPageOut
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 

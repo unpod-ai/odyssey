@@ -248,7 +248,9 @@ class CollectorConfig:
                 "storage), not both — picking an auth mode is explicit here, "
                 "not a silent precedence rule"
             )
-        auth_cache = AuthCache(self.db_uri, self.auth_cache_ttl_seconds) if self.db_uri else None
+        auth_cache = (
+            AuthCache(self.db_uri, self.auth_cache_ttl_seconds) if self.db_uri else None
+        )
         object.__setattr__(self, "_auth_cache", auth_cache)
 
     def product_for_key(self, api_key: str) -> Optional[Product]:
@@ -296,7 +298,9 @@ def resolve_config(
         auth_cache_ttl_seconds=(
             auth_cache_ttl_seconds
             if auth_cache_ttl_seconds is not None
-            else float(os.environ.get(ENV_AUTH_CACHE_TTL, DEFAULT_AUTH_CACHE_TTL_SECONDS))
+            else float(
+                os.environ.get(ENV_AUTH_CACHE_TTL, DEFAULT_AUTH_CACHE_TTL_SECONDS)
+            )
         ),
         timezone=timezone,
         debug=debug if debug is not None else _truthy(os.environ.get(ENV_DEBUG)),
@@ -364,7 +368,11 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._respond(
             200,
-            {"products": [{"slug": p.slug, "name": p.name} for p in config.list_products()]},
+            {
+                "products": [
+                    {"slug": p.slug, "name": p.name} for p in config.list_products()
+                ]
+            },
         )
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib method name
@@ -529,7 +537,9 @@ class _Handler(BaseHTTPRequestHandler):
         config = self.server.config
         presented = self.headers.get("Authorization", "")
         if config.db_uri is not None:
-            token = presented[len("Bearer "):] if presented.startswith("Bearer ") else ""
+            token = (
+                presented[len("Bearer ") :] if presented.startswith("Bearer ") else ""
+            )
             product = config.product_for_key(token)
             return (product is not None, product.slug if product else None)
         if not config.api_key:
@@ -700,7 +710,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ]
     if any(admin_actions):
         if not args.db_uri and not os.environ.get(ENV_DB_URI):
-            print("--db-uri (or $ODYSSEY_DB_URI) is required for product management flags", file=sys.stderr)
+            print(
+                "--db-uri (or $ODYSSEY_DB_URI) is required for product management flags",
+                file=sys.stderr,
+            )
             return 1
         db_uri = args.db_uri or os.environ[ENV_DB_URI]
 
@@ -721,7 +734,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         if args.list_products:
             for p in list_products(db_uri):
-                print(f"slug={p['slug']!r} name={p['name']!r} revoked={p['revoked']} created_at={p['created_at']}")
+                print(
+                    f"slug={p['slug']!r} name={p['name']!r} revoked={p['revoked']} created_at={p['created_at']}"
+                )
             return 0
 
         if args.revoke_product is not None:
@@ -745,7 +760,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0
 
         if args.migrate_products_from_json is not None:
-            count = migrate_products_from_json(db_uri, Path(args.migrate_products_from_json))
+            count = migrate_products_from_json(
+                db_uri, Path(args.migrate_products_from_json)
+            )
             print(f"migrated {count} product(s) into {db_uri}")
             return 0
 

@@ -18,7 +18,9 @@ def _get_op(response_ref: str = "#/components/schemas/Widget"):
     return {
         "get": {
             "responses": {
-                "200": {"content": {"application/json": {"schema": {"$ref": response_ref}}}}
+                "200": {
+                    "content": {"application/json": {"schema": {"$ref": response_ref}}}
+                }
             }
         }
     }

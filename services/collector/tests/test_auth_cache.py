@@ -43,8 +43,12 @@ def test_lookup_returns_none_for_unknown_key(tmp_path):
 
 def test_lookup_falls_through_to_db_on_cache_miss_for_newly_created_product(tmp_path):
     db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
-    cache = AuthCache(db_uri, ttl_seconds=3600)  # long TTL: cache won't refresh on its own
-    _seed(db_uri, "newco", "New Co", "sk-newco")  # created after the cache's initial load
+    cache = AuthCache(
+        db_uri, ttl_seconds=3600
+    )  # long TTL: cache won't refresh on its own
+    _seed(
+        db_uri, "newco", "New Co", "sk-newco"
+    )  # created after the cache's initial load
 
     product = cache.lookup("sk-newco")
 
