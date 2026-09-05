@@ -4,6 +4,7 @@ this repo's own established convention (see 5.9/6.1/7's own test suites)."""
 from __future__ import annotations
 
 import json
+import tempfile
 import uuid
 from dataclasses import replace
 
@@ -31,7 +32,13 @@ def _reset_index_manager():
 
 def _client(settings: Settings) -> TestClient:
     if not settings.db_uri or settings.db_uri == Settings().db_uri:
-        settings = replace(settings, db_uri=f"sqlite:///{uuid.uuid4().hex}.sqlite3")
+        # Absolute path under the OS temp dir (four-slash sqlite URI, per
+        # `parse_sqlite_uri`'s own three-slash-relative/four-slash-absolute
+        # convention) -- a relative filename here would resolve against the
+        # test runner's cwd (the repo root), leaving stray *.sqlite3 files
+        # behind after every run.
+        tmp_db = f"{tempfile.gettempdir()}/{uuid.uuid4().hex}.sqlite3"
+        settings = replace(settings, db_uri=f"sqlite:////{tmp_db.lstrip('/')}")
     app = create_app()
     app.dependency_overrides[deps.get_settings_dep] = lambda: settings
     return TestClient(app)
