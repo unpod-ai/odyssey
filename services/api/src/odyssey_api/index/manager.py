@@ -11,17 +11,17 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
-from typing import Dict
-
-from odyssey_store.db import connect
-
-logger = logging.getLogger("odyssey_api.index")
+from typing import Dict, Tuple
 
 from odyssey_api.index.exports_indexer import index_exports
 from odyssey_api.index.journeys_indexer import index_journeys
 from odyssey_api.index.metrics_indexer import index_metrics
 from odyssey_api.index.reconcile import reconcile
 from odyssey_api.settings import Settings
+
+from odyssey_store.db import connect
+
+logger = logging.getLogger("odyssey_api.index")
 
 
 class IndexHandle:
@@ -49,17 +49,21 @@ class IndexHandle:
         cycles = 0
         while not self._stop_event.wait(self._settings.index_interval_seconds):
             cycles += 1
-            full_reconcile = self._settings.index_reconcile_every > 0 and cycles % self._settings.index_reconcile_every == 0
+            full_reconcile = (
+                self._settings.index_reconcile_every > 0
+                and cycles % self._settings.index_reconcile_every == 0
+            )
             try:
                 self._run_pass(full_reconcile=full_reconcile)
             except Exception as e:
-                logger.exception(f"Index pass failed (will retry in {self._settings.index_interval_seconds}s): {e}")
+                logger.exception(
+                    f"Index pass failed (will retry in {self._settings.index_interval_seconds}s): {e}"
+                )
 
     def query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         conn = connect(self._settings.db_uri)
         try:
-            with self._lock:
-                return conn.execute(sql, params).fetchall()
+            return conn.execute(sql, params).fetchall()
         finally:
             conn.close()
 
@@ -80,16 +84,22 @@ class IndexHandle:
         self._thread.join(timeout=5)
 
 
-_registry: Dict[str, IndexHandle] = {}
+_RegistryKey = Tuple[str, str, str]
+_registry: Dict[_RegistryKey, IndexHandle] = {}
 _registry_lock = threading.Lock()
+
+
+def _registry_key(settings: Settings) -> _RegistryKey:
+    return (settings.db_uri, str(settings.journeys_dir), str(settings.exports_dir))
 
 
 def get_index(settings: Settings) -> IndexHandle:
     with _registry_lock:
-        handle = _registry.get(settings.db_uri)
+        key = _registry_key(settings)
+        handle = _registry.get(key)
         if handle is None:
             handle = IndexHandle(settings)
-            _registry[settings.db_uri] = handle
+            _registry[key] = handle
         return handle
 
 

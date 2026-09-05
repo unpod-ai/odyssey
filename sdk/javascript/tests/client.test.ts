@@ -90,6 +90,7 @@ write_events(
       env: {
         ...process.env,
         ODYSSEY_API_JOURNEYS_DIR: journeysDir,
+        ODYSSEY_DB_URI: `sqlite:///${join(tmp, "index.sqlite3")}`,
         ODYSSEY_API_DATASETS_REGISTRY: join(tmp, "no-such-datasets.yaml"),
         ODYSSEY_API_MODELS_REGISTRY: join(tmp, "no-such-models.yaml"),
         ODYSSEY_API_EVAL_REGISTRY: join(tmp, "no-such-eval.yaml"),
@@ -155,6 +156,7 @@ describe("OdysseySDK against a real services/api instance with --api-key set", (
         env: {
           ...process.env,
           ODYSSEY_API_JOURNEYS_DIR: join(tmp, "journeys"),
+          ODYSSEY_DB_URI: `sqlite:///${join(tmp, "index.sqlite3")}`,
           ODYSSEY_API_DATASETS_REGISTRY: join(tmp, "no-such-datasets.yaml"),
           ODYSSEY_API_MODELS_REGISTRY: join(tmp, "no-such-models.yaml"),
           ODYSSEY_API_EVAL_REGISTRY: join(tmp, "no-such-eval.yaml"),
