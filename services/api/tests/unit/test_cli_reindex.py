@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from odyssey_api.cli import register
 from typer.testing import CliRunner
+
+from odyssey_api.cli import register
 
 
 def _make_app():

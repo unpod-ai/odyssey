@@ -3,10 +3,6 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends
-from odyssey_api.deps import get_index_dep
-from odyssey_api.domain import metrics as domain
-from odyssey_api.index.manager import IndexHandle
-from odyssey_api.pagination import paginate
 from odyssey_schemas import (
     CountsOut,
     MetricsPageOut,
@@ -15,6 +11,11 @@ from odyssey_schemas import (
     ProjectCountOut,
 )
 from pydantic import ValidationError
+
+from odyssey_api.deps import get_index_dep
+from odyssey_api.domain import metrics as domain
+from odyssey_api.index.manager import IndexHandle
+from odyssey_api.pagination import paginate
 
 router = APIRouter(prefix="/metrics", tags=["metrics"])
 

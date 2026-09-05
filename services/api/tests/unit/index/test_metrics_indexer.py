@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 
-from odyssey_api.index.metrics_indexer import index_metrics
-
 from odyssey_store.db import connect
+
+from odyssey_api.index.metrics_indexer import index_metrics
 
 
 def _snapshot(ts, hostname, project=None):

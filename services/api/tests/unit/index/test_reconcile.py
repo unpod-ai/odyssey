@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from odyssey_api.index.reconcile import reconcile
-
 from odyssey_store.db import connect
+
+from odyssey_api.index.reconcile import reconcile
 
 
 def _seed(conn, path, exists_row=True):

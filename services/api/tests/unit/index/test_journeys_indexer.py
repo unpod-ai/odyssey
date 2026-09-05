@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from odyssey.jsonl import write_events
 from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
-from odyssey_api.index.journeys_indexer import index_journeys
-
 from odyssey_store.db import connect
+
+from odyssey_api.index.journeys_indexer import index_journeys
 
 JID = "j_idx"
 

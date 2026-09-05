@@ -11,6 +11,7 @@ from typing import List, Optional, Tuple
 
 from odyssey.export import fold_shard
 from odyssey.fold import FoldResult
+
 from odyssey_api.index.manager import IndexHandle
 from odyssey_api.repositories import filesystem
 

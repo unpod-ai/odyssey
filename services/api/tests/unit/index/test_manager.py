@@ -4,6 +4,7 @@ import time
 
 from odyssey.jsonl import write_events
 from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
+
 from odyssey_api.index import manager
 from odyssey_api.settings import Settings
 

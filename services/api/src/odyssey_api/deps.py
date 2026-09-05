@@ -9,6 +9,7 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from odyssey_api.index.manager import IndexHandle, get_index
 from odyssey_api.settings import Settings, get_settings
 

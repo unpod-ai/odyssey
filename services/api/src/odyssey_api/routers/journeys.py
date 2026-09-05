@@ -3,12 +3,6 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from odyssey_api import deps
-from odyssey_api.deps import get_index_dep
-from odyssey_api.domain import journeys as domain
-from odyssey_api.index.manager import IndexHandle
-from odyssey_api.pagination import paginate
-from odyssey_api.settings import Settings
 from odyssey_schemas import (
     CountsOut,
     DateCountOut,
@@ -20,6 +14,13 @@ from odyssey_schemas import (
     ProjectCountOut,
     StepOut,
 )
+
+from odyssey_api import deps
+from odyssey_api.deps import get_index_dep
+from odyssey_api.domain import journeys as domain
+from odyssey_api.index.manager import IndexHandle
+from odyssey_api.pagination import paginate
+from odyssey_api.settings import Settings
 
 router = APIRouter(prefix="/journeys", tags=["journeys"])
 

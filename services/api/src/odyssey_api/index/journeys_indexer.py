@@ -23,6 +23,7 @@ from typing import Optional
 from odyssey.export import ExportError
 from odyssey.fold import fold
 from odyssey.jsonl import MalformedHeaderError, SchemaVersionError, read_events
+
 from odyssey_api.index.manifest import get_file_state, upsert_file_state
 from odyssey_api.repositories.filesystem import is_date_dir
 

@@ -13,13 +13,13 @@ import sqlite3
 import threading
 from typing import Dict, Tuple
 
+from odyssey_store.db import connect
+
 from odyssey_api.index.exports_indexer import index_exports
 from odyssey_api.index.journeys_indexer import index_journeys
 from odyssey_api.index.metrics_indexer import index_metrics
 from odyssey_api.index.reconcile import reconcile
 from odyssey_api.settings import Settings
-
-from odyssey_store.db import connect
 
 logger = logging.getLogger("odyssey_api.index")
 

@@ -3,11 +3,12 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends
+from odyssey_schemas import ExportArtifactOut, ExportPageOut
+
 from odyssey_api.deps import get_index_dep
 from odyssey_api.domain import exports as domain
 from odyssey_api.index.manager import IndexHandle
 from odyssey_api.pagination import paginate
-from odyssey_schemas import ExportArtifactOut, ExportPageOut
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 

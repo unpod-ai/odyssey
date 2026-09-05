@@ -13,6 +13,7 @@ import yaml
 from fastapi.testclient import TestClient
 from odyssey.jsonl import write_events
 from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
+
 from odyssey_api import deps
 from odyssey_api.index import manager
 from odyssey_api.main import create_app

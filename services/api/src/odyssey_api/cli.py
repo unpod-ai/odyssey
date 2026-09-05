@@ -38,6 +38,7 @@ def register(app: Any) -> None:
         import os
 
         import uvicorn
+
         from odyssey_api.settings import get_settings
 
         if api_key is not None:
@@ -110,13 +111,13 @@ def register(app: Any) -> None:
         """Force one full index pass (journeys + metrics + exports +
         reconciliation) right now, outside the background worker's
         interval -- useful right after a deploy or in scripts/tests."""
+        from odyssey_store.db import connect
+
         from odyssey_api.index.exports_indexer import index_exports
         from odyssey_api.index.journeys_indexer import index_journeys
         from odyssey_api.index.metrics_indexer import index_metrics
         from odyssey_api.index.reconcile import reconcile
         from odyssey_api.settings import get_settings
-
-        from odyssey_store.db import connect
 
         settings = get_settings()
         conn = connect(settings.db_uri)
