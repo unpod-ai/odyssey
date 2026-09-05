@@ -31,6 +31,22 @@ from odyssey_collector.server import (
     serve,
 )
 
+@pytest.fixture(autouse=True)
+def _isolated_env(monkeypatch):
+    """``ODYSSEY_DB_URI`` is a shared, non-``ODYSSEY_COLLECTOR_``-prefixed
+    env var that a developer running ``services/api`` locally may well have
+    exported. Without this, a test calling ``resolve_config``/``main``
+    without explicitly passing ``db_uri``/``--db-uri`` could silently
+    construct an ``AuthCache`` against a real, live database instead of the
+    intended isolated ``tmp_path`` one. Cleared before each test's own
+    ``monkeypatch.setenv`` calls (if any), so tests that set these
+    explicitly are unaffected.
+    """
+    monkeypatch.delenv("ODYSSEY_DB_URI", raising=False)
+    monkeypatch.delenv("ODYSSEY_COLLECTOR_API_KEY", raising=False)
+    monkeypatch.delenv("ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS", raising=False)
+
+
 JID = "j_collector"
 FIXED_DATE = "2026-08-27"
 

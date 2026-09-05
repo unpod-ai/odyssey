@@ -3,10 +3,21 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from odyssey_store.auth import hash_api_key
 from odyssey_store.db import connect
 
 from odyssey_collector.server import main
+
+
+@pytest.fixture(autouse=True)
+def _isolated_env(monkeypatch):
+    """See test_server.py's fixture of the same name -- a developer's real
+    ``$ODYSSEY_DB_URI`` (or the other collector env vars) must never leak
+    into a CLI test that constructs its own isolated tmp_path database."""
+    monkeypatch.delenv("ODYSSEY_DB_URI", raising=False)
+    monkeypatch.delenv("ODYSSEY_COLLECTOR_API_KEY", raising=False)
+    monkeypatch.delenv("ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS", raising=False)
 
 
 def test_create_product_prints_key_once(tmp_path, capsys):
@@ -89,3 +100,14 @@ def test_create_product_requires_db_uri(capsys):
 
     assert code == 1
     assert "db-uri" in capsys.readouterr().err.lower()
+
+
+def test_api_key_and_db_uri_together_is_a_clean_error_not_a_traceback(tmp_path, capsys):
+    db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
+
+    code = main(["--api-key", "sk-x", "--db-uri", db_uri])
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "api_key" in err and "db_uri" in err
+    assert "Traceback" not in err

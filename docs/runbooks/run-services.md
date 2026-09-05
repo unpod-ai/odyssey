@@ -45,7 +45,7 @@ Environment=ODYSSEY_COLLECTOR_PORT=8787
 Environment=ODYSSEY_COLLECTOR_DATA_DIR=/var/lib/odyssey/collector-data
 # one of these two, never both — see services/collector/README.md
 # Environment=ODYSSEY_COLLECTOR_API_KEY=change-me
-Environment=ODYSSEY_DB_URI=/var/lib/odyssey/odyssey.db
+Environment=ODYSSEY_DB_URI=sqlite:////var/lib/odyssey/odyssey.db
 Environment=ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS=60
 ExecStart=/opt/odyssey/.venv/bin/odyssey-collector
 Restart=on-failure
@@ -99,6 +99,12 @@ SQLite database). Setting both `ODYSSEY_COLLECTOR_API_KEY` and
 the server to start; `ODYSSEY_DB_URI`/`--db-uri` is required specifically
 to run the product-management CLI flags below.
 
+`ODYSSEY_DB_URI`/`--db-uri` must be a `sqlite:///` URI, not a bare
+filesystem path — three slashes for a relative path
+(`sqlite:///./odyssey.sqlite3`) or four slashes for an absolute path
+(`sqlite:////var/lib/odyssey/odyssey.db`); a bare path raises `ValueError`
+and the collector will crash-loop under systemd.
+
 ### Product/tenant management
 
 Product roster and authentication (when using `--db-uri` mode) are managed through the SQLite database pointed to by `ODYSSEY_DB_URI`. The database is initialized automatically on first use if it doesn't exist. Use the CLI commands to create, list, revoke, and rotate products:
@@ -109,7 +115,7 @@ Create a new product with a fresh random API key:
 
 ```bash
 sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
-  --db-uri /var/lib/odyssey/odyssey.db --create-product \
+  --db-uri sqlite:////var/lib/odyssey/odyssey.db --create-product \
   --product-slug acme --product-name "Acme Corp"
 ```
 
@@ -119,14 +125,14 @@ List all products:
 
 ```bash
 sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
-  --db-uri /var/lib/odyssey/odyssey.db --list-products
+  --db-uri sqlite:////var/lib/odyssey/odyssey.db --list-products
 ```
 
 Add a new product to an already-running deployment:
 
 ```bash
 sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
-  --db-uri /var/lib/odyssey/odyssey.db --create-product \
+  --db-uri sqlite:////var/lib/odyssey/odyssey.db --create-product \
   --product-slug globex --product-name "Globex Inc"
 ```
 
@@ -136,21 +142,21 @@ Revoke a product's access (prevent it from authenticating):
 
 ```bash
 sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
-  --db-uri /var/lib/odyssey/odyssey.db --revoke-product acme
+  --db-uri sqlite:////var/lib/odyssey/odyssey.db --revoke-product acme
 ```
 
 Rotate a product's API key (invalidate the old key, generate a new one):
 
 ```bash
 sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
-  --db-uri /var/lib/odyssey/odyssey.db --rotate-product acme
+  --db-uri sqlite:////var/lib/odyssey/odyssey.db --rotate-product acme
 ```
 
 If migrating from an older deployment that used a `products.json` file, use the one-time migration command:
 
 ```bash
 sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
-  --db-uri /var/lib/odyssey/odyssey.db --migrate-products-from-json /path/to/old/products.json
+  --db-uri sqlite:////var/lib/odyssey/odyssey.db --migrate-products-from-json /path/to/old/products.json
 ```
 
 All other collector CLI flags (`--host`/`--port`/`--data-dir`/`--timezone`) have `ODYSSEY_COLLECTOR_*` env equivalents — see `services/collector/README.md`'s config table. Set them as `Environment=` lines (or `EnvironmentFile=/etc/odyssey/collector.env` for a real deployment, kept out of git).

@@ -89,26 +89,57 @@ def rotate_product(db_uri: str, slug: str) -> CreatedProduct:
 def migrate_products_from_json(db_uri: str, json_path: Path) -> int:
     """One-time cutover: hashes each already-existing plaintext api_key
     as-is, no rotation forced -- already-integrated tenants keep working
-    with the same key they already have."""
+    with the same key they already have.
+
+    This is the sole production cutover path off the old ``products.json``
+    file for every existing deployment -- an operator running this once,
+    mid-migration, deserves a clear error naming what's wrong rather than a
+    bare ``KeyError``/``TypeError``/``sqlite3.IntegrityError`` traceback.
+    Every entry is validated up front, before any row is inserted, so a
+    malformed entry anywhere in the file leaves the database completely
+    untouched (no partial migration).
+    """
     raw = json.loads(Path(json_path).read_text(encoding="utf-8"))
     entries = raw.get("products") if isinstance(raw, dict) else None
     if not isinstance(entries, list):
         raise ValueError(f"{json_path}: expected a {{'products': [...]}} roster")
 
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict) or not all(
+            isinstance(entry.get(k), str) and entry.get(k)
+            for k in ("slug", "name", "api_key")
+        ):
+            raise ValueError(
+                f"{json_path}: products[{i}] must have non-empty string "
+                "'slug', 'name', and 'api_key' fields"
+            )
+
+    keys = [entry["api_key"] for entry in entries]
+    if len(set(keys)) != len(keys):
+        raise ValueError(
+            f"{json_path}: the same api_key is registered to two products"
+        )
+
     conn = connect(db_uri)
     try:
         count = 0
-        for entry in entries:
-            conn.execute(
-                """
-                INSERT INTO products (slug, name, api_key_hash, revoked, created_at)
-                VALUES (?, ?, ?, 0, ?)
-                ON CONFLICT(slug) DO UPDATE SET
-                    name = excluded.name, api_key_hash = excluded.api_key_hash
-                """,
-                (entry["slug"], entry["name"], hash_api_key(entry["api_key"]), _now()),
-            )
-            count += 1
+        try:
+            for entry in entries:
+                conn.execute(
+                    """
+                    INSERT INTO products (slug, name, api_key_hash, revoked, created_at)
+                    VALUES (?, ?, ?, 0, ?)
+                    ON CONFLICT(slug) DO UPDATE SET
+                        name = excluded.name, api_key_hash = excluded.api_key_hash
+                    """,
+                    (entry["slug"], entry["name"], hash_api_key(entry["api_key"]), _now()),
+                )
+                count += 1
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            raise ValueError(
+                f"{json_path}: the same api_key is registered to two products"
+            ) from None
         conn.commit()
     finally:
         conn.close()

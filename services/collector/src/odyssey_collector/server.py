@@ -633,9 +633,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--db-uri",
         default=None,
-        help="shared SQLite file (see packages/odyssey-store) for product-scoped "
-        "auth and management flags below; default: $ODYSSEY_DB_URI. "
-        "Mutually exclusive with --api-key",
+        help="shared SQLite database (see packages/odyssey-store) for product-scoped "
+        "auth and management flags below, as a sqlite:/// URI -- e.g. "
+        "sqlite:///./odyssey.sqlite3 (relative, 3 slashes) or "
+        "sqlite:////var/lib/odyssey/odyssey.db (absolute, 4 slashes); "
+        "default: $ODYSSEY_DB_URI. Mutually exclusive with --api-key",
     )
     parser.add_argument(
         "--auth-cache-ttl-seconds",
@@ -747,16 +749,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"migrated {count} product(s) into {db_uri}")
             return 0
 
-    config = resolve_config(
-        host=args.host,
-        port=args.port,
-        data_dir=args.data_dir,
-        api_key=args.api_key,
-        db_uri=args.db_uri,
-        auth_cache_ttl_seconds=args.auth_cache_ttl_seconds,
-        timezone=args.timezone,
-        debug=args.debug,
-    )
+    try:
+        config = resolve_config(
+            host=args.host,
+            port=args.port,
+            data_dir=args.data_dir,
+            api_key=args.api_key,
+            db_uri=args.db_uri,
+            auth_cache_ttl_seconds=args.auth_cache_ttl_seconds,
+            timezone=args.timezone,
+            debug=args.debug,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if config.debug:
         logging.basicConfig(
             level=logging.INFO, format="%(asctime)s %(name)s %(message)s"

@@ -42,6 +42,8 @@ Env-first, explicit argument wins — same precedence as `odyssey.config.resolve
 | `ODYSSEY_COLLECTOR_DATA_DIR` | `--data-dir` | `./collector-data` | where `<date>/<journey_id>.jsonl` files land |
 | `ODYSSEY_COLLECTOR_API_KEY` | `--api-key` | unset (open) | one shared bearer token, unscoped. Mutually exclusive with `--db-uri` |
 | `ODYSSEY_DB_URI` | `--db-uri` | unset (optional; required only for the product-management CLI flags below) | SQLite database file/URI for product/tenant roster and shared auth cache with `services/api`. Mutually exclusive with `--api-key`. Must be identical in both services (see `docs/runbooks/run-services.md`) |
+
+`ODYSSEY_DB_URI`/`--db-uri` must be a `sqlite:///` URI, not a bare filesystem path — three slashes for a relative path (`sqlite:///./odyssey.sqlite3`) or four slashes for an absolute path (`sqlite:////var/lib/odyssey/odyssey.db`); a bare path like `/var/lib/odyssey/odyssey.db` raises `ValueError` at startup.
 | `ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS` | `--auth-cache-ttl-seconds` | `60` | Auth cache time-to-live in seconds (product/api_key lookups cached to reduce DB hits) |
 | `ODYSSEY_COLLECTOR_TIMEZONE` | `--timezone` | `UTC` | IANA name (e.g. `Asia/Kolkata`); which day a batch's date-partition belongs to. Unrecognised names fall back to UTC |
 | `ODYSSEY_COLLECTOR_DEBUG` | `--debug` | unset (off) | per-request access log (method, path, status) to stdout, via the `odyssey_collector.requests` logger. Quiet by default — same as before this existed |
@@ -72,7 +74,7 @@ For more than one tenant, use the SQLite database (via `--db-uri`) with the prod
 Create a new product with a fresh random API key:
 
 ```bash
-odyssey-collector --db-uri ./odyssey.db --create-product \
+odyssey-collector --db-uri sqlite:///./odyssey.db --create-product \
   --product-slug acme --product-name "Acme Corp"
 ```
 
@@ -81,19 +83,19 @@ This prints the generated API key once — save it now, as it cannot be retrieve
 List all products currently in the database:
 
 ```bash
-odyssey-collector --db-uri ./odyssey.db --list-products
+odyssey-collector --db-uri sqlite:///./odyssey.db --list-products
 ```
 
 Revoke a product's access (prevent it from authenticating):
 
 ```bash
-odyssey-collector --db-uri ./odyssey.db --revoke-product acme
+odyssey-collector --db-uri sqlite:///./odyssey.db --revoke-product acme
 ```
 
 Rotate a product's API key (invalidate the old key, generate a new one):
 
 ```bash
-odyssey-collector --db-uri ./odyssey.db --rotate-product acme
+odyssey-collector --db-uri sqlite:///./odyssey.db --rotate-product acme
 ```
 
 This prints the new API key once — the old key is no longer valid.
@@ -107,7 +109,7 @@ This prints the new API key once — the old key is no longer valid.
 If you have an existing `products.json` file from an earlier deployment, use the one-time migration command:
 
 ```bash
-odyssey-collector --db-uri ./odyssey.db --migrate-products-from-json /path/to/old/products.json
+odyssey-collector --db-uri sqlite:///./odyssey.db --migrate-products-from-json /path/to/old/products.json
 ```
 
 This imports all products from the old JSON file into the SQLite database, with API keys hashed. The old `products.json` file is no longer needed after migration and can be safely deleted.

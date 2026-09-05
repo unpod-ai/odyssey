@@ -99,3 +99,77 @@ def test_migrate_products_from_json_preserves_existing_keys(tmp_path):
     row = conn.execute("SELECT api_key_hash FROM products WHERE slug = 'acme'").fetchone()
     conn.close()
     assert row["api_key_hash"] == hash_api_key("sk-acme-original")
+
+
+def test_migrate_products_from_json_rejects_a_malformed_entry(tmp_path):
+    json_path = tmp_path / "products.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "products": [
+                    {"slug": "acme", "name": "Acme Corp", "api_key": "sk-acme-original"},
+                    {"slug": "globex", "name": "Globex Inc"},  # missing api_key
+                ]
+            }
+        )
+    )
+    db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
+
+    with pytest.raises(ValueError, match=r"products\[1\].*slug.*name.*api_key"):
+        migrate_products_from_json(db_uri, json_path)
+
+    assert list_products(db_uri) == []
+
+
+def test_migrate_products_from_json_rejects_duplicate_api_key_within_file(tmp_path):
+    json_path = tmp_path / "products.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "products": [
+                    {"slug": "acme", "name": "Acme Corp", "api_key": "sk-shared"},
+                    {"slug": "globex", "name": "Globex Inc", "api_key": "sk-shared"},
+                ]
+            }
+        )
+    )
+    db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
+
+    with pytest.raises(ValueError, match="the same api_key is registered to two products"):
+        migrate_products_from_json(db_uri, json_path)
+
+    assert list_products(db_uri) == []
+
+
+def test_migrate_products_from_json_rejects_duplicate_api_key_against_existing_product(tmp_path):
+    """A JSON entry whose api_key hashes to the same value already stored
+    for a different, existing product trips the api_key_hash unique index
+    (a cross-run collision, not a duplicate within the file itself) --
+    confirms the sqlite3.IntegrityError -> ValueError translation and that
+    nothing new is inserted."""
+    db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
+    create_product(db_uri, "acme", "Acme Corp")
+    conn = connect(db_uri)
+    conn.execute(
+        "UPDATE products SET api_key_hash = ? WHERE slug = 'acme'",
+        (hash_api_key("sk-acme-key"),),
+    )
+    conn.commit()
+    conn.close()
+
+    json_path = tmp_path / "products.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "products": [
+                    {"slug": "globex", "name": "Globex Inc", "api_key": "sk-acme-key"},
+                ]
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="the same api_key is registered to two products"):
+        migrate_products_from_json(db_uri, json_path)
+
+    products = list_products(db_uri)
+    assert [p["slug"] for p in products] == ["acme"]
