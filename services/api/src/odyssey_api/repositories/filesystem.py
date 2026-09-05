@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml  # pyrefly: ignore[missing-import]
 
 __all__ = [
+    "is_date_dir",
     "list_journeys",
     "find_journey_path",
     "read_registry",
@@ -27,7 +28,7 @@ __all__ = [
 ]
 
 
-def _is_date_dir(path: Path) -> bool:
+def is_date_dir(path: Path) -> bool:
     """True for a directory whose name parses as an ISO date — the same
     partition-name discipline ``odyssey_collector.prune.prune_dir`` uses,
     which is what keeps a non-date directory (e.g. the collector's own
@@ -49,7 +50,7 @@ def _list_journeys_flat(dir_path: Path) -> List[Tuple[str, str]]:
     if not dir_path.is_dir():
         return []
     out: List[Tuple[str, str]] = []
-    for date_dir in sorted(p for p in dir_path.iterdir() if _is_date_dir(p)):
+    for date_dir in sorted(p for p in dir_path.iterdir() if is_date_dir(p)):
         for shard in sorted(date_dir.glob("*.jsonl")):
             out.append((shard.stem, date_dir.name))
     return out
@@ -85,7 +86,7 @@ def list_journeys(
         return []
     out: List[Tuple[str, str]] = []
     for entry in sorted(p for p in journeys_dir.iterdir() if p.is_dir()):
-        if _is_date_dir(entry):
+        if is_date_dir(entry):
             for shard in sorted(entry.glob("*.jsonl")):
                 out.append((shard.stem, entry.name))
             continue
@@ -110,7 +111,7 @@ def find_journey_path(journeys_dir: Path, journey_id: str) -> Path | None:
     for entry in journeys_dir.iterdir():
         if not entry.is_dir():
             continue
-        if _is_date_dir(entry):
+        if is_date_dir(entry):
             candidate = entry / f"{journey_id}.jsonl"
             if candidate.is_file():
                 return candidate
@@ -118,7 +119,7 @@ def find_journey_path(journeys_dir: Path, journey_id: str) -> Path | None:
         if entry.name == "metrics":
             continue
         for date_dir in entry.iterdir():
-            if not _is_date_dir(date_dir):
+            if not is_date_dir(date_dir):
                 continue
             candidate = date_dir / f"{journey_id}.jsonl"
             if candidate.is_file():
@@ -197,7 +198,7 @@ def list_metrics(
     else:
         metrics_dirs = [journeys_dir / "metrics"]
         for entry in journeys_dir.iterdir():
-            if entry.is_dir() and not _is_date_dir(entry) and entry.name != "metrics":
+            if entry.is_dir() and not is_date_dir(entry) and entry.name != "metrics":
                 metrics_dirs.append(entry / "metrics")
     out: List[Dict[str, Any]] = []
     for metrics_dir in metrics_dirs:
