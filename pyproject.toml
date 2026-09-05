@@ -6,4 +6,4 @@
 # `uv sync` if a glob picked it up.
 #
 [tool.uv.workspace]
-members = ["packages/odyssey-core", "packages/odyssey-schemas", "services/collector", "services/api", "data_preparation", "cli", "training", "evaluation", "sdk/python"]
+members = ["packages/odyssey-core", "packages/odyssey-schemas", "packages/odyssey-store", "services/collector", "services/api", "data_preparation", "cli", "training", "evaluation", "sdk/python"]

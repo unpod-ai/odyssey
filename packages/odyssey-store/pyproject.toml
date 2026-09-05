@@ -1,0 +1,39 @@
+[project]
+name = "odyssey-store"
+version = "0.1.0"
+description = "Shared SQLite schema/connection helper for services/api's read index and services/collector's product roster — stdlib sqlite3 only, no ORM."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Unpod", email = "parvinder@unpod.ai" }]
+
+# stdlib sqlite3 only, matching odyssey-core's/odyssey-collector's own
+# dependency discipline -- this package is a thin, dependency-free schema
+# contract two independently-deployed services import, not a place to pull
+# in an ORM.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "black==26.3.1",
+  "isort>=5.13",
+  "flake8>=7.3",
+  "pyrefly>=0.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/odyssey_store"]
+
+[tool.black]
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

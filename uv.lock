@@ -12,6 +12,7 @@ members = [
     "odyssey-eval",
     "odyssey-schemas",
     "odyssey-sdk",
+    "odyssey-store",
     "odyssey-training",
 ]
 
@@ -932,6 +933,30 @@ requires-dist = [
     { name = "pyrefly", marker = "extra == 'dev'", specifier = ">=0.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.30" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "odyssey-store"
+version = "0.1.0"
+source = { editable = "packages/odyssey-store" }
+
+[package.optional-dependencies]
+dev = [
+    { name = "black" },
+    { name = "flake8" },
+    { name = "isort" },
+    { name = "pyrefly" },
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "black", marker = "extra == 'dev'", specifier = "==26.3.1" },
+    { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.3" },
+    { name = "isort", marker = "extra == 'dev'", specifier = ">=5.13" },
+    { name = "pyrefly", marker = "extra == 'dev'", specifier = ">=0.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
 ]
 provides-extras = ["dev"]
 
