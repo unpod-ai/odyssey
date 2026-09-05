@@ -2,7 +2,7 @@
 were indexed -- services/collector's prune.py deletes old date
 directories independently of services/api, so the index needs its own
 pass to notice. Run on a slower cadence than the incremental indexing
-passes (see index/worker.py) -- stat-ing every already-known path on
+passes (see index/manager.py) -- stat-ing every already-known path on
 every pass would defeat the point of incremental indexing.
 """
 
@@ -13,7 +13,9 @@ from sqlite3 import Connection
 
 
 def reconcile(conn: Connection) -> int:
-    paths = [row["path"] for row in conn.execute("SELECT path FROM indexed_files").fetchall()]
+    paths = [
+        row["path"] for row in conn.execute("SELECT path FROM indexed_files").fetchall()
+    ]
     removed = 0
     for path in paths:
         if os.path.exists(path):

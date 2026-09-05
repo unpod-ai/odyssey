@@ -52,7 +52,9 @@ def _tail_shard(conn: Connection, shard: Path, product_slug) -> int:
                 continue
             try:
                 snapshot = json.loads(line)
-            except json.JSONDecodeError:
+                if not isinstance(snapshot, dict):
+                    raise AttributeError("metrics line did not decode to an object")
+            except (json.JSONDecodeError, AttributeError):
                 logger.warning("skipping malformed metrics line in %s", shard)
                 continue
             now = _now()
@@ -82,7 +84,15 @@ def _tail_shard(conn: Connection, shard: Path, product_slug) -> int:
             )
             inserted += 1
 
-    upsert_file_state(conn, str(shard), "metrics", stat.st_mtime_ns, stat.st_size, consumed_offset, _now())
+    upsert_file_state(
+        conn,
+        str(shard),
+        "metrics",
+        stat.st_mtime_ns,
+        stat.st_size,
+        consumed_offset,
+        _now(),
+    )
     return inserted
 
 
