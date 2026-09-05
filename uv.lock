@@ -786,6 +786,7 @@ version = "0.1.0"
 source = { editable = "services/collector" }
 dependencies = [
     { name = "odyssey" },
+    { name = "odyssey-store" },
 ]
 
 [package.optional-dependencies]
@@ -803,6 +804,7 @@ requires-dist = [
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.3" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=5.13" },
     { name = "odyssey", editable = "packages/odyssey-core" },
+    { name = "odyssey-store", editable = "packages/odyssey-store" },
     { name = "pyrefly", marker = "extra == 'dev'", specifier = ">=0.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
 ]

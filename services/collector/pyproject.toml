@@ -11,7 +11,7 @@ authors = [{ name = "Unpod", email = "parvinder@unpod.ai" }]
 # Reused for the JSONL codec (odyssey.jsonl) so the on-the-wire parsing has one
 # implementation, not a second one written against this service's own copy of
 # the format. See README.md for why this is not FastAPI yet.
-dependencies = ["odyssey"]
+dependencies = ["odyssey", "odyssey-store"]
 
 [project.optional-dependencies]
 dev = [
@@ -27,6 +27,7 @@ odyssey-collector = "odyssey_collector.server:main"
 
 [tool.uv.sources]
 odyssey = { workspace = true }
+odyssey-store = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
