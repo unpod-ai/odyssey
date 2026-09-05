@@ -113,17 +113,17 @@ def test_rotate_product_prints_a_new_key(tmp_path, capsys):
         ]
     )
     first_out = capsys.readouterr().out
-    first_key = [l for l in first_out.splitlines() if l.startswith("api_key=")][
-        0
-    ].split("=", 1)[1]
+    first_key = [
+        line for line in first_out.splitlines() if line.startswith("api_key=")
+    ][0].split("=", 1)[1]
 
     code = main(["--db-uri", db_uri, "--rotate-product", "acme"])
 
     assert code == 0
     second_out = capsys.readouterr().out
-    second_key = [l for l in second_out.splitlines() if l.startswith("api_key=")][
-        0
-    ].split("=", 1)[1]
+    second_key = [
+        line for line in second_out.splitlines() if line.startswith("api_key=")
+    ][0].split("=", 1)[1]
     assert second_key != first_key
 
 

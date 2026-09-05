@@ -22,8 +22,6 @@ from odyssey.sinks import HttpSinkError
 from odyssey_store.auth import hash_api_key
 from odyssey_store.db import connect
 
-from odyssey_collector.auth_cache import Product
-from odyssey_collector.products_db import create_product
 from odyssey_collector.server import (
     CollectorConfig,
     _safe_stem,
