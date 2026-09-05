@@ -72,20 +72,22 @@ on.
 - ``api_key`` (``--api-key``/``ODYSSEY_COLLECTOR_API_KEY``) — one shared
   key, unscoped: any caller with the key writes into the flat
   ``<data_dir>/<date>/`` layout below. The simple single-tenant mode.
-- ``products`` (``--products-file``/``ODYSSEY_COLLECTOR_PRODUCTS_FILE``, a
-  JSON file shaped ``{"products": [{"slug": ..., "name": ..., "api_key":
-  ...}, ...]}``) — a small registered-tenant roster, each with a unique
-  ``api_key`` and a unique ``slug``. Storage becomes
-  ``<data_dir>/<slug>/<date>/<journey_id>.jsonl``, so isolation is
-  structural (one caller's key can never resolve into another product's
-  directory), not just an access check layered on shared storage. ``name``
-  exists purely for operator legibility — logs, `GET /products`, reading
-  the products file — the ``slug`` is what actually names the directory
-  and every invocation. This is a stopgap, not real multi-tenant
-  infrastructure: the roster is a flat file loaded once at startup (edit
-  it and restart the process to add/revoke a product), not a database.
+- ``db_uri`` (``ODYSSEY_DB_URI``) — a shared SQLite file (see
+  ``packages/odyssey-store``) holding a ``products`` table, each row a
+  registered tenant with a unique ``api_key_hash`` and a unique ``slug``.
+  Storage becomes ``<data_dir>/<slug>/<date>/<journey_id>.jsonl``, so
+  isolation is structural (one caller's key can never resolve into
+  another product's directory), not just an access check layered on
+  shared storage. ``name`` exists purely for operator legibility — logs,
+  `GET /products` — the ``slug`` is what actually names the directory and
+  every invocation. Lookups go through an in-memory ``AuthCache``
+  (``odyssey_collector.auth_cache``) refreshed on a background thread, so
+  ingest never pays a DB round-trip per request; a cache miss falls
+  through to a direct query so a just-created product authenticates
+  immediately. The roster itself is managed out-of-band (see
+  ``odyssey_collector.products_db``), not by this server.
 
-Passing both ``api_key`` and ``products`` raises at construction — picking
+Passing both ``api_key`` and ``db_uri`` raises at construction — picking
 a mode is explicit, not a silent precedence rule. In product-scoped mode,
 ``GET /products`` (any registered key) lists ``{slug, name}`` for the
 whole roster — never keys — as a debugging/operator aid.
@@ -109,14 +111,13 @@ import gzip
 import json
 import logging
 import os
-import secrets
 import sys
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence, Tuple
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 from urllib.parse import unquote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -127,25 +128,25 @@ from odyssey.jsonl import (
     read_events,
     write_events,
 )
+from odyssey_store.db import connect
+
+from odyssey_collector.auth_cache import AuthCache, Product
 
 ENV_HOST = "ODYSSEY_COLLECTOR_HOST"
 ENV_PORT = "ODYSSEY_COLLECTOR_PORT"
 ENV_DATA_DIR = "ODYSSEY_COLLECTOR_DATA_DIR"
 ENV_API_KEY = "ODYSSEY_COLLECTOR_API_KEY"
-ENV_PRODUCTS_FILE = "ODYSSEY_COLLECTOR_PRODUCTS_FILE"
+ENV_DB_URI = "ODYSSEY_DB_URI"
+ENV_AUTH_CACHE_TTL = "ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS"
 ENV_TIMEZONE = "ODYSSEY_COLLECTOR_TIMEZONE"
 ENV_DEBUG = "ODYSSEY_COLLECTOR_DEBUG"
-
-# Pre-rename name. resolve_config no longer reads it -- and never silently
-# should, since a deployment that still has it set (with no --api-key
-# either) would otherwise start in fully-open, unauthenticated mode instead
-# of failing fast. See the fail-fast note on _load_products_file.
-ENV_KEYS_FILE_OLD = "ODYSSEY_COLLECTOR_KEYS_FILE"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 DEFAULT_DATA_DIR = "./collector-data"
 DEFAULT_TIMEZONE = "UTC"
+DEFAULT_DB_URI = "sqlite:///./odyssey.sqlite3"
+DEFAULT_AUTH_CACHE_TTL_SECONDS = 60.0
 
 # Per-request access logging, off by default (see _Handler.log_message) --
 # a caller opts in with --debug/ODYSSEY_COLLECTOR_DEBUG rather than editing
@@ -210,132 +211,6 @@ def _existing_event_ids(dest: Path) -> set[str]:
     return {e.event_id for e in result.events}
 
 
-@dataclass(frozen=True)
-class Product:
-    """One registered tenant: a human-readable ``name`` plus the ``slug``
-    that actually names its storage partition and its ``api_key`` -- the
-    top-level, unique-key-per-tenant auth boundary. (Not to be confused
-    with the unrelated ``project`` tag packages/odyssey-core's capture
-    side can attach to a journey -- see odyssey/project.py -- which is
-    purely descriptive and never an auth concept.)
-
-    ``slug`` rather than an opaque id, because it is what shows up in
-    ``<data_dir>/<slug>/...`` and in every log line and CLI invocation —
-    something an operator reading the filesystem or a `--data-dir` flag can
-    recognise, not a UUID they have to cross-reference elsewhere.
-    """
-
-    slug: str
-    name: str
-    api_key: str
-
-
-def _load_products_file(path: Path | str) -> Tuple[Product, ...]:
-    """Parse a JSON ``{"products": [{"slug", "name", "api_key"}, ...]}`` file.
-
-    Fails loudly and immediately — at startup, not on the first mismatched
-    request — if the file is missing or malformed, or if two products share a
-    slug or a key. A silently-empty or ambiguous roster would look identical
-    to "no keys configured" or "which product does this key belong to?" and
-    quietly misroute or reopen the server.
-    """
-    raw = json.loads(Path(path).read_text())
-    entries = raw.get("products") if isinstance(raw, dict) else None
-    if not isinstance(entries, list) or not entries:
-        raise ValueError(
-            f"{path}: products file must be a JSON object shaped "
-            '{"products": [{"slug": ..., "name": ..., "api_key": ...}, ...]}'
-        )
-
-    products = []
-    for i, entry in enumerate(entries):
-        if not isinstance(entry, dict) or not all(
-            isinstance(entry.get(k), str) and entry.get(k)
-            for k in ("slug", "name", "api_key")
-        ):
-            raise ValueError(
-                f"{path}: products[{i}] must have non-empty string "
-                "'slug', 'name', and 'api_key' fields"
-            )
-        products.append(
-            Product(slug=entry["slug"], name=entry["name"], api_key=entry["api_key"])
-        )
-
-    slugs = [p.slug for p in products]
-    if len(set(slugs)) != len(slugs):
-        raise ValueError(f"{path}: duplicate product slug in {sorted(slugs)}")
-    keys = [p.api_key for p in products]
-    if len(set(keys)) != len(keys):
-        raise ValueError(f"{path}: the same api_key is registered to two products")
-
-    return tuple(products)
-
-
-def _init_products_file(path: Path | str, slug: str, name: str) -> Product:
-    """Bootstrap a starter ``--products-file`` roster (``odyssey-collector
-    --init-products-file``, never a side effect of a normal ``serve``
-    startup).
-
-    ``_load_products_file`` deliberately refuses to start the server on a
-    missing/empty/malformed products file (see its own docstring) — an
-    auto-created *empty* roster would be indistinguishable from "no keys
-    configured" and every future request would just 401 with no
-    explanation. This is the safe version of "create it automatically": a
-    human runs it once, on purpose, and it writes exactly one product with
-    a cryptographically random ``api_key`` — a real secret, not a
-    fabricated placeholder — printed once so the operator can save it
-    before it scrolls off. Refuses to overwrite an existing file, the same
-    way a real secret-issuing tool would.
-    """
-    path = Path(path)
-    if path.exists():
-        raise FileExistsError(f"{path} already exists — not overwriting a real roster")
-    product = Product(slug=slug, name=name, api_key=secrets.token_urlsafe(32))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            {"products": [{"slug": slug, "name": name, "api_key": product.api_key}]},
-            indent=2,
-        )
-        + "\n"
-    )
-    return product
-
-
-def _add_product(path: Path | str, slug: str, name: str) -> Product:
-    """Append a new product to an already-bootstrapped ``--products-file``
-    roster (``odyssey-collector --add-product-file``, never a side effect
-    of a normal ``serve`` startup) -- growing an already-running
-    deployment's roster without hand-editing JSON on the box.
-
-    Requires the file to already exist and parse as a valid roster
-    (:func:`_load_products_file`'s own checks apply) -- creating one from
-    scratch is deliberately left to ``--init-products-file``, the explicit,
-    documented bootstrap path, rather than silently branching into two
-    different "roster didn't exist" behaviours here.
-    """
-    path = Path(path)
-    existing = _load_products_file(path)
-    if any(p.slug == slug for p in existing):
-        raise ValueError(f"{path}: a product with slug {slug!r} already exists")
-
-    product = Product(slug=slug, name=name, api_key=secrets.token_urlsafe(32))
-    updated = existing + (product,)
-    path.write_text(
-        json.dumps(
-            {
-                "products": [
-                    {"slug": p.slug, "name": p.name, "api_key": p.api_key}
-                    for p in updated
-                ]
-            },
-            indent=2,
-        )
-        + "\n"
-    )
-    return product
-
-
 class BatchRejected(ValueError):
     """A posted batch parsed but wasn't a clean, well-formed odyssey stream."""
 
@@ -346,13 +221,13 @@ class CollectorConfig:
     port: int = DEFAULT_PORT
     data_dir: Path = Path(DEFAULT_DATA_DIR)
     # None means open: no Authorization header is required. Set to require one.
-    # Mutually exclusive with products — see the module docstring's
+    # Mutually exclusive with db_uri — see the module docstring's
     # "Product scoping" section.
     api_key: Optional[str] = None
-    # The registered tenant roster. When set, storage is partitioned per
-    # product (<data_dir>/<slug>/<date>/...) and only a key belonging to a
-    # registered product is accepted. Mutually exclusive with api_key.
-    products: Optional[Tuple[Product, ...]] = None
+    # Product-scoped mode: the shared SQLite file where `products` lives
+    # (see packages/odyssey-store). Mutually exclusive with api_key.
+    db_uri: Optional[str] = None
+    auth_cache_ttl_seconds: float = DEFAULT_AUTH_CACHE_TTL_SECONDS
     # Explicit wins over ODYSSEY_COLLECTOR_TIMEZONE, which wins over UTC.
     timezone: Optional[str] = None
     # Per-request access logging via `request_logger` -- off by default,
@@ -366,21 +241,32 @@ class CollectorConfig:
     def __post_init__(self) -> None:
         if self.timezone is not None:
             object.__setattr__(self, "date_fn", _make_date_fn(self.timezone))
-        if self.api_key is not None and self.products is not None:
+        if self.api_key is not None and self.db_uri is not None:
             raise ValueError(
                 "CollectorConfig: pass either api_key (single shared key, "
-                "unscoped) or products (multi-tenant, product-scoped "
+                "unscoped) or db_uri (multi-tenant, product-scoped "
                 "storage), not both — picking an auth mode is explicit here, "
                 "not a silent precedence rule"
             )
+        auth_cache = AuthCache(self.db_uri, self.auth_cache_ttl_seconds) if self.db_uri else None
+        object.__setattr__(self, "_auth_cache", auth_cache)
 
     def product_for_key(self, api_key: str) -> Optional[Product]:
-        if not self.products or not api_key:
+        if self._auth_cache is None or not api_key:
             return None
-        for product in self.products:
-            if product.api_key == api_key:
-                return product
-        return None
+        return self._auth_cache.lookup(api_key)
+
+    def list_products(self) -> List[Product]:
+        if self.db_uri is None:
+            return []
+        conn = connect(self.db_uri)
+        try:
+            rows = conn.execute(
+                "SELECT slug, name, api_key_hash FROM products WHERE revoked = 0 ORDER BY slug"
+            ).fetchall()
+        finally:
+            conn.close()
+        return [Product(r["slug"], r["name"], r["api_key_hash"]) for r in rows]
 
 
 def resolve_config(
@@ -389,22 +275,14 @@ def resolve_config(
     port: Optional[int] = None,
     data_dir: Optional[Path | str] = None,
     api_key: Optional[str] = None,
-    products_file: Optional[Path | str] = None,
+    db_uri: Optional[str] = None,
+    auth_cache_ttl_seconds: Optional[float] = None,
     timezone: Optional[str] = None,
     debug: Optional[bool] = None,
 ) -> CollectorConfig:
     """Explicit arguments win over ``ODYSSEY_COLLECTOR_*`` env vars — the same
     precedence ``odyssey.config.resolve()`` uses on the recording side."""
-    if os.environ.get(ENV_KEYS_FILE_OLD) is not None:
-        raise ValueError(
-            f"{ENV_KEYS_FILE_OLD} was renamed to {ENV_PRODUCTS_FILE} -- update "
-            "your deployment config"
-        )
-    resolved_products_file = (
-        products_file
-        if products_file is not None
-        else os.environ.get(ENV_PRODUCTS_FILE)
-    )
+    resolved_db_uri = db_uri if db_uri is not None else os.environ.get(ENV_DB_URI)
     return CollectorConfig(
         host=host if host is not None else os.environ.get(ENV_HOST, DEFAULT_HOST),
         port=int(port if port is not None else os.environ.get(ENV_PORT, DEFAULT_PORT)),
@@ -414,10 +292,11 @@ def resolve_config(
             else os.environ.get(ENV_DATA_DIR, DEFAULT_DATA_DIR)
         ),
         api_key=api_key if api_key is not None else os.environ.get(ENV_API_KEY),
-        products=(
-            _load_products_file(resolved_products_file)
-            if resolved_products_file
-            else None
+        db_uri=resolved_db_uri,
+        auth_cache_ttl_seconds=(
+            auth_cache_ttl_seconds
+            if auth_cache_ttl_seconds is not None
+            else float(os.environ.get(ENV_AUTH_CACHE_TTL, DEFAULT_AUTH_CACHE_TTL_SECONDS))
         ),
         timezone=timezone,
         debug=debug if debug is not None else _truthy(os.environ.get(ENV_DEBUG)),
@@ -476,7 +355,7 @@ class _Handler(BaseHTTPRequestHandler):
         between products, which is what storage partitioning already is.
         """
         config = self.server.config
-        if config.products is None:
+        if config.db_uri is None:
             self._respond(404, {"error": "not found"})
             return
         authorized, _ = self._authenticate()
@@ -485,7 +364,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._respond(
             200,
-            {"products": [{"slug": p.slug, "name": p.name} for p in config.products]},
+            {"products": [{"slug": p.slug, "name": p.name} for p in config.list_products()]},
         )
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib method name
@@ -649,10 +528,8 @@ class _Handler(BaseHTTPRequestHandler):
         """
         config = self.server.config
         presented = self.headers.get("Authorization", "")
-        if config.products is not None:
-            token = (
-                presented[len("Bearer ") :] if presented.startswith("Bearer ") else ""
-            )
+        if config.db_uri is not None:
+            token = presented[len("Bearer "):] if presented.startswith("Bearer ") else ""
             product = config.product_for_key(token)
             return (product is not None, product.slug if product else None)
         if not config.api_key:
@@ -739,48 +616,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--api-key",
         default=None,
         help="require this single shared bearer token, unscoped; default: open. "
-        "Mutually exclusive with --products-file",
-    )
-    parser.add_argument(
-        "--products-file",
-        default=None,
-        help='JSON {"products": [{"slug", "name", "api_key"}, ...]} file '
-        "-- each product writes into its own <data_dir>/<slug>/ "
-        "partition. Mutually exclusive with --api-key",
+        "Mutually exclusive with product-scoped mode (ODYSSEY_DB_URI)",
     )
     parser.add_argument(
         "--timezone",
         default=None,
         help="IANA name for date-partition boundaries; default: UTC",
-    )
-    parser.add_argument(
-        "--init-products-file",
-        default=None,
-        metavar="PATH",
-        help="bootstrap a starter --products-file roster at PATH (one "
-        "product, a fresh random api_key) and exit -- does not start the "
-        "server. Refuses to overwrite an existing file. See "
-        "--product-slug/--product-name",
-    )
-    parser.add_argument(
-        "--add-product-file",
-        default=None,
-        metavar="PATH",
-        help="add a new product (--product-slug/--product-name, a fresh "
-        "random api_key) to the existing --products-file roster at PATH "
-        "and exit -- does not start the server. Requires PATH to already "
-        "exist (bootstrap one first with --init-products-file). Refuses a "
-        "slug already present in the roster",
-    )
-    parser.add_argument(
-        "--product-slug",
-        default="default",
-        help="with --init-products-file/--add-product-file (default: default)",
-    )
-    parser.add_argument(
-        "--product-name",
-        default="Default",
-        help="with --init-products-file/--add-product-file (default: Default)",
     )
     parser.add_argument(
         "--debug",
@@ -791,49 +632,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.init_products_file is not None:
-        try:
-            product = _init_products_file(
-                args.init_products_file, args.product_slug, args.product_name
-            )
-        except FileExistsError as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
-        print(f"wrote {args.init_products_file}")
-        print(f"product: slug={product.slug!r} name={product.name!r}")
-        print(f"api_key={product.api_key}")
-        print(
-            f"save this key now -- it will not be printed again "
-            f"(it's also in {args.init_products_file} in plaintext)",
-            file=sys.stderr,
-        )
-        return 0
-
-    if args.add_product_file is not None:
-        try:
-            product = _add_product(
-                args.add_product_file, args.product_slug, args.product_name
-            )
-        except (FileNotFoundError, ValueError) as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
-        print(f"updated {args.add_product_file}")
-        print(f"product: slug={product.slug!r} name={product.name!r}")
-        print(f"api_key={product.api_key}")
-        print(
-            f"save this key now -- it will not be printed again "
-            f"(it's also in {args.add_product_file} in plaintext). Restart "
-            f"the running collector to pick it up.",
-            file=sys.stderr,
-        )
-        return 0
-
     config = resolve_config(
         host=args.host,
         port=args.port,
         data_dir=args.data_dir,
         api_key=args.api_key,
-        products_file=args.products_file,
         timezone=args.timezone,
         debug=args.debug,
     )

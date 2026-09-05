@@ -19,12 +19,13 @@ from odyssey import HttpSink
 from odyssey.jsonl import encode_event, header_line, read_events
 from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
 from odyssey.sinks import HttpSinkError
+from odyssey_store.auth import hash_api_key
+from odyssey_store.db import connect
 
+from odyssey_collector.auth_cache import Product
+from odyssey_collector.products_db import create_product
 from odyssey_collector.server import (
     CollectorConfig,
-    Product,
-    _add_product,
-    _init_products_file,
     _safe_stem,
     resolve_config,
     serve,
@@ -313,17 +314,28 @@ def test_the_wrong_key_is_rejected(guarded):
 # --------------------------------------------------------------------------
 
 
-ACME = Product(slug="proj_acme", name="Acme Corp", api_key="sk-acme")
-GLOBEX = Product(slug="proj_globex", name="Globex Inc", api_key="sk-globex")
+def _seed_product(db_uri, slug, name, api_key):
+    conn = connect(db_uri)
+    conn.execute(
+        "INSERT INTO products (slug, name, api_key_hash, revoked, created_at) "
+        "VALUES (?, ?, ?, 0, '2026-01-01T00:00:00+00:00')",
+        (slug, name, hash_api_key(api_key)),
+    )
+    conn.commit()
+    conn.close()
 
 
 @pytest.fixture
 def scoped(tmp_path):
+    db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
+    _seed_product(db_uri, "proj_acme", "Acme Corp", "sk-acme")
+    _seed_product(db_uri, "proj_globex", "Globex Inc", "sk-globex")
     config = CollectorConfig(
         host="127.0.0.1",
         port=0,
         data_dir=tmp_path / "data",
-        products=(ACME, GLOBEX),
+        db_uri=db_uri,
+        auth_cache_ttl_seconds=3600,
         date_fn=lambda: FIXED_DATE,
     )
     server = serve(config)
@@ -373,170 +385,20 @@ def test_a_missing_key_is_rejected_in_product_mode_too(scoped):
         HttpSink(endpoint(scoped)).send(JID, evs())
 
 
-def test_api_key_and_products_are_mutually_exclusive():
+def test_api_key_and_db_uri_are_mutually_exclusive(tmp_path):
     with pytest.raises(ValueError, match="not both"):
-        CollectorConfig(api_key="sk-shared", products=(ACME,))
-
-
-def test_a_malformed_products_file_fails_fast_at_startup(tmp_path):
-    bad = tmp_path / "keys.json"
-    bad.write_text("not json")
-    with pytest.raises(json.JSONDecodeError):
-        resolve_config(data_dir=tmp_path / "data", products_file=bad)
-
-
-def test_a_products_file_missing_the_products_key_is_rejected(tmp_path):
-    bad = tmp_path / "keys.json"
-    bad.write_text(json.dumps({"sk-a": "proj_a"}))  # the old flat-map shape
-    with pytest.raises(ValueError, match="products file must be"):
-        resolve_config(data_dir=tmp_path / "data", products_file=bad)
-
-
-def test_a_product_entry_missing_a_field_is_rejected(tmp_path):
-    bad = tmp_path / "keys.json"
-    bad.write_text(
-        json.dumps({"products": [{"slug": "proj_a", "api_key": "sk-a"}]})  # no name
-    )
-    with pytest.raises(ValueError, match="slug.*name.*api_key"):
-        resolve_config(data_dir=tmp_path / "data", products_file=bad)
-
-
-def test_a_duplicate_slug_is_rejected(tmp_path):
-    bad = tmp_path / "keys.json"
-    bad.write_text(
-        json.dumps(
-            {
-                "products": [
-                    {"slug": "proj_a", "name": "A", "api_key": "sk-1"},
-                    {"slug": "proj_a", "name": "A Again", "api_key": "sk-2"},
-                ]
-            }
-        )
-    )
-    with pytest.raises(ValueError, match="duplicate product slug"):
-        resolve_config(data_dir=tmp_path / "data", products_file=bad)
-
-
-def test_a_duplicate_api_key_is_rejected(tmp_path):
-    bad = tmp_path / "keys.json"
-    bad.write_text(
-        json.dumps(
-            {
-                "products": [
-                    {"slug": "proj_a", "name": "A", "api_key": "sk-shared"},
-                    {"slug": "proj_b", "name": "B", "api_key": "sk-shared"},
-                ]
-            }
-        )
-    )
-    with pytest.raises(ValueError, match="same api_key"):
-        resolve_config(data_dir=tmp_path / "data", products_file=bad)
-
-
-def test_a_valid_products_file_round_trips_through_resolve_config(tmp_path):
-    keys_file = tmp_path / "keys.json"
-    keys_file.write_text(
-        json.dumps(
-            {"products": [{"slug": "proj_a", "name": "A Corp", "api_key": "sk-a"}]}
-        )
-    )
-    config = resolve_config(data_dir=tmp_path / "data", products_file=keys_file)
-    assert config.products == (Product(slug="proj_a", name="A Corp", api_key="sk-a"),)
-
-
-def test_the_old_keys_file_env_var_fails_fast_instead_of_going_open(
-    tmp_path, monkeypatch
-):
-    """A deployment that still has the pre-rename ODYSSEY_COLLECTOR_KEYS_FILE
-    set (with no --api-key/ODYSSEY_COLLECTOR_API_KEY either) must fail to
-    start, not silently degrade to fully-open, unauthenticated mode."""
-    monkeypatch.setenv("ODYSSEY_COLLECTOR_KEYS_FILE", str(tmp_path / "keys.json"))
-    with pytest.raises(ValueError, match="ODYSSEY_COLLECTOR_KEYS_FILE"):
-        resolve_config(data_dir=tmp_path / "data")
-
-
-def test_init_products_file_writes_a_loadable_roster(tmp_path):
-    """The bootstrap path (`odyssey-collector --init-products-file`) writes
-    exactly the shape `resolve_config`/`_load_products_file` already accept --
-    no second parser, no drift between "what writes it" and "what reads it".
-    """
-    path = tmp_path / "keys.json"
-    written = _init_products_file(path, slug="acme", name="Acme Corp")
-
-    assert written.slug == "acme"
-    assert written.name == "Acme Corp"
-    assert len(written.api_key) >= 32  # a real secret, not a short placeholder
-
-    config = resolve_config(data_dir=tmp_path / "data", products_file=path)
-    assert config.products == (written,)
-
-
-def test_init_products_file_refuses_to_overwrite_an_existing_file(tmp_path):
-    path = tmp_path / "keys.json"
-    first = _init_products_file(path, slug="acme", name="Acme Corp")
-
-    with pytest.raises(FileExistsError):
-        _init_products_file(path, slug="acme", name="Acme Corp")
-
-    # the real roster on disk must be untouched by the failed second call
-    config = resolve_config(data_dir=tmp_path / "data", products_file=path)
-    assert config.products == (first,)
-
-
-def test_init_products_file_generates_a_different_key_each_time(tmp_path):
-    a = _init_products_file(tmp_path / "a.json", slug="acme", name="Acme")
-    b = _init_products_file(tmp_path / "b.json", slug="acme", name="Acme")
-    assert a.api_key != b.api_key
-
-
-def test_add_product_appends_to_an_existing_roster(tmp_path):
-    """`odyssey-collector --add-product-file` -- growing an already-running
-    deployment's roster without hand-editing JSON on the box."""
-    path = tmp_path / "keys.json"
-    first = _init_products_file(path, slug="acme", name="Acme Corp")
-
-    added = _add_product(path, slug="globex", name="Globex Corp")
-
-    assert added.slug == "globex"
-    assert added.name == "Globex Corp"
-    assert len(added.api_key) >= 32  # a real secret, not a short placeholder
-    assert added.api_key != first.api_key
-
-    config = resolve_config(data_dir=tmp_path / "data", products_file=path)
-    assert config.products == (first, added)
-
-
-def test_add_product_refuses_a_duplicate_slug(tmp_path):
-    path = tmp_path / "keys.json"
-    first = _init_products_file(path, slug="acme", name="Acme Corp")
-
-    with pytest.raises(ValueError, match="acme"):
-        _add_product(path, slug="acme", name="Acme Again")
-
-    # the real roster on disk must be untouched by the failed call
-    config = resolve_config(data_dir=tmp_path / "data", products_file=path)
-    assert config.products == (first,)
-
-
-def test_add_product_requires_an_existing_roster(tmp_path):
-    """Refuses to create a roster from scratch -- that's --init-products-file's
-    job, and creating one implicitly here would silently pick a different
-    failure mode (an accidental single-product roster) than the explicit,
-    documented bootstrap path."""
-    path = tmp_path / "does-not-exist.json"
-    with pytest.raises(FileNotFoundError):
-        _add_product(path, slug="acme", name="Acme Corp")
+        CollectorConfig(api_key="sk-shared", db_uri=f"sqlite:///{tmp_path}/db.sqlite3")
 
 
 def test_a_slug_cannot_traverse_out_of_data_dir(tmp_path):
-    """A keys file is operator-authored, but defence in depth is cheap --
-    the same journey_id traversal guard applies to a product's slug."""
-    evil = Product(slug="../../etc", name="Evil", api_key="sk-evil")
+    db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
+    _seed_product(db_uri, "../../etc", "Evil", "sk-evil")
     config = CollectorConfig(
         host="127.0.0.1",
         port=0,
         data_dir=tmp_path / "data",
-        products=(evil,),
+        db_uri=db_uri,
+        auth_cache_ttl_seconds=3600,
         date_fn=lambda: FIXED_DATE,
     )
     server = serve(config)
