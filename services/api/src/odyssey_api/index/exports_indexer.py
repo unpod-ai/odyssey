@@ -24,7 +24,11 @@ def index_exports(conn: Connection, exports_dir: Path) -> int:
     for shard in sorted(exports_dir.glob("*.jsonl")):
         stat = shard.stat()
         state = get_file_state(conn, str(shard))
-        if state is not None and state[0] == stat.st_mtime_ns and state[1] == stat.st_size:
+        if (
+            state is not None
+            and state[0] == stat.st_mtime_ns
+            and state[1] == stat.st_size
+        ):
             continue
 
         h = hashlib.sha256()
@@ -46,7 +50,9 @@ def index_exports(conn: Connection, exports_dir: Path) -> int:
             """,
             (str(shard), shard.name, rows, h.hexdigest(), stat.st_mtime_ns, now),
         )
-        upsert_file_state(conn, str(shard), "export", stat.st_mtime_ns, stat.st_size, 0, now)
+        upsert_file_state(
+            conn, str(shard), "export", stat.st_mtime_ns, stat.st_size, 0, now
+        )
         count += 1
     conn.commit()
     return count

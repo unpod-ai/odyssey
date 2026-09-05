@@ -23,5 +23,7 @@ def list_products(products_file: Optional[Path]) -> List[Dict[str, Any]]:
 
 
 def list_products_indexed(index: IndexHandle) -> List[Dict[str, Any]]:
-    rows = index.query("SELECT slug, name FROM products WHERE revoked = 0 ORDER BY slug")
+    rows = index.query(
+        "SELECT slug, name FROM products WHERE revoked = 0 ORDER BY slug"
+    )
     return [dict(row) for row in rows]

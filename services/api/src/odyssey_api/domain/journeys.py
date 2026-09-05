@@ -11,7 +11,6 @@ from typing import List, Optional, Tuple
 
 from odyssey.export import fold_shard
 from odyssey.fold import FoldResult
-
 from odyssey_api.index.manager import IndexHandle
 from odyssey_api.repositories import filesystem
 
@@ -50,7 +49,9 @@ def list_journeys_with_status(
     lives one level deeper at `<journeys_dir>/<product_slug>/<journey_date>/...`.
     """
     out: List[Tuple[str, str, bool]] = []
-    for journey_id, journey_date in filesystem.list_journeys(journeys_dir, product_slug):
+    for journey_id, journey_date in filesystem.list_journeys(
+        journeys_dir, product_slug
+    ):
         shard = filesystem.find_journey_path(journeys_dir, journey_id)
         try:
             if shard is None:

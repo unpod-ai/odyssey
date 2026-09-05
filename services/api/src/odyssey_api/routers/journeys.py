@@ -3,24 +3,23 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from odyssey_schemas import (
-    CountsOut,
-    JourneyDetailOut,
-    JourneyMetricsOut,
-    JourneyPageOut,
-    JourneySummaryOut,
-    ProductCountOut,
-    ProjectCountOut,
-    DateCountOut,
-    StepOut,
-)
-
 from odyssey_api import deps
 from odyssey_api.deps import get_index_dep
 from odyssey_api.domain import journeys as domain
 from odyssey_api.index.manager import IndexHandle
 from odyssey_api.pagination import paginate
 from odyssey_api.settings import Settings
+from odyssey_schemas import (
+    CountsOut,
+    DateCountOut,
+    JourneyDetailOut,
+    JourneyMetricsOut,
+    JourneyPageOut,
+    JourneySummaryOut,
+    ProductCountOut,
+    ProjectCountOut,
+    StepOut,
+)
 
 router = APIRouter(prefix="/journeys", tags=["journeys"])
 
@@ -43,7 +42,9 @@ def list_journeys(
         )
     ]
     items, next_cursor, has_more, total = paginate(all_journeys, cursor, limit)
-    return JourneyPageOut(items=items, next_cursor=next_cursor, has_more=has_more, total=total)
+    return JourneyPageOut(
+        items=items, next_cursor=next_cursor, has_more=has_more, total=total
+    )
 
 
 @router.get("/counts", response_model=CountsOut)

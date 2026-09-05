@@ -23,7 +23,6 @@ from typing import Optional
 from odyssey.export import ExportError
 from odyssey.fold import fold
 from odyssey.jsonl import MalformedHeaderError, SchemaVersionError, read_events
-
 from odyssey_api.index.manifest import get_file_state, upsert_file_state
 from odyssey_api.repositories.filesystem import is_date_dir
 
@@ -53,7 +52,9 @@ def _iter_shards(journeys_dir: Path):
                 yield shard, date_dir.name, entry.name
 
 
-def _index_one_shard(conn: Connection, shard: Path, date: str, product_slug: Optional[str]) -> bool:
+def _index_one_shard(
+    conn: Connection, shard: Path, date: str, product_slug: Optional[str]
+) -> bool:
     stat = shard.stat()
     state = get_file_state(conn, str(shard))
     if state is not None and state[0] == stat.st_mtime_ns and state[1] == stat.st_size:
@@ -64,7 +65,11 @@ def _index_one_shard(conn: Connection, shard: Path, date: str, product_slug: Opt
         if not result.events:
             raise ExportError(f"{shard}: no events to fold")
         header = result.header
-        project = (header.journey_metadata or {}).get("project") if header.journey_metadata else None
+        project = (
+            (header.journey_metadata or {}).get("project")
+            if header.journey_metadata
+            else None
+        )
         fold_result = fold(
             result.events,
             data_source=header.data_source or "unknown",
@@ -117,7 +122,9 @@ def _index_one_shard(conn: Connection, shard: Path, date: str, product_slug: Opt
             now,
         ),
     )
-    upsert_file_state(conn, str(shard), "journey", stat.st_mtime_ns, stat.st_size, 0, now)
+    upsert_file_state(
+        conn, str(shard), "journey", stat.st_mtime_ns, stat.st_size, 0, now
+    )
     return True
 
 

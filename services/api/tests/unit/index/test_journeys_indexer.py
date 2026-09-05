@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from odyssey.jsonl import write_events
 from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
-from odyssey_store.db import connect
-
 from odyssey_api.index.journeys_indexer import index_journeys
+
+from odyssey_store.db import connect
 
 JID = "j_idx"
 
@@ -19,14 +19,20 @@ def _write_journey(journeys_dir, jid, date, project=None, complete=True):
     )
     events = [
         JourneyEvent(
-            journey_id=jid, seq=0, kind="message", event_id="e0",
+            journey_id=jid,
+            seq=0,
+            kind="message",
+            event_id="e0",
             message=Message(role="user", content="hi"),
         )
     ]
     if complete:
         events.append(
             JourneyEvent(
-                journey_id=jid, seq=1, kind="terminal", event_id="e1",
+                journey_id=jid,
+                seq=1,
+                kind="terminal",
+                event_id="e1",
                 terminal=Terminal(termination_reason="ENV_DONE"),
             )
         )
@@ -67,7 +73,9 @@ def test_index_journeys_tags_product_slug_in_scoped_layout(tmp_path):
 
     index_journeys(conn, journeys_dir)
 
-    row = conn.execute("SELECT product_slug FROM journeys WHERE journey_id = ?", (JID,)).fetchone()
+    row = conn.execute(
+        "SELECT product_slug FROM journeys WHERE journey_id = ?", (JID,)
+    ).fetchone()
     assert row["product_slug"] == "unpod"
 
 

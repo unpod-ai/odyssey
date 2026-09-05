@@ -8,7 +8,9 @@ import sqlite3
 from typing import Optional, Tuple
 
 
-def get_file_state(conn: sqlite3.Connection, path: str) -> Optional[Tuple[int, int, int]]:
+def get_file_state(
+    conn: sqlite3.Connection, path: str
+) -> Optional[Tuple[int, int, int]]:
     """``(mtime_ns, size_bytes, byte_offset)`` for a previously-indexed
     path, or ``None`` if it has never been indexed."""
     row = conn.execute(

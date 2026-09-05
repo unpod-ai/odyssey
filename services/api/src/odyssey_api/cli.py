@@ -38,7 +38,6 @@ def register(app: Any) -> None:
         import os
 
         import uvicorn
-
         from odyssey_api.settings import get_settings
 
         if api_key is not None:
@@ -116,6 +115,7 @@ def register(app: Any) -> None:
         from odyssey_api.index.metrics_indexer import index_metrics
         from odyssey_api.index.reconcile import reconcile
         from odyssey_api.settings import get_settings
+
         from odyssey_store.db import connect
 
         settings = get_settings()
@@ -127,7 +127,9 @@ def register(app: Any) -> None:
             removed = reconcile(conn)
         finally:
             conn.close()
-        print(f"journeys indexed: {j}, metrics indexed: {m}, exports indexed: {e}, reconciled away: {removed}")
+        print(
+            f"journeys indexed: {j}, metrics indexed: {m}, exports indexed: {e}, reconciled away: {removed}"
+        )
 
     @app.callback()
     def _group() -> None:

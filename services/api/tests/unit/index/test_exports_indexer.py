@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import hashlib
 
-from odyssey_store.db import connect
-
 from odyssey_api.index.exports_indexer import index_exports
+
+from odyssey_store.db import connect
 
 
 def test_index_exports_computes_hash_once(tmp_path):

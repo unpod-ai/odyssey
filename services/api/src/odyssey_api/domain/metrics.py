@@ -15,9 +15,16 @@ from odyssey_api.repositories import filesystem
 __all__ = ["list_metrics", "list_metrics_indexed"]
 
 _COLUMNS = [
-    "ts", "hostname", "os", "cpu_count", "memory_total_bytes",
-    "memory_available_bytes", "disk_total_bytes", "disk_free_bytes",
-    "project", "public_ip",
+    "ts",
+    "hostname",
+    "os",
+    "cpu_count",
+    "memory_total_bytes",
+    "memory_available_bytes",
+    "disk_total_bytes",
+    "disk_free_bytes",
+    "project",
+    "public_ip",
 ]
 
 
@@ -27,7 +34,9 @@ def list_metrics(
     return filesystem.list_metrics(journeys_dir, product_slug)
 
 
-def list_metrics_indexed(index: IndexHandle, product_slug: Optional[str]) -> List[Dict[str, Any]]:
+def list_metrics_indexed(
+    index: IndexHandle, product_slug: Optional[str]
+) -> List[Dict[str, Any]]:
     """Index-backed replacement for `list_metrics`: reads snapshot fields
     straight out of the `metrics_snapshots` table (populated at index time)
     instead of re-walking `journeys_dir`/`metrics/*.jsonl` on every request."""

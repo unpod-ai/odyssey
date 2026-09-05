@@ -13,7 +13,6 @@ import yaml
 from fastapi.testclient import TestClient
 from odyssey.jsonl import write_events
 from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
-
 from odyssey_api import deps
 from odyssey_api.index import manager
 from odyssey_api.main import create_app
@@ -341,9 +340,12 @@ def test_metrics_list_skips_snapshots_missing_required_fields(tmp_path):
     metrics_dir.mkdir(parents=True)
     valid = {"ts": "t", "hostname": "h", "os": "o"}
     (metrics_dir / "2026-09-02.jsonl").write_text(
-        json.dumps({"hostname": "probe", "os": "linux"}) + "\n"  # missing ts
-        + json.dumps({"ts": "t2", "hostname": "probe2"}) + "\n"  # missing os
-        + json.dumps(valid) + "\n"
+        json.dumps({"hostname": "probe", "os": "linux"})
+        + "\n"  # missing ts
+        + json.dumps({"ts": "t2", "hostname": "probe2"})
+        + "\n"  # missing os
+        + json.dumps(valid)
+        + "\n"
     )
 
     settings = Settings(journeys_dir=journeys_dir)
@@ -418,13 +420,29 @@ def test_journeys_list_does_not_fold_every_shard_per_request(tmp_path, monkeypat
         write_events(
             date_dir / f"{jid}.jsonl",
             [
-                JourneyEvent(journey_id=jid, seq=0, kind="message", event_id="e0", message=Message(role="user", content="hi")),
-                JourneyEvent(journey_id=jid, seq=1, kind="terminal", event_id="e1", terminal=Terminal(termination_reason="ENV_DONE")),
+                JourneyEvent(
+                    journey_id=jid,
+                    seq=0,
+                    kind="message",
+                    event_id="e0",
+                    message=Message(role="user", content="hi"),
+                ),
+                JourneyEvent(
+                    journey_id=jid,
+                    seq=1,
+                    kind="terminal",
+                    event_id="e1",
+                    terminal=Terminal(termination_reason="ENV_DONE"),
+                ),
             ],
             header=JourneyHeader(journey_id=jid, data_source="livekit"),
         )
 
-    settings = Settings(journeys_dir=journeys_dir, db_uri=f"sqlite:///{tmp_path}/db.sqlite3", index_interval_seconds=3600)
+    settings = Settings(
+        journeys_dir=journeys_dir,
+        db_uri=f"sqlite:///{tmp_path}/db.sqlite3",
+        index_interval_seconds=3600,
+    )
     client = _client(settings)
 
     client.get("/journeys")  # triggers the index's first (blocking) pass
@@ -443,23 +461,45 @@ def test_journeys_list_does_not_fold_every_shard_per_request(tmp_path, monkeypat
 
     assert resp.status_code == 200
     assert len(resp.json()["items"]) == 5
-    assert call_count == 0  # no refolding on a request against an already-indexed, unchanged set
+    assert (
+        call_count == 0
+    )  # no refolding on a request against an already-indexed, unchanged set
 
 
 def test_journeys_counts(tmp_path):
     journeys_dir = tmp_path / "journeys"
-    for slug, jid, date in [("unpod", "j1", "2026-08-28"), ("unpod", "j2", "2026-08-28"), ("acme", "j3", "2026-08-29")]:
+    for slug, jid, date in [
+        ("unpod", "j1", "2026-08-28"),
+        ("unpod", "j2", "2026-08-28"),
+        ("acme", "j3", "2026-08-29"),
+    ]:
         date_dir = journeys_dir / slug / date
         date_dir.mkdir(parents=True, exist_ok=True)
         write_events(
             date_dir / f"{jid}.jsonl",
             [
-                JourneyEvent(journey_id=jid, seq=0, kind="message", event_id="e0", message=Message(role="user", content="hi")),
-                JourneyEvent(journey_id=jid, seq=1, kind="terminal", event_id="e1", terminal=Terminal(termination_reason="ENV_DONE")),
+                JourneyEvent(
+                    journey_id=jid,
+                    seq=0,
+                    kind="message",
+                    event_id="e0",
+                    message=Message(role="user", content="hi"),
+                ),
+                JourneyEvent(
+                    journey_id=jid,
+                    seq=1,
+                    kind="terminal",
+                    event_id="e1",
+                    terminal=Terminal(termination_reason="ENV_DONE"),
+                ),
             ],
             header=JourneyHeader(journey_id=jid, data_source="livekit"),
         )
-    settings = Settings(journeys_dir=journeys_dir, db_uri=f"sqlite:///{tmp_path}/db.sqlite3", index_interval_seconds=3600)
+    settings = Settings(
+        journeys_dir=journeys_dir,
+        db_uri=f"sqlite:///{tmp_path}/db.sqlite3",
+        index_interval_seconds=3600,
+    )
     client = _client(settings)
 
     resp = client.get("/journeys/counts")

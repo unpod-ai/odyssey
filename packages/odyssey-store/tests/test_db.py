@@ -12,8 +12,13 @@ def test_parse_sqlite_uri_relative(tmp_path, monkeypatch):
 
 
 def test_parse_sqlite_uri_absolute(tmp_path):
-    uri = f"sqlite:///{tmp_path}/odyssey.sqlite3".replace("///" + str(tmp_path), "////" + str(tmp_path).lstrip("/"))
-    assert parse_sqlite_uri(f"sqlite:////{str(tmp_path).lstrip('/')}/odyssey.sqlite3") == tmp_path / "odyssey.sqlite3"
+    uri = f"sqlite:///{tmp_path}/odyssey.sqlite3".replace(
+        "///" + str(tmp_path), "////" + str(tmp_path).lstrip("/")
+    )
+    assert (
+        parse_sqlite_uri(f"sqlite:////{str(tmp_path).lstrip('/')}/odyssey.sqlite3")
+        == tmp_path / "odyssey.sqlite3"
+    )
 
 
 def test_connect_applies_schema_and_wal(tmp_path):
