@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
@@ -29,10 +30,13 @@ def create_product(db_uri: str, slug: str, name: str) -> CreatedProduct:
         existing = conn.execute("SELECT 1 FROM products WHERE slug = ?", (slug,)).fetchone()
         if existing is not None:
             raise ValueError(f"a product with slug {slug!r} already exists")
-        conn.execute(
-            "INSERT INTO products (slug, name, api_key_hash, revoked, created_at) VALUES (?, ?, ?, 0, ?)",
-            (slug, name, hash_api_key(api_key), _now()),
-        )
+        try:
+            conn.execute(
+                "INSERT INTO products (slug, name, api_key_hash, revoked, created_at) VALUES (?, ?, ?, 0, ?)",
+                (slug, name, hash_api_key(api_key), _now()),
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError(f"a product with slug {slug!r} already exists") from None
         conn.commit()
     finally:
         conn.close()
