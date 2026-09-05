@@ -8,11 +8,14 @@ before the first request.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 from typing import Dict
 
 from odyssey_store.db import connect
+
+logger = logging.getLogger("odyssey_api.index")
 
 from odyssey_api.index.exports_indexer import index_exports
 from odyssey_api.index.journeys_indexer import index_journeys
@@ -46,8 +49,11 @@ class IndexHandle:
         cycles = 0
         while not self._stop_event.wait(self._settings.index_interval_seconds):
             cycles += 1
-            full_reconcile = cycles % self._settings.index_reconcile_every == 0
-            self._run_pass(full_reconcile=full_reconcile)
+            full_reconcile = self._settings.index_reconcile_every > 0 and cycles % self._settings.index_reconcile_every == 0
+            try:
+                self._run_pass(full_reconcile=full_reconcile)
+            except Exception as e:
+                logger.exception(f"Index pass failed (will retry in {self._settings.index_interval_seconds}s): {e}")
 
     def query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         conn = connect(self._settings.db_uri)
