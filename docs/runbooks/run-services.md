@@ -43,9 +43,8 @@ WorkingDirectory=/opt/odyssey
 Environment=ODYSSEY_COLLECTOR_HOST=127.0.0.1
 Environment=ODYSSEY_COLLECTOR_PORT=8787
 Environment=ODYSSEY_COLLECTOR_DATA_DIR=/var/lib/odyssey/collector-data
-# one of these two, never both — see services/collector/README.md
-Environment=ODYSSEY_COLLECTOR_API_KEY=change-me
-# Environment=ODYSSEY_COLLECTOR_PRODUCTS_FILE=/etc/odyssey/collector-products.json
+Environment=ODYSSEY_DB_URI=/var/lib/odyssey/odyssey.db
+Environment=ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS=60
 ExecStart=/opt/odyssey/.venv/bin/odyssey-collector
 Restart=on-failure
 RestartSec=2
@@ -87,71 +86,61 @@ via the `odyssey_collector.requests` logger, visible through
 and `daemon-reload && restart` to turn it on; remove it and restart again
 to go back to quiet.
 
-### Switching to product-scoped mode (`--products-file`)
+### Product/tenant management
 
-**Create the roster file before flipping the `Environment=` line** — do
-not skip this step. `_load_products_file` (`services/collector/server.py`)
-deliberately refuses to start with a missing, empty, or malformed products
-file, on purpose: a silently-created empty or placeholder roster would be
-functionally identical to "every future POST gets a 401 with no
-explanation" — the exact failure mode fail-fast startup exists to
-prevent.
+Product roster and authentication are managed through the SQLite database pointed to by `ODYSSEY_DB_URI`. The database is initialized automatically on first use if it doesn't exist. Use the CLI commands to create, list, revoke, and rotate products:
 
-`odyssey-collector --init-products-file` bootstraps a real one: one
-product, a fresh cryptographically random `api_key` (a genuine secret,
-not a placeholder you're expected to remember to replace), refuses to
-overwrite a file that already exists.
+**Important:** `ODYSSEY_DB_URI` must point to the same SQLite file in both `services/collector` **and** `services/api`. Both services read from this shared database for product scoping and authentication caching. Mismatches will cause authentication failures.
+
+Create a new product with a fresh random API key:
 
 ```bash
-sudo install -d -m 0750 -o odyssey -g odyssey /etc/odyssey
 sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
-  --init-products-file /etc/odyssey/collector-products.json \
+  --db-uri /var/lib/odyssey/odyssey.db --create-product \
   --product-slug acme --product-name "Acme Corp"
 ```
 
-This prints the generated `api_key` once — save it now, it's also in the
-file in plaintext but won't be echoed back to you again. Then, in the
-unit file: comment out `ODYSSEY_COLLECTOR_API_KEY`, uncomment
-`ODYSSEY_COLLECTOR_PRODUCTS_FILE=/etc/odyssey/collector-products.json`, and:
+This prints the generated `api_key` once — save it now, as it cannot be retrieved later (only hashes are stored in the database).
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart odyssey-collector
-journalctl -u odyssey-collector -n 20   # confirm it started clean, not a FileNotFoundError
-```
-
-**`--init-products-file`/`--add-product-file`/`--product-slug`/
-`--product-name` have no `ODYSSEY_COLLECTOR_*` env var equivalent,
-deliberately.** They're one-shot bootstrap/roster-edit actions, not
-persistent server config — giving them an env var would mean a stray
-`Environment=` line in the unit file makes every `Restart=on-failure`
-restart re-run the action instead of serving (and since the target
-condition — file missing, or slug absent — is already satisfied after the
-first run, it would just exit 1 and restart-loop forever). Run each once,
-by hand, separately from `serve`.
-
-### Adding a product to an already-running deployment
-
-Once product-scoped mode is live, add a new tenant with `--add-product-file`
-instead of hand-editing the roster JSON on the box:
+List all products:
 
 ```bash
 sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
-  --add-product-file /etc/odyssey/collector-products.json \
-  --product-slug globex --product-name "Globex Inc"
-sudo systemctl restart odyssey-collector   # the roster loads once at startup, not live
-journalctl -u odyssey-collector -n 20      # confirm it started clean
+  --db-uri /var/lib/odyssey/odyssey.db --list-products
 ```
 
-Prints the new `api_key` once, same as `--init-products-file`. Refuses a
-`slug` already present in the roster, and refuses to run at all if the
-file doesn't exist yet (bootstrap it with `--init-products-file` first).
+Add a new product to an already-running deployment:
 
-Every other collector CLI flag (`--host`/`--port`/`--data-dir`/
-`--api-key`/`--products-file`/`--timezone`) has an `ODYSSEY_COLLECTOR_*`
-env equivalent — see `services/collector/README.md`'s config table. Set
-them as `Environment=` lines (or `EnvironmentFile=/etc/odyssey/collector.env`
-for a real deployment, kept out of git).
+```bash
+sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
+  --db-uri /var/lib/odyssey/odyssey.db --create-product \
+  --product-slug globex --product-name "Globex Inc"
+```
+
+The collector reads products and authentication state at request time (cached per `--auth-cache-ttl-seconds`), so new products are live immediately — no restart needed.
+
+Revoke a product's access (prevent it from authenticating):
+
+```bash
+sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
+  --db-uri /var/lib/odyssey/odyssey.db --revoke-product acme
+```
+
+Rotate a product's API key (invalidate the old key, generate a new one):
+
+```bash
+sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
+  --db-uri /var/lib/odyssey/odyssey.db --rotate-product acme
+```
+
+If migrating from an older deployment that used a `products.json` file, use the one-time migration command:
+
+```bash
+sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
+  --db-uri /var/lib/odyssey/odyssey.db --migrate-products-from-json /path/to/old/products.json
+```
+
+All other collector CLI flags (`--host`/`--port`/`--data-dir`/`--timezone`) have `ODYSSEY_COLLECTOR_*` env equivalents — see `services/collector/README.md`'s config table. Set them as `Environment=` lines (or `EnvironmentFile=/etc/odyssey/collector.env` for a real deployment, kept out of git).
 
 ## `services/api` — FastAPI/ASGI, two supported ways to run it
 
