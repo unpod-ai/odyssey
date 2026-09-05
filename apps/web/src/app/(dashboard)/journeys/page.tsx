@@ -1,26 +1,54 @@
 import Link from "next/link";
 import { apiClient } from "@/lib/api";
+import { collectAll } from "@/lib/pagination";
 import { DataTable } from "@/components/DataTable";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/Badge";
 import { TableFilters } from "@/components/TableFilters";
+import { DateCounts } from "@/components/DateCounts";
+import { Pagination } from "@/components/Pagination";
 import type { JourneySummaryOut, ProductOut } from "@odyssey/sdk";
+
+const PAGE_SIZE = 25;
 
 export default async function JourneysPage({
   searchParams,
 }: PageProps<"/journeys">) {
-  const { product } = await searchParams;
+  const { product, date, cursor } = await searchParams;
   const productFilter = typeof product === "string" ? product : "";
+  const dateFilter = typeof date === "string" ? date : "";
+  const cursorParam = typeof cursor === "string" ? cursor : undefined;
 
   let journeys: JourneySummaryOut[] = [];
+  let total = 0;
+  let hasMore = false;
+  let nextCursor: string | null | undefined = null;
+  let allForCounts: JourneySummaryOut[] = [];
   let products: ProductOut[] = [];
   let error: string | null = null;
   try {
     const client = apiClient();
-    [journeys, products] = await Promise.all([
-      client.journeys.list({ product: productFilter || undefined }),
+    const [page, forCounts, productList] = await Promise.all([
+      client.journeys.list({
+        product: productFilter || undefined,
+        date: dateFilter || undefined,
+        cursor: cursorParam,
+        limit: PAGE_SIZE,
+      }),
+      // Date counts must reflect the whole (product-scoped) collection, not
+      // just the current page or the date-filtered view — so this ignores
+      // `date` and walks every page via `next_cursor`.
+      collectAll<JourneySummaryOut>((c) =>
+        client.journeys.list({ product: productFilter || undefined, cursor: c, limit: 100 }),
+      ),
       client.products.list(),
     ]);
+    journeys = page.items;
+    total = page.total;
+    hasMore = page.has_more;
+    nextCursor = page.next_cursor;
+    allForCounts = forCounts;
+    products = productList;
   } catch (err) {
     error = (err as Error).message;
   }
@@ -34,6 +62,22 @@ export default async function JourneysPage({
     );
   }
 
+  const dateCountMap = new Map<string, number>();
+  for (const j of allForCounts) {
+    dateCountMap.set(j.date, (dateCountMap.get(j.date) ?? 0) + 1);
+  }
+  const dateCounts = [...dateCountMap.entries()]
+    .map(([d, count]) => ({ date: d, count }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  const hrefFor = (d: string) => {
+    const params = new URLSearchParams();
+    if (productFilter) params.set("product", productFilter);
+    if (d) params.set("date", d);
+    const query = params.toString();
+    return query ? `/journeys?${query}` : "/journeys";
+  };
+
   return (
     <div>
       <PageHeader title="Journeys" description="Ingested agent journeys and their steps." />
@@ -45,8 +89,15 @@ export default async function JourneysPage({
             value: productFilter,
             options: products.map((p) => ({ value: p.slug, label: p.name })),
           },
+          {
+            key: "date",
+            label: "Date",
+            value: dateFilter,
+            options: dateCounts.map((d) => ({ value: d.date, label: `${d.date} (${d.count})` })),
+          },
         ]}
       />
+      <DateCounts counts={dateCounts} activeDate={dateFilter} hrefFor={hrefFor} />
       <DataTable
         title="Journeys"
         rows={journeys}
@@ -70,6 +121,7 @@ export default async function JourneysPage({
           },
         ]}
       />
+      <Pagination total={total} shown={journeys.length} hasMore={hasMore} nextCursor={nextCursor} />
     </div>
   );
 }

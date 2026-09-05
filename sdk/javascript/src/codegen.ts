@@ -34,11 +34,13 @@ interface OpenAPIDoc {
   components: { schemas: Record<string, JsonSchema> };
 }
 
+type QueryParam = { name: string; type: "string" | "number" };
+
 type Operation = {
   methodName: "list" | "get";
   path: string;
   params: string[];
-  queryParams: string[];
+  queryParams: QueryParam[];
   model: string;
   isList: boolean;
 };
@@ -51,15 +53,24 @@ export function loadOpenapi(): OpenAPIDoc {
   return JSON.parse(readFileSync(OPENAPI_PATH, "utf-8"));
 }
 
-function isOptionalStringSchema(schema: JsonSchema): boolean {
-  if (schema.type === "string") {
-    return true;
+const JSON_TO_TS_SCALAR: Record<string, "string" | "number"> = {
+  string: "string",
+  integer: "number",
+};
+
+function optionalQueryTsType(schema: JsonSchema): "string" | "number" | null {
+  if (schema.type && schema.type in JSON_TO_TS_SCALAR) {
+    return JSON_TO_TS_SCALAR[schema.type];
   }
   if (schema.anyOf) {
     const types = new Set(schema.anyOf.map((s) => s.type));
-    return types.size === 2 && types.has("string") && types.has("null");
+    for (const [jsonType, tsType] of Object.entries(JSON_TO_TS_SCALAR)) {
+      if (types.size === 2 && types.has(jsonType) && types.has("null")) {
+        return tsType;
+      }
+    }
   }
-  return false;
+  return null;
 }
 
 function modelRef(schema: JsonSchema): { model: string; isList: boolean } {
@@ -96,15 +107,16 @@ export function operationsByResource(openapi: OpenAPIDoc): Record<string, Operat
     if (params.length > 1) {
       throw new UnsupportedOperationError(`${path}: more than one path parameter`);
     }
-    const queryParams: string[] = [];
+    const queryParams: QueryParam[] = [];
     for (const p of op.parameters ?? []) {
       if (p.in !== "query") continue;
-      if (!isOptionalStringSchema(p.schema ?? {})) {
+      const type = optionalQueryTsType(p.schema ?? {});
+      if (!type) {
         throw new UnsupportedOperationError(
-          `${path}: query parameter ${p.name} must be an optional string`,
+          `${path}: query parameter ${p.name} must be an optional string or integer`,
         );
       }
-      queryParams.push(p.name);
+      queryParams.push({ name: p.name, type });
     }
     const schema = op.responses["200"].content["application/json"].schema;
     const { model, isList } = modelRef(schema);
@@ -143,7 +155,7 @@ export function renderResource(resource: string, ops: Operation[]): string {
   for (const { methodName, path, params, queryParams, model, isList } of ops) {
     const sigParts = params.map((p) => `${p}: string`);
     if (queryParams.length) {
-      const optionsType = queryParams.map((q) => `${q}?: string`).join("; ");
+      const optionsType = queryParams.map((q) => `${q.name}?: ${q.type}`).join("; ");
       sigParts.push(`options: { ${optionsType} } = {}`);
     }
     const sig = sigParts.join(", ");
@@ -154,7 +166,7 @@ export function renderResource(resource: string, ops: Operation[]): string {
     if (queryParams.length) {
       lines.push(`    const params = new URLSearchParams();`);
       for (const q of queryParams) {
-        lines.push(`    if (options.${q} != null) params.set("${q}", options.${q});`);
+        lines.push(`    if (options.${q.name} != null) params.set("${q.name}", String(options.${q.name}));`);
       }
       lines.push(`    const query = params.toString() ? \`?\${params.toString()}\` : "";`);
       lines.push(`    return this.transport.get<${returnType}>(\`${pathTemplate}\${query}\`);`);

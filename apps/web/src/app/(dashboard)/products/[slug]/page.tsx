@@ -1,26 +1,35 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { apiClient } from "@/lib/api";
+import { collectAll } from "@/lib/pagination";
 import { DataTable } from "@/components/DataTable";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/Card";
 import { Badge } from "@/components/Badge";
 import { TableFilters } from "@/components/TableFilters";
+import { Pagination } from "@/components/Pagination";
 import { distinctProjects } from "@/lib/projects";
 import type { JourneySummaryOut, MetricsSnapshotOut, ProductOut } from "@odyssey/sdk";
+
+const PAGE_SIZE = 25;
 
 export default async function ProductDetailPage({
   params,
   searchParams,
 }: PageProps<"/products/[slug]">) {
   const { slug } = await params;
-  const { project } = await searchParams;
+  const { project, jcursor, mcursor } = await searchParams;
   const projectFilter = typeof project === "string" ? project : "";
+  const jCursor = typeof jcursor === "string" ? jcursor : undefined;
+  const mCursor = typeof mcursor === "string" ? mcursor : undefined;
   const client = apiClient();
 
   let products: ProductOut[] = [];
+  let journeyCount = 0;
   let journeys: JourneySummaryOut[] = [];
-  let snapshots: MetricsSnapshotOut[] = [];
+  let journeysHasMore = false;
+  let journeysNextCursor: string | null | undefined = null;
+  let allSnapshots: MetricsSnapshotOut[] = [];
   let error: string | null = null;
   try {
     products = await client.products.list();
@@ -47,10 +56,16 @@ export default async function ProductDetailPage({
   }
 
   try {
-    [journeys, snapshots] = await Promise.all([
-      client.journeys.list({ product: slug }),
-      client.metrics.list({ product: slug }),
+    const [journeyPage, snapshots] = await Promise.all([
+      client.journeys.list({ product: slug, cursor: jCursor, limit: PAGE_SIZE }),
+      // Project filter/count below need every snapshot, not one page.
+      collectAll<MetricsSnapshotOut>((c) => client.metrics.list({ product: slug, cursor: c, limit: 100 })),
     ]);
+    journeys = journeyPage.items;
+    journeyCount = journeyPage.total;
+    journeysHasMore = journeyPage.has_more;
+    journeysNextCursor = journeyPage.next_cursor;
+    allSnapshots = snapshots;
   } catch (err) {
     error = (err as Error).message;
   }
@@ -64,16 +79,24 @@ export default async function ProductDetailPage({
     );
   }
 
-  const projects = distinctProjects(snapshots);
+  const projects = distinctProjects(allSnapshots);
   const filteredSnapshots = projectFilter
-    ? snapshots.filter((m) => m.project === projectFilter)
-    : snapshots;
+    ? allSnapshots.filter((m) => m.project === projectFilter)
+    : allSnapshots;
+  // Metrics pagination here walks an already-fully-fetched, filtered array
+  // (not the server's cursor) since the project filter is client-side --
+  // `mcursor` is a plain numeric offset into `filteredSnapshots`, not an
+  // opaque server cursor like `/journeys`' `jcursor`.
+  const mOffset = mCursor ? Number.parseInt(mCursor, 10) || 0 : 0;
+  const metricsShown = filteredSnapshots.slice(mOffset, mOffset + PAGE_SIZE);
+  const metricsNextOffset = mOffset + metricsShown.length;
+  const metricsShownHasMore = metricsNextOffset < filteredSnapshots.length;
 
   return (
     <div>
       <PageHeader title={product.name} description={`Slug: ${product.slug}`} />
       <div className="stat-grid">
-        <StatCard label="Journeys" value={journeys.length} />
+        <StatCard label="Journeys" value={journeyCount} />
         <StatCard label="Metrics snapshots" value={filteredSnapshots.length} />
         <StatCard label="Projects" value={projects.length} />
       </div>
@@ -114,6 +137,14 @@ export default async function ProductDetailPage({
           },
         ]}
       />
+      <Pagination
+        total={journeyCount}
+        shown={journeys.length}
+        hasMore={journeysHasMore}
+        nextCursor={journeysNextCursor}
+        cursorParam="jcursor"
+        backParam="jback"
+      />
 
       <h2>Metrics</h2>
       <TableFilters
@@ -127,7 +158,7 @@ export default async function ProductDetailPage({
         ]}
       />
       <DataTable
-        rows={filteredSnapshots}
+        rows={metricsShown}
         keyFor={(m) => `${m.hostname}-${m.ts}`}
         emptyLabel="No metrics snapshots yet for this product."
         columns={[
@@ -147,6 +178,14 @@ export default async function ProductDetailPage({
             sortValue: (m) => m.disk_free_bytes ?? null,
           },
         ]}
+      />
+      <Pagination
+        total={filteredSnapshots.length}
+        shown={metricsShown.length}
+        hasMore={metricsShownHasMore}
+        nextCursor={metricsShownHasMore ? String(metricsNextOffset) : null}
+        cursorParam="mcursor"
+        backParam="mback"
       />
     </div>
   );

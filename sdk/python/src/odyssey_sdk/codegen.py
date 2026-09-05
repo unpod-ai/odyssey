@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 __all__ = ["render_resource", "generate", "check_drift"]
 
@@ -40,7 +40,7 @@ class Operation:
     method_name: str
     path: str
     path_params: List[str]
-    query_params: List[str] = field(default_factory=list)
+    query_params: List[tuple[str, str]] = field(default_factory=list)
     model: str = ""
     is_list: bool = False
 
@@ -57,14 +57,20 @@ def _model_ref(schema: Dict[str, Any]) -> tuple[str, bool]:
     raise UnsupportedOperationError(f"unsupported response schema: {schema}")
 
 
-def _is_optional_string_schema(schema: Dict[str, Any]) -> bool:
-    if schema.get("type") == "string":
-        return True
+def _optional_query_pytype(schema: Dict[str, Any]) -> Optional[str]:
+    """``str``/``int`` for an optional scalar of that JSON type, else
+    ``None`` — the generator raises rather than guessing on anything else
+    (see module docstring)."""
+    json_to_py = {"string": "str", "integer": "int"}
+    if schema.get("type") in json_to_py:
+        return json_to_py[schema["type"]]
     any_of = schema.get("anyOf")
     if any_of:
         types = {s.get("type") for s in any_of}
-        return types == {"string", "null"}
-    return False
+        for json_type, py_type in json_to_py.items():
+            if types == {json_type, "null"}:
+                return py_type
+    return None
 
 
 def load_openapi() -> Dict[str, Any]:
@@ -98,11 +104,12 @@ def _operations_by_resource(openapi: Dict[str, Any]) -> Dict[str, List[Operation
         for p in op.get("parameters", []):
             if p.get("in") != "query":
                 continue
-            if not _is_optional_string_schema(p.get("schema", {})):
+            pytype = _optional_query_pytype(p.get("schema", {}))
+            if pytype is None:
                 raise UnsupportedOperationError(
-                    f"{path}: query parameter {p['name']!r} must be an optional string"
+                    f"{path}: query parameter {p['name']!r} must be an optional string or integer"
                 )
-            query_params.append(p["name"])
+            query_params.append((p["name"], pytype))
         schema = op["responses"]["200"]["content"]["application/json"]["schema"]
         model, is_list = _model_ref(schema)
 
@@ -151,12 +158,12 @@ def render_resource(resource: str, ops: List[Operation]) -> str:
     for op in ops:
         sig_parts = ["self"] + [f"{p}: str" for p in op.path_params]
         if op.query_params:
-            sig_parts += ["*"] + [f"{q}: Optional[str] = None" for q in op.query_params]
+            sig_parts += ["*"] + [f"{q}: Optional[{t}] = None" for q, t in op.query_params]
         sig = ", ".join(sig_parts)
         return_type = f"List[{op.model}]" if op.is_list else op.model
         lines += [f"    def {op.method_name}({sig}) -> {return_type}:"]
         if op.query_params:
-            pairs = ", ".join(f'"{q}": {q}' for q in op.query_params)
+            pairs = ", ".join(f'"{q}": {q}' for q, _ in op.query_params)
             lines += [f"        params = {{{pairs}}}"]
             lines += [
                 "        params = {k: v for k, v in params.items() if v is not None}"

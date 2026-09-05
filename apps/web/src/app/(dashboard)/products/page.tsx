@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { apiClient } from "@/lib/api";
+import { collectAll } from "@/lib/pagination";
 import { DataTable } from "@/components/DataTable";
 import { PageHeader } from "@/components/PageHeader";
 import { distinctProjects } from "@/lib/projects";
-import type { ProductOut } from "@odyssey/sdk";
+import type { MetricsSnapshotOut, ProductOut } from "@odyssey/sdk";
 
 export default async function ProductsPage() {
   let products: ProductOut[] = [];
@@ -14,7 +15,9 @@ export default async function ProductsPage() {
     products = await client.products.list();
     const counts = await Promise.all(
       products.map(async (p) => {
-        const snapshots = await client.metrics.list({ product: p.slug });
+        const snapshots = await collectAll<MetricsSnapshotOut>((cursor) =>
+          client.metrics.list({ product: p.slug, cursor, limit: 100 }),
+        );
         return [p.slug, distinctProjects(snapshots).length] as const;
       }),
     );

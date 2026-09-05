@@ -73,6 +73,43 @@
         "title": "EvalRunOut",
         "type": "object"
       },
+      "EvalRunPageOut": {
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EvalRunOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "has_more",
+          "total"
+        ],
+        "title": "EvalRunPageOut",
+        "type": "object"
+      },
       "ExportArtifactOut": {
         "properties": {
           "name": {
@@ -99,6 +136,43 @@
           "sha256"
         ],
         "title": "ExportArtifactOut",
+        "type": "object"
+      },
+      "ExportPageOut": {
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExportArtifactOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "has_more",
+          "total"
+        ],
+        "title": "ExportPageOut",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -229,6 +303,43 @@
         "title": "JourneyMetricsOut",
         "type": "object"
       },
+      "JourneyPageOut": {
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/JourneySummaryOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "has_more",
+          "total"
+        ],
+        "title": "JourneyPageOut",
+        "type": "object"
+      },
       "JourneySummaryOut": {
         "properties": {
           "complete": {
@@ -250,6 +361,43 @@
           "complete"
         ],
         "title": "JourneySummaryOut",
+        "type": "object"
+      },
+      "MetricsPageOut": {
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MetricsSnapshotOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "has_more",
+          "total"
+        ],
+        "title": "MetricsPageOut",
         "type": "object"
       },
       "MetricsSnapshotOut": {
@@ -593,21 +741,62 @@
     },
     "/exports": {
       "get": {
+        "description": "``?cursor=``/``?limit=`` paginate the result \u2014 see\n`odyssey_api.pagination.paginate`.",
         "operationId": "list_exports_exports_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ExportArtifactOut"
-                  },
-                  "title": "Response List Exports Exports Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/ExportPageOut"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -644,7 +833,7 @@
     },
     "/journeys": {
       "get": {
-        "description": "``?product=<slug>`` narrows to one product's partition in a\nproduct-scoped (`--products-file`) collector deployment \u2014 see\n`domain.journeys.list_journeys_with_status`.",
+        "description": "``?product=<slug>`` narrows to one product's partition in a\nproduct-scoped (`--products-file`) collector deployment \u2014 see\n`domain.journeys.list_journeys_with_status`. ``?date=<YYYY-MM-DD>``\nnarrows to journeys reported on that date. ``?cursor=``/``?limit=``\npaginate the (already-filtered) result \u2014 see\n`odyssey_api.pagination.paginate`.",
         "operationId": "list_journeys_journeys_get",
         "parameters": [
           {
@@ -662,6 +851,54 @@
               ],
               "title": "Product"
             }
+          },
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
           }
         ],
         "responses": {
@@ -669,11 +906,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/JourneySummaryOut"
-                  },
-                  "title": "Response List Journeys Journeys Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/JourneyPageOut"
                 }
               }
             },
@@ -750,7 +983,7 @@
     },
     "/metrics": {
       "get": {
-        "description": "A snapshot missing `MetricsSnapshotOut`'s required fields (older\nprobe payloads predate ``ts``/``os`` being sent on every snapshot) is\nskipped rather than 500ing the whole listing \u2014 the same\n\"malformed entries don't take down the rest\" defensiveness\n`domain.list_metrics` already applies to unparseable JSON lines.\n``?product=<slug>`` narrows to one product's ``metrics/`` directory,\nsame filter `/journeys` supports.",
+        "description": "A snapshot missing `MetricsSnapshotOut`'s required fields (older\nprobe payloads predate ``ts``/``os`` being sent on every snapshot) is\nskipped rather than 500ing the whole listing \u2014 the same\n\"malformed entries don't take down the rest\" defensiveness\n`domain.list_metrics` already applies to unparseable JSON lines.\n``?product=<slug>`` narrows to one product's ``metrics/`` directory,\nsame filter `/journeys` supports. ``?cursor=``/``?limit=`` paginate\nthe result \u2014 see `odyssey_api.pagination.paginate`.",
         "operationId": "list_metrics_metrics_get",
         "parameters": [
           {
@@ -768,6 +1001,38 @@
               ],
               "title": "Product"
             }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
           }
         ],
         "responses": {
@@ -775,11 +1040,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/MetricsSnapshotOut"
-                  },
-                  "title": "Response List Metrics Metrics Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/MetricsPageOut"
                 }
               }
             },
@@ -916,21 +1177,62 @@
     },
     "/runs": {
       "get": {
+        "description": "``?cursor=``/``?limit=`` paginate the result \u2014 see\n`odyssey_api.pagination.paginate`.",
         "operationId": "list_runs_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/EvalRunOut"
-                  },
-                  "title": "Response List Runs Runs Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/EvalRunPageOut"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [

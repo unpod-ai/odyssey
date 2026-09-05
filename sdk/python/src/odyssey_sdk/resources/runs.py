@@ -4,9 +4,11 @@ services/api/openapi.json. Do not edit by hand — see codegen.py.
 
 from __future__ import annotations
 
-from typing import List
+from typing import Optional
 
-from odyssey_schemas import EvalRunOut
+from urllib.parse import urlencode
+
+from odyssey_schemas import EvalRunPageOut
 
 
 class RunsResource:
@@ -15,6 +17,9 @@ class RunsResource:
     def __init__(self, transport) -> None:
         self._transport = transport
 
-    def list(self) -> List[EvalRunOut]:
-        data = self._transport.get("/runs")
-        return [EvalRunOut.model_validate(x) for x in data]
+    def list(self, *, cursor: Optional[str] = None, limit: Optional[int] = None) -> EvalRunPageOut:
+        params = {"cursor": cursor, "limit": limit}
+        params = {k: v for k, v in params.items() if v is not None}
+        query = ("?" + urlencode(params)) if params else ""
+        data = self._transport.get(f"/runs{query}")
+        return EvalRunPageOut.model_validate(data)

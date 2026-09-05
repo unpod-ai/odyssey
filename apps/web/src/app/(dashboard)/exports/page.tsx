@@ -1,13 +1,26 @@
 import { apiClient } from "@/lib/api";
 import { DataTable } from "@/components/DataTable";
 import { PageHeader } from "@/components/PageHeader";
+import { Pagination } from "@/components/Pagination";
 import type { ExportArtifactOut } from "@odyssey/sdk";
 
-export default async function ExportsPage() {
+const PAGE_SIZE = 25;
+
+export default async function ExportsPage({ searchParams }: PageProps<"/exports">) {
+  const { cursor } = await searchParams;
+  const cursorParam = typeof cursor === "string" ? cursor : undefined;
+
   let exportsList: ExportArtifactOut[] = [];
+  let total = 0;
+  let hasMore = false;
+  let nextCursor: string | null | undefined = null;
   let error: string | null = null;
   try {
-    exportsList = await apiClient().exports.list();
+    const page = await apiClient().exports.list({ cursor: cursorParam, limit: PAGE_SIZE });
+    exportsList = page.items;
+    total = page.total;
+    hasMore = page.has_more;
+    nextCursor = page.next_cursor;
   } catch (err) {
     error = (err as Error).message;
   }
@@ -39,6 +52,7 @@ export default async function ExportsPage() {
           },
         ]}
       />
+      <Pagination total={total} shown={exportsList.length} hasMore={hasMore} nextCursor={nextCursor} />
     </div>
   );
 }

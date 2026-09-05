@@ -115,7 +115,7 @@ describe("OdysseySDK against a real services/api instance", () => {
   test("journeys list and get", async () => {
     const client = new OdysseySDK(baseUrl);
     const listed = await client.journeys.list();
-    expect(listed.map((j) => j.journey_id)).toEqual([JID]);
+    expect(listed.items.map((j) => j.journey_id)).toEqual([JID]);
 
     const detail = await client.journeys.get(JID);
     expect(detail.complete).toBe(true);
@@ -133,9 +133,9 @@ describe("OdysseySDK against a real services/api instance", () => {
     const client = new OdysseySDK(baseUrl);
     expect(await client.datasets.list()).toEqual([]);
     expect(await client.models.list()).toEqual([]);
-    expect(await client.runs.list()).toEqual([]);
-    expect(await client.exports.list()).toEqual([]);
-    expect(await client.metrics.list()).toEqual([]);
+    expect((await client.runs.list()).items).toEqual([]);
+    expect((await client.exports.list()).items).toEqual([]);
+    expect((await client.metrics.list()).items).toEqual([]);
   });
 });
 
@@ -188,6 +188,6 @@ describe("OdysseySDK against a real services/api instance with --api-key set", (
 
   test("correct api key succeeds", async () => {
     const client = new OdysseySDK(authBaseUrl, "sk-test");
-    expect(await client.journeys.list()).toEqual([]);
+    expect((await client.journeys.list()).items).toEqual([]);
   });
 });

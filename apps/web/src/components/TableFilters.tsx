@@ -31,6 +31,15 @@ export function TableFilters({ fields }: { fields: FilterField[] }) {
     } else {
       params.delete(key);
     }
+    // Changing a filter invalidates any in-progress cursor pagination --
+    // the underlying (filtered) collection is a different sequence now.
+    // Matches every `*cursor`/`*back` param, since a page with two
+    // paginated tables (e.g. Journeys + Metrics) namespaces each one.
+    for (const k of [...params.keys()]) {
+      if (/cursor$/i.test(k) || /back$/i.test(k)) {
+        params.delete(k);
+      }
+    }
     const query = params.toString();
     router.push(query ? `${pathname}?${query}` : pathname);
   };

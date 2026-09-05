@@ -60,9 +60,13 @@ def test_journeys_list_and_detail(tmp_path):
 
     listed = client.get("/journeys")
     assert listed.status_code == 200
-    assert listed.json() == [
+    listed_body = listed.json()
+    assert listed_body["items"] == [
         {"journey_id": JID, "date": "2026-08-28", "complete": True}
     ]
+    assert listed_body["total"] == 1
+    assert listed_body["has_more"] is False
+    assert listed_body["next_cursor"] is None
 
     detail = client.get(f"/journeys/{JID}")
     assert detail.status_code == 200
@@ -111,7 +115,7 @@ def test_journeys_list_excludes_metrics_directory(tmp_path):
 
     listed = client.get("/journeys")
     assert listed.status_code == 200
-    body = listed.json()
+    body = listed.json()["items"]
     assert body == [{"journey_id": JID, "date": "2026-08-28", "complete": True}]
     assert all(entry["date"] != "metrics" for entry in body)
     assert all(entry["journey_id"] != "2026-08-28" for entry in body)
@@ -215,14 +219,14 @@ def test_journeys_and_metrics_product_filter(tmp_path):
 
     filtered = client.get("/journeys", params={"product": "unpod"})
     assert filtered.status_code == 200
-    assert [j["journey_id"] for j in filtered.json()] == ["j_a"]
+    assert [j["journey_id"] for j in filtered.json()["items"]] == ["j_a"]
 
     filtered_metrics = client.get("/metrics", params={"product": "unpod"})
     assert filtered_metrics.status_code == 200
-    assert [m["hostname"] for m in filtered_metrics.json()] == ["unpod"]
+    assert [m["hostname"] for m in filtered_metrics.json()["items"]] == ["unpod"]
 
     unfiltered = client.get("/journeys")
-    assert {j["journey_id"] for j in unfiltered.json()} == {"j_a", "j_b"}
+    assert {j["journey_id"] for j in unfiltered.json()["items"]} == {"j_a", "j_b"}
 
 
 def test_runs_and_exports(tmp_path):
@@ -242,11 +246,11 @@ def test_runs_and_exports(tmp_path):
 
     runs = client.get("/runs")
     assert runs.status_code == 200
-    assert runs.json()[0]["benchmark_name"] == "b1"
+    assert runs.json()["items"][0]["benchmark_name"] == "b1"
 
     exp = client.get("/exports")
     assert exp.status_code == 200
-    assert exp.json()[0]["rows"] == 1
+    assert exp.json()["items"][0]["rows"] == 1
 
 
 def test_metrics_list(tmp_path):
@@ -272,7 +276,7 @@ def test_metrics_list(tmp_path):
 
     resp = client.get("/metrics")
     assert resp.status_code == 200
-    assert resp.json() == [snapshot]
+    assert resp.json()["items"] == [snapshot]
 
 
 def test_metrics_list_skips_malformed_lines(tmp_path):
@@ -288,7 +292,7 @@ def test_metrics_list_skips_malformed_lines(tmp_path):
 
     resp = client.get("/metrics")
     assert resp.status_code == 200
-    body = resp.json()
+    body = resp.json()["items"]
     assert len(body) == 1
     assert body[0]["ts"] == "t"
     assert body[0]["hostname"] == "h"
@@ -313,7 +317,7 @@ def test_metrics_list_skips_snapshots_missing_required_fields(tmp_path):
 
     resp = client.get("/metrics")
     assert resp.status_code == 200
-    body = resp.json()
+    body = resp.json()["items"]
     assert len(body) == 1
     assert body[0]["ts"] == "t"
     assert body[0]["hostname"] == "h"

@@ -1,36 +1,47 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from odyssey_schemas import (
     JourneyDetailOut,
     JourneyMetricsOut,
+    JourneyPageOut,
     JourneySummaryOut,
     StepOut,
 )
 
 from odyssey_api import deps
 from odyssey_api.domain import journeys as domain
+from odyssey_api.pagination import paginate
 from odyssey_api.settings import Settings
 
 router = APIRouter(prefix="/journeys", tags=["journeys"])
 
 
-@router.get("", response_model=List[JourneySummaryOut])
+@router.get("", response_model=JourneyPageOut)
 def list_journeys(
     product: Optional[str] = None,
+    date: Optional[str] = None,
+    cursor: Optional[str] = None,
+    limit: Optional[int] = None,
     settings: Settings = Depends(deps.get_settings_dep),
-) -> List[JourneySummaryOut]:
+) -> JourneyPageOut:
     """``?product=<slug>`` narrows to one product's partition in a
     product-scoped (`--products-file`) collector deployment — see
-    `domain.journeys.list_journeys_with_status`."""
-    return [
-        JourneySummaryOut(journey_id=journey_id, date=date, complete=complete)
-        for journey_id, date, complete in domain.list_journeys_with_status(
+    `domain.journeys.list_journeys_with_status`. ``?date=<YYYY-MM-DD>``
+    narrows to journeys reported on that date. ``?cursor=``/``?limit=``
+    paginate the (already-filtered) result — see
+    `odyssey_api.pagination.paginate`."""
+    all_journeys = [
+        JourneySummaryOut(journey_id=journey_id, date=journey_date, complete=complete)
+        for journey_id, journey_date, complete in domain.list_journeys_with_status(
             settings.journeys_dir, product
         )
+        if date is None or journey_date == date
     ]
+    items, next_cursor, has_more, total = paginate(all_journeys, cursor, limit)
+    return JourneyPageOut(items=items, next_cursor=next_cursor, has_more=has_more, total=total)
 
 
 @router.get("/{journey_id}", response_model=JourneyDetailOut)

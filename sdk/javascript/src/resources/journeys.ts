@@ -2,17 +2,20 @@
 // services/api/openapi.json. Do not edit by hand — see codegen.ts.
 
 import type { Transport } from "../client.js";
-import type { JourneyDetailOut, JourneySummaryOut } from "../types.generated.js";
+import type { JourneyDetailOut, JourneyPageOut } from "../types.generated.js";
 
 /** Generated from `/journeys`, `/journeys/{journey_id}`. */
 export class JourneysResource {
   constructor(private readonly transport: Transport) {}
 
-  async list(options: { product?: string } = {}): Promise<JourneySummaryOut[]> {
+  async list(options: { product?: string; date?: string; cursor?: string; limit?: number } = {}): Promise<JourneyPageOut> {
     const params = new URLSearchParams();
-    if (options.product != null) params.set("product", options.product);
+    if (options.product != null) params.set("product", String(options.product));
+    if (options.date != null) params.set("date", String(options.date));
+    if (options.cursor != null) params.set("cursor", String(options.cursor));
+    if (options.limit != null) params.set("limit", String(options.limit));
     const query = params.toString() ? `?${params.toString()}` : "";
-    return this.transport.get<JourneySummaryOut[]>(`/journeys${query}`);
+    return this.transport.get<JourneyPageOut>(`/journeys${query}`);
   }
 
   async get(journey_id: string): Promise<JourneyDetailOut> {

@@ -1,4 +1,5 @@
 import { apiClient } from "@/lib/api";
+import { collectAll } from "@/lib/pagination";
 import { DataTable } from "@/components/DataTable";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/Card";
@@ -19,8 +20,13 @@ export default async function MetricsPage({
   let error: string | null = null;
   try {
     const client = apiClient();
+    // The host-grouped tables and the multi-line chart below both need
+    // every snapshot at once (not one page) -- `/metrics` is paginated
+    // server-side, so this walks every page via `next_cursor`.
     [snapshots, products] = await Promise.all([
-      client.metrics.list({ product: productFilter || undefined }),
+      collectAll<MetricsSnapshotOut>((cursor) =>
+        client.metrics.list({ product: productFilter || undefined, cursor, limit: 100 }),
+      ),
       client.products.list(),
     ]);
   } catch (err) {

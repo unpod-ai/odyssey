@@ -495,6 +495,104 @@ tbody tr:hover {
   margin-bottom: 1rem;
 }
 
+/* Pagination */
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.75rem 0 1.5rem;
+}
+
+.pagination-summary {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.pagination-controls {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.pagination-controls .btn {
+  margin-top: 0;
+}
+
+.pagination-controls .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pagination-controls .btn:disabled:hover {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+/* Date counts */
+
+.date-counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1.25rem;
+}
+
+.date-counts-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.date-counts-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.date-count-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.6rem;
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.78rem;
+  text-decoration: none;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.date-count-chip:hover {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+}
+
+.date-count-chip-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.date-count-badge {
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.72rem;
+}
+
+.date-count-chip-active .date-count-badge {
+  background: var(--accent);
+  color: var(--surface);
+}
+
 /* Metrics chart */
 
 .chart-card {
@@ -832,6 +930,21 @@ tbody tr:hover {
   .filter-select {
     min-width: 0;
     width: 100%;
+  }
+
+  .pagination-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+  }
+
+  .pagination-controls {
+    justify-content: stretch;
+  }
+
+  .pagination-controls .btn {
+    flex: 1;
+    justify-content: center;
   }
 }
 

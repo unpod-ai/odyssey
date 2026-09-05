@@ -19,11 +19,25 @@ export interface EvalRunOut {
   report_path: string;
 }
 
+export interface EvalRunPageOut {
+  has_more: boolean;
+  items: EvalRunOut[];
+  next_cursor?: string | null;
+  total: number;
+}
+
 export interface ExportArtifactOut {
   name: string;
   path: string;
   rows: number;
   sha256: string;
+}
+
+export interface ExportPageOut {
+  has_more: boolean;
+  items: ExportArtifactOut[];
+  next_cursor?: string | null;
+  total: number;
 }
 
 export interface HealthOut {
@@ -46,10 +60,24 @@ export interface JourneyMetricsOut {
   tool_error_rate?: number | null;
 }
 
+export interface JourneyPageOut {
+  has_more: boolean;
+  items: JourneySummaryOut[];
+  next_cursor?: string | null;
+  total: number;
+}
+
 export interface JourneySummaryOut {
   complete: boolean;
   date: string;
   journey_id: string;
+}
+
+export interface MetricsPageOut {
+  has_more: boolean;
+  items: MetricsSnapshotOut[];
+  next_cursor?: string | null;
+  total: number;
 }
 
 export interface MetricsSnapshotOut {
