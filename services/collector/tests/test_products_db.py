@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+import json
+
+import pytest
+from odyssey_store.auth import hash_api_key
+from odyssey_store.db import connect
+
+from odyssey_collector.products_db import (
+    create_product,
+    list_products,
+    migrate_products_from_json,
+    revoke_product,
+    rotate_product,
+)
+
+
+def test_create_product_stores_only_a_hash(tmp_path):
+    db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
+
+    created = create_product(db_uri, "acme", "Acme Corp")
+
+    assert created.slug == "acme"
+    assert created.api_key  # a real plaintext key was generated
+    conn = connect(db_uri)
+    row = conn.execute("SELECT api_key_hash FROM products WHERE slug = 'acme'").fetchone()
+    conn.close()
+    assert row["api_key_hash"] == hash_api_key(created.api_key)
+    assert created.api_key != row["api_key_hash"]
+
+
+def test_create_product_refuses_a_duplicate_slug(tmp_path):
+    db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
+    create_product(db_uri, "acme", "Acme Corp")
+
+    with pytest.raises(ValueError, match="already exists"):
+        create_product(db_uri, "acme", "Acme Again")
+
+
+def test_list_products_never_includes_a_key_or_hash(tmp_path):
+    db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
+    create_product(db_uri, "acme", "Acme Corp")
+
+    products = list_products(db_uri)
+
+    assert products == [{"slug": "acme", "name": "Acme Corp", "revoked": False, "created_at": products[0]["created_at"]}]
+    assert "api_key" not in json.dumps(products)
+    assert "hash" not in json.dumps(products)
+
+
+def test_revoke_product_marks_revoked(tmp_path):
+    db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
+    create_product(db_uri, "acme", "Acme Corp")
+
+    revoke_product(db_uri, "acme")
+
+    products = list_products(db_uri)
+    assert products[0]["revoked"] is True
+
+
+def test_revoke_unknown_slug_raises(tmp_path):
+    db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
+    with pytest.raises(KeyError):
+        revoke_product(db_uri, "nope")
+
+
+def test_rotate_product_issues_a_new_key_and_invalidates_the_old_hash(tmp_path):
+    db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
+    created = create_product(db_uri, "acme", "Acme Corp")
+
+    rotated = rotate_product(db_uri, "acme")
+
+    assert rotated.api_key != created.api_key
+    conn = connect(db_uri)
+    row = conn.execute("SELECT api_key_hash FROM products WHERE slug = 'acme'").fetchone()
+    conn.close()
+    assert row["api_key_hash"] == hash_api_key(rotated.api_key)
+    assert row["api_key_hash"] != hash_api_key(created.api_key)
+
+
+def test_migrate_products_from_json_preserves_existing_keys(tmp_path):
+    json_path = tmp_path / "products.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "products": [
+                    {"slug": "acme", "name": "Acme Corp", "api_key": "sk-acme-original"},
+                    {"slug": "globex", "name": "Globex Inc", "api_key": "sk-globex-original"},
+                ]
+            }
+        )
+    )
+    db_uri = f"sqlite:///{tmp_path}/db.sqlite3"
+
+    count = migrate_products_from_json(db_uri, json_path)
+
+    assert count == 2
+    conn = connect(db_uri)
+    row = conn.execute("SELECT api_key_hash FROM products WHERE slug = 'acme'").fetchone()
+    conn.close()
+    assert row["api_key_hash"] == hash_api_key("sk-acme-original")
