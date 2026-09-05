@@ -40,10 +40,26 @@ Env-first, explicit argument wins — same precedence as `odyssey.config.resolve
 | `ODYSSEY_COLLECTOR_HOST` | `--host` | `127.0.0.1` | |
 | `ODYSSEY_COLLECTOR_PORT` | `--port` | `8787` | |
 | `ODYSSEY_COLLECTOR_DATA_DIR` | `--data-dir` | `./collector-data` | where `<date>/<journey_id>.jsonl` files land |
-| `ODYSSEY_DB_URI` | `--db-uri` | unset (required) | SQLite database file/URI for product/tenant roster and shared auth cache with `services/api`. Must be identical in both services (see `docs/runbooks/run-services.md`) |
+| `ODYSSEY_COLLECTOR_API_KEY` | `--api-key` | unset (open) | one shared bearer token, unscoped. Mutually exclusive with `--db-uri` |
+| `ODYSSEY_DB_URI` | `--db-uri` | unset (optional; required only for the product-management CLI flags below) | SQLite database file/URI for product/tenant roster and shared auth cache with `services/api`. Mutually exclusive with `--api-key`. Must be identical in both services (see `docs/runbooks/run-services.md`) |
 | `ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS` | `--auth-cache-ttl-seconds` | `60` | Auth cache time-to-live in seconds (product/api_key lookups cached to reduce DB hits) |
 | `ODYSSEY_COLLECTOR_TIMEZONE` | `--timezone` | `UTC` | IANA name (e.g. `Asia/Kolkata`); which day a batch's date-partition belongs to. Unrecognised names fall back to UTC |
 | `ODYSSEY_COLLECTOR_DEBUG` | `--debug` | unset (off) | per-request access log (method, path, status) to stdout, via the `odyssey_collector.requests` logger. Quiet by default — same as before this existed |
+
+## Auth modes
+
+Three independent modes, chosen by which of `--api-key`/`--db-uri` (if
+either) is set — passing both raises at startup:
+
+- Neither set: no auth at all, every request is accepted. For local dev.
+- `--api-key`/`ODYSSEY_COLLECTOR_API_KEY`: one shared bearer token,
+  unscoped — any caller with the key can post as anyone.
+- `--db-uri`/`ODYSSEY_DB_URI`: product-scoped, multi-tenant, via the
+  SQLite database described below. This is also the flag required (but
+  not otherwise) to run the product-management CLI commands
+  (`--create-product`, `--list-products`, `--revoke-product`,
+  `--rotate-product`, `--migrate-products-from-json`) — the server
+  itself does not require `--db-uri` to start.
 
 ## Product scoping
 
@@ -167,7 +183,7 @@ Its own channel, independent of journey capture — same auth rules as
 every other POST (any product API key from the database), but its own
 storage subdirectory, never mixed into a journey shard file:
 `<data_dir>/<product_slug>/metrics/<YYYY-MM-DD>.jsonl` in product-scoped
-mode, `<data_dir>/metrics/<YYYY-MM-DD>.jsonl` in single-product mode.
+mode, `<data_dir>/metrics/<YYYY-MM-DD>.jsonl` in single-shared-key mode.
 
 `public_ip` is added here, server-side, from `self.client_address[0]` —
 the real TCP peer address of the connection — never trusted as client

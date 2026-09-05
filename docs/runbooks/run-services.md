@@ -43,6 +43,8 @@ WorkingDirectory=/opt/odyssey
 Environment=ODYSSEY_COLLECTOR_HOST=127.0.0.1
 Environment=ODYSSEY_COLLECTOR_PORT=8787
 Environment=ODYSSEY_COLLECTOR_DATA_DIR=/var/lib/odyssey/collector-data
+# one of these two, never both — see services/collector/README.md
+# Environment=ODYSSEY_COLLECTOR_API_KEY=change-me
 Environment=ODYSSEY_DB_URI=/var/lib/odyssey/odyssey.db
 Environment=ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS=60
 ExecStart=/opt/odyssey/.venv/bin/odyssey-collector
@@ -86,9 +88,20 @@ via the `odyssey_collector.requests` logger, visible through
 and `daemon-reload && restart` to turn it on; remove it and restart again
 to go back to quiet.
 
+### Auth: `--api-key` vs `--db-uri` (product-scoped), never both
+
+`services/collector` supports three independent auth modes: no auth
+(neither set, for local dev), `ODYSSEY_COLLECTOR_API_KEY`/`--api-key`
+(one shared bearer token, unscoped — unaffected by anything below), and
+`ODYSSEY_DB_URI`/`--db-uri` (multi-tenant, product-scoped, via a shared
+SQLite database). Setting both `ODYSSEY_COLLECTOR_API_KEY` and
+`ODYSSEY_DB_URI` raises at startup — pick one. Neither is required for
+the server to start; `ODYSSEY_DB_URI`/`--db-uri` is required specifically
+to run the product-management CLI flags below.
+
 ### Product/tenant management
 
-Product roster and authentication are managed through the SQLite database pointed to by `ODYSSEY_DB_URI`. The database is initialized automatically on first use if it doesn't exist. Use the CLI commands to create, list, revoke, and rotate products:
+Product roster and authentication (when using `--db-uri` mode) are managed through the SQLite database pointed to by `ODYSSEY_DB_URI`. The database is initialized automatically on first use if it doesn't exist. Use the CLI commands to create, list, revoke, and rotate products:
 
 **Important:** `ODYSSEY_DB_URI` must point to the same SQLite file in both `services/collector` **and** `services/api`. Both services read from this shared database for product scoping and authentication caching. Mismatches will cause authentication failures.
 
