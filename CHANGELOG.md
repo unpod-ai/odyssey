@@ -6,6 +6,47 @@ project has not yet made a versioned release, so entries accumulate under
 
 ## [Unreleased]
 
+### Added
+
+- `services/api` now maintains its own SQLite read index (`packages/odyssey-store`,
+  a new shared schema/connection-helper package) instead of scanning the
+  filesystem on every request — `GET /journeys` used to re-walk
+  `journeys_dir` and re-fold every shard from scratch per request, an
+  O(n²)-shaped cost as journey count grew. A background thread (default
+  every 5s, `ODYSSEY_API_INDEX_INTERVAL_SECONDS`) incrementally reindexes
+  only files that changed since last indexed (tracked via an
+  `indexed_files` manifest keyed by `(mtime, size)`); metrics shards are
+  tailed by byte offset rather than re-parsed whole; export shards are
+  hashed once, not per request. `GET /journeys`, `GET /metrics`,
+  `GET /exports`, `GET /products` all now read from the index; new
+  `GET /journeys/counts` and `GET /metrics/counts` endpoints return
+  product/project/date breakdowns via indexed `GROUP BY` queries. New
+  `odyssey api reindex` CLI command forces an immediate full pass. Both
+  Python and JS SDKs regenerated (`counts()` added to the journeys/metrics
+  resources); the codegen scripts also gained a duplicate-generated-method-name
+  guard, since two no-path-param routes on one resource (`/journeys` and
+  `/journeys/counts`) previously would have silently clobbered each
+  other's method name.
+
+- `services/collector`'s product/tenant roster moved off a hand-edited
+  `products.json` file onto the same shared SQLite file `services/api`'s
+  index uses (`ODYSSEY_DB_URI`), with hash-only `api_key` storage (SHA-256,
+  never the plaintext, at rest anywhere) and a new `--create-product`/
+  `--list-products`/`--revoke-product`/`--rotate-product`/
+  `--migrate-products-from-json` CLI. Auth checks go through an in-memory
+  cache of the whole `products` table (default 60s TTL,
+  `ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS`), refreshed on a background
+  thread, with a direct DB query on a cache miss so a freshly-created
+  product authenticates immediately. The old `--products-file`/
+  `--init-products-file`/`--add-product-file` flags and
+  `ODYSSEY_COLLECTOR_PRODUCTS_FILE` are removed entirely — existing
+  deployments must run `--migrate-products-from-json` once before
+  upgrading. A corrupt/unreadable shared DB file now makes both services
+  refuse to start with a clear error rather than ever being auto-deleted,
+  since the file holds real tenant credentials, not just a rebuildable
+  cache. See `docs/superpowers/specs/2026-09-05-api-sqlite-index-design.md`
+  for the full design.
+
 ### Fixed
 
 - `services/api`'s `GET /journeys` (and `GET /journeys/{id}`) and

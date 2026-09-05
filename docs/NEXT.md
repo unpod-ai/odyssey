@@ -1,5 +1,63 @@
 # odyssey — session handoff
 
+## services/api SQLite read index + services/collector product management on SQLite — done
+
+Two coupled plans, both landing on one new shared SQLite file
+(`ODYSSEY_DB_URI`, via a new `packages/odyssey-store` package). Full
+design: `docs/superpowers/specs/2026-09-05-api-sqlite-index-design.md`.
+Implementation plans (all tasks complete, each with its own final
+whole-branch review + fix wave): `docs/superpowers/plans/2026-09-05-api-sqlite-index.md`,
+`docs/superpowers/plans/2026-09-05-collector-product-management.md`.
+
+**Part A — the actual perf fix.** `services/api`'s `GET /journeys` was
+O(n²): it re-walked `journeys_dir` and re-folded every journey shard from
+scratch, per request. Now `services/api` maintains its own incremental
+SQLite index (`odyssey_api.index`) — a background thread reindexes only
+files changed since last pass (mtime+size manifest), metrics shards are
+byte-offset-tailed, export shards are hashed once not per-request.
+`GET /journeys`/`/metrics`/`/exports`/`/products` all read from the
+index now; new `GET /journeys/counts`/`GET /metrics/counts` give
+product/project/date breakdowns via indexed `GROUP BY`. Both SDKs
+regenerated (`counts()` added); the codegen scripts gained a
+duplicate-generated-method-name guard after a real near-miss (`/journeys`
+and `/journeys/counts` would have collided on `list()`).
+
+**Part B — collector's product roster moves off `products.json`.**
+`services/collector`'s product/tenant identity now lives in the same
+shared SQLite file, hash-only (`api_key` is never stored or held as
+plaintext anywhere, at rest, past the instant `create`/`rotate` prints
+it once). New CLI: `--create-product`/`--list-products`/
+`--revoke-product`/`--rotate-product`/`--migrate-products-from-json`.
+The old `--products-file`/`--init-products-file`/`--add-product-file`/
+`ODYSSEY_COLLECTOR_PRODUCTS_FILE` are gone — no dual-mode. Auth checks go
+through an in-memory whole-table cache (60s default TTL) with a DB-query
+fallback on cache miss, refreshed on its own background thread. A
+corrupt/unreadable shared DB file makes both services refuse to start
+rather than ever auto-deleting it, since it now holds real, unrecoverable
+tenant credentials.
+
+**Not done in this pass, flagged during review, worth picking up next:**
+- **Docs/CHANGELOG were behind** — fixed this session, but check
+  `docs/COMPONENTS.md`/`docs/data-contracts.md` still describe the old
+  filesystem-scanning `services/api` and the old `products.json` roster;
+  they weren't updated as part of either plan.
+- **Existing deployments need a manual migration step** —
+  `odyssey-collector --migrate-products-from-json <old file> --db-uri
+  <shared db>` must run once before upgrading a collector that still has
+  a `products.json` roster. Nothing automates this; it's a deploy runbook
+  gap (`docs/runbooks/run-services.md` was updated for the new CLI shape,
+  but doesn't call out the upgrade *order* for an existing deployment).
+- **`main`'s `black --check` gate is red** independent of this work —
+  `services/api/src/odyssey_api/routers/runs.py` was already unformatted
+  before this session; the final review caught it but it was explicitly
+  left alone (out of scope for either plan). One-line `black` fix, needs
+  its own small commit.
+- Minor/deferred items from both final reviews (a stale docstring in
+  `services/api/src/odyssey_api/index/manager.py`, an unnormalized-path
+  edge case in the index registry key, a couple of Part B polish items) —
+  see the plan files' Self-Review Notes / ledgers for the full list; none
+  are load-bearing.
+
 ## Metrics exposed end to end: services/collector → GET /metrics → apps/web dashboard — done
 
 Built exactly what the previous handoff below designed, verified against
