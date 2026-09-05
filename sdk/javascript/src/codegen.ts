@@ -88,6 +88,7 @@ function modelRef(schema: JsonSchema): { model: string; isList: boolean } {
 
 export function operationsByResource(openapi: OpenAPIDoc): Record<string, Operation[]> {
   const byResource: Record<string, Operation[]> = {};
+  const methodNamesByResource: Record<string, Record<string, string>> = {};
   for (const path of Object.keys(openapi.paths).sort()) {
     const methods = openapi.paths[path];
     const segments = path.split("/").filter(Boolean);
@@ -131,6 +132,17 @@ export function operationsByResource(openapi: OpenAPIDoc): Record<string, Operat
     } else {
       methodName = "list";
     }
+
+    const usedNames = (methodNamesByResource[resource] ??= {});
+    if (methodName in usedNames) {
+      throw new UnsupportedOperationError(
+        `${path}: derived method name "${methodName}" collides with "${usedNames[methodName]}" ` +
+          `on resource "${resource}" — rename one of the routes' last path segment so ` +
+          `generated methods don't clobber each other`,
+      );
+    }
+    usedNames[methodName] = path;
+
     (byResource[resource] ??= []).push({
       methodName,
       path,

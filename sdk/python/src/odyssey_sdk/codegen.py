@@ -86,6 +86,7 @@ def _operations_by_resource(openapi: Dict[str, Any]) -> Dict[str, List[Operation
     itself — see `client.py`).
     """
     by_resource: Dict[str, List[Operation]] = {}
+    method_names_by_resource: Dict[str, Dict[str, str]] = {}
     for path, methods in sorted(openapi["paths"].items()):
         segments = [s for s in path.split("/") if s]
         if segments == ["health"]:
@@ -122,6 +123,17 @@ def _operations_by_resource(openapi: Dict[str, Any]) -> Dict[str, List[Operation
             method_name = segments[-1]
         else:
             method_name = "list"
+
+        used_names = method_names_by_resource.setdefault(resource, {})
+        if method_name in used_names:
+            raise UnsupportedOperationError(
+                f"{path}: derived method name {method_name!r} collides with "
+                f"{used_names[method_name]!r} on resource {resource!r} — "
+                "rename one of the routes' last path segment so generated "
+                "methods don't clobber each other"
+            )
+        used_names[method_name] = path
+
         by_resource.setdefault(resource, []).append(
             Operation(method_name, path, path_params, query_params, model, is_list)
         )
