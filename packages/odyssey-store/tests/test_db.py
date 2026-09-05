@@ -3,7 +3,9 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from odyssey_store.db import connect, parse_sqlite_uri
+import pytest
+
+from odyssey_store.db import CorruptDatabaseError, connect, parse_sqlite_uri
 
 
 def test_parse_sqlite_uri_relative(tmp_path, monkeypatch):
@@ -50,3 +52,11 @@ def test_connect_twice_is_idempotent(tmp_path):
     # Applying the schema a second time against the same file must not raise.
     conn = connect(uri)
     conn.close()
+
+
+def test_connect_raises_a_clear_error_on_a_corrupt_file(tmp_path):
+    bad = tmp_path / "odyssey.sqlite3"
+    bad.write_bytes(b"this is not a sqlite file at all, just garbage bytes")
+
+    with pytest.raises(CorruptDatabaseError, match=str(bad)):
+        connect(f"sqlite:///{bad}")

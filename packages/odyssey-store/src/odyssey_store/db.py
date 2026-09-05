@@ -16,6 +16,13 @@ from odyssey_store.schema import SCHEMA_STATEMENTS
 _PREFIX = "sqlite:///"
 
 
+class CorruptDatabaseError(RuntimeError):
+    """Raised instead of letting a raw sqlite3.DatabaseError propagate --
+    this file may hold real, unrecoverable tenant credentials (see the
+    design spec's corruption-recovery decision), so both services must
+    fail loudly and specifically here, never auto-delete-and-rebuild."""
+
+
 def parse_sqlite_uri(uri: str) -> Path:
     """``sqlite:///relative/path`` -> ``Path("relative/path")``;
     ``sqlite:////absolute/path`` -> ``Path("/absolute/path")`` -- the
@@ -39,9 +46,17 @@ def connect(uri: str) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    for statement in SCHEMA_STATEMENTS:
-        conn.execute(statement)
-    conn.commit()
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        for statement in SCHEMA_STATEMENTS:
+            conn.execute(statement)
+        conn.commit()
+    except sqlite3.DatabaseError as exc:
+        conn.close()
+        raise CorruptDatabaseError(
+            f"{path} is not a valid SQLite database (or is corrupt): {exc}. "
+            f"This file may hold real tenant credentials — restore from "
+            f"backup rather than deleting it."
+        ) from exc
     return conn
