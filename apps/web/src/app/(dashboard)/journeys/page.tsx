@@ -25,26 +25,32 @@ export default async function JourneysPage({
   let dateCounts: { date: string; count: number }[] = [];
   let products: ProductOut[] = [];
   let error: string | null = null;
+  let effectiveDate = dateFilter;
   try {
     const client = apiClient();
-    const [page, counts, productList] = await Promise.all([
-      client.journeys.list({
-        product: productFilter || undefined,
-        date: dateFilter || undefined,
-        cursor: cursorParam,
-        limit: PAGE_SIZE,
-      }),
+    // Counts (and thus the latest date) must be known before the actual
+    // list query -- when no ?date= is given, this page defaults to the
+    // latest date rather than mixing every date together.
+    const [counts, productList] = await Promise.all([
       client.journeys.counts(),
       client.products.list(),
     ]);
-    journeys = page.items;
-    total = page.total;
-    hasMore = page.has_more;
-    nextCursor = page.next_cursor;
     dateCounts = (counts.by_date ?? [])
       .map(({ date, count }) => ({ date, count }))
       .sort((a, b) => b.date.localeCompare(a.date));
     products = productList;
+    effectiveDate = dateFilter || dateCounts[0]?.date || "";
+
+    const page = await client.journeys.list({
+      product: productFilter || undefined,
+      date: effectiveDate || undefined,
+      cursor: cursorParam,
+      limit: PAGE_SIZE,
+    });
+    journeys = page.items;
+    total = page.total;
+    hasMore = page.has_more;
+    nextCursor = page.next_cursor;
   } catch (err) {
     error = (err as Error).message;
   }
@@ -75,17 +81,17 @@ export default async function JourneysPage({
             key: "product",
             label: "Product",
             value: productFilter,
-            options: products.map((p) => ({ value: p.slug, label: p.name })),
+            options: products.map((p) => ({ value: p.slug, label: `${p.name} (${p.slug})` })),
           },
           {
             key: "date",
             label: "Date",
-            value: dateFilter,
+            value: effectiveDate,
             options: dateCounts.map((d) => ({ value: d.date, label: `${d.date} (${d.count})` })),
           },
         ]}
       />
-      <DateCounts counts={dateCounts} activeDate={dateFilter} hrefFor={hrefFor} />
+      <DateCounts counts={dateCounts} activeDate={effectiveDate} hrefFor={hrefFor} />
       <DataTable
         title="Journeys"
         rows={journeys}

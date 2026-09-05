@@ -76,7 +76,7 @@ export default async function MetricsPage({
             key: "product",
             label: "Product",
             value: productFilter,
-            options: products.map((p) => ({ value: p.slug, label: p.name })),
+            options: products.map((p) => ({ value: p.slug, label: `${p.name} (${p.slug})` })),
           },
           {
             key: "project",
