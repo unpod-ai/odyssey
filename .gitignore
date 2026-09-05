@@ -70,3 +70,11 @@ evaluation/reports/*
 collector-data/
 collector-products.json
 collector-keys.json
+
+# --- services/api sqlite index (odyssey_store) — local runtime state, never committed ---
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# --- workspace members share the root uv.lock, never their own ---
+packages/odyssey-store/uv.lock
