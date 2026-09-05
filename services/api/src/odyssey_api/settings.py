@@ -75,6 +75,21 @@ class Settings:
     api_key: Optional[str] = field(
         default_factory=lambda: os.environ.get("ODYSSEY_API_AUTH_KEY")
     )
+    db_uri: str = field(
+        default_factory=lambda: os.environ.get(
+            "ODYSSEY_DB_URI", "sqlite:///./odyssey.sqlite3"
+        )
+    )
+    index_interval_seconds: int = field(
+        default_factory=lambda: int(
+            os.environ.get("ODYSSEY_API_INDEX_INTERVAL_SECONDS", "5")
+        )
+    )
+    index_reconcile_every: int = field(
+        default_factory=lambda: int(
+            os.environ.get("ODYSSEY_API_INDEX_RECONCILE_EVERY", "20")
+        )
+    )
 
 
 def get_settings() -> Settings:
