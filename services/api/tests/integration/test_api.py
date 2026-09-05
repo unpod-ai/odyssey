@@ -30,12 +30,12 @@ def _reset_index_manager():
     manager.reset_for_tests()
 
 
-def _seed_product(settings: Settings, slug: str, name: str) -> None:
+def _seed_product(settings: Settings, slug: str, name: str, revoked: int = 0) -> None:
     index = manager.get_index(settings)
     index.execute(
         "INSERT INTO products (slug, name, api_key_hash, revoked, created_at) "
-        "VALUES (?, ?, 'test-hash', 0, '2026-01-01T00:00:00+00:00')",
-        (slug, name),
+        "VALUES (?, ?, ?, ?, '2026-01-01T00:00:00+00:00')",
+        (slug, name, f"test-hash-{slug}", revoked),
     )
 
 
@@ -200,6 +200,18 @@ def test_products_list_empty_when_unset():
     resp = client.get("/products")
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+def test_products_list_excludes_revoked(tmp_path):
+    tmp_db = tmp_path / "db.sqlite3"
+    settings = Settings(db_uri=f"sqlite:///{tmp_db}")
+    _seed_product(settings, "unpod", "Unpod")
+    _seed_product(settings, "otherpod", "Otherpod", revoked=1)
+    client = _client(settings)
+
+    resp = client.get("/products")
+    assert resp.status_code == 200
+    assert resp.json() == [{"slug": "unpod", "name": "Unpod"}]
 
 
 def test_journeys_and_metrics_product_filter(tmp_path):

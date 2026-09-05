@@ -64,6 +64,9 @@ class IndexHandle:
             conn.close()
 
     def execute(self, sql: str, params: tuple = ()) -> None:
+        """Test-only write helper — production code must never call this;
+        services/api is a read-only consumer of the shared index (see the
+        per-table single-writer rule in the design spec)."""
         conn = connect(self._settings.db_uri)
         try:
             with self._lock:
