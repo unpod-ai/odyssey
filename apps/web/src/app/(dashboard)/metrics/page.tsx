@@ -1,12 +1,16 @@
 import { apiClient } from "@/lib/api";
 import { collectAll } from "@/lib/pagination";
-import { DataTable } from "@/components/DataTable";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/Card";
 import { TableFilters } from "@/components/TableFilters";
 import { MetricsChart } from "@/components/MetricsChart";
+import { SnapshotsByDateChart } from "@/components/SnapshotsByDateChart";
 import { distinctProjects } from "@/lib/projects";
 import type { MetricsSnapshotOut, ProductOut } from "@odyssey/sdk";
+
+function gb(bytes: number | null | undefined): string {
+  return bytes != null ? `${(bytes / 1e9).toFixed(1)} GB` : "—";
+}
 
 export default async function MetricsPage({
   searchParams,
@@ -20,9 +24,10 @@ export default async function MetricsPage({
   let error: string | null = null;
   try {
     const client = apiClient();
-    // The host-grouped tables and the multi-line chart below both need
-    // every snapshot at once (not one page) -- `/metrics` is paginated
-    // server-side, so this walks every page via `next_cursor`.
+    // The charts below need every snapshot at once (not one page) --
+    // /metrics is paginated server-side, so this walks every page via
+    // next_cursor. This is a graphs/analysis view, not a row-by-row
+    // listing, so there is no separate paginated table here.
     [snapshots, products] = await Promise.all([
       collectAll<MetricsSnapshotOut>((cursor) =>
         client.metrics.list({ product: productFilter || undefined, cursor, limit: 100 }),
@@ -55,17 +60,24 @@ export default async function MetricsPage({
   const latest = filteredSnapshots.length
     ? filteredSnapshots.reduce((a, b) => (a.ts > b.ts ? a : b))
     : null;
-
-  // One card per reporting host — a flat table of every snapshot became
-  // unreadable once more than one machine was reporting, since the same
-  // hostname/IP repeated down the hostname column instead of grouping.
-  const hostGroups = new Map<string, MetricsSnapshotOut[]>();
+  const latestCpuByHost = new Map<string, number | null | undefined>();
   for (const m of filteredSnapshots) {
-    const list = hostGroups.get(m.hostname) ?? [];
-    list.push(m);
-    hostGroups.set(m.hostname, list);
+    latestCpuByHost.set(m.hostname, m.cpu_count);
   }
-  const sortedHosts = [...hostGroups.keys()].sort((a, b) => a.localeCompare(b));
+  const totalCpus = [...latestCpuByHost.values()].reduce((sum: number, c) => sum + (c ?? 0), 0);
+
+  // One compact card per reporting host, latest snapshot only -- a raw
+  // per-snapshot table became unreadable once more than one machine was
+  // reporting; the charts above already show the trend, this is just
+  // "what does each host look like right now."
+  const latestByHost = new Map<string, MetricsSnapshotOut>();
+  for (const m of filteredSnapshots) {
+    const current = latestByHost.get(m.hostname);
+    if (!current || m.ts > current.ts) {
+      latestByHost.set(m.hostname, m);
+    }
+  }
+  const sortedHosts = [...latestByHost.keys()].sort((a, b) => a.localeCompare(b));
 
   return (
     <div>
@@ -89,66 +101,58 @@ export default async function MetricsPage({
       <div className="stat-grid">
         <StatCard label="Snapshots" value={filteredSnapshots.length} />
         <StatCard label="Hosts reporting" value={hosts} />
+        <StatCard label="Total CPUs" value={totalCpus} sub="sum of each host's latest cpu_count" />
         <StatCard label="Projects" value={projects} sub="distinct project tags seen" />
         <StatCard label="Latest snapshot" value={latest?.ts ?? "—"} sub={latest?.hostname} />
-        <StatCard
-          label="Latest disk free"
-          value={
-            latest?.disk_free_bytes != null ? `${(latest.disk_free_bytes / 1e9).toFixed(1)} GB` : "—"
-          }
-          sub={
-            latest?.disk_total_bytes != null
-              ? `of ${(latest.disk_total_bytes / 1e9).toFixed(1)} GB total`
-              : undefined
-          }
-        />
       </div>
-      <MetricsChart snapshots={filteredSnapshots} />
 
-      {sortedHosts.length === 0 && (
+      {sortedHosts.length === 0 ? (
         <p className="empty">No metrics snapshots yet — see `ODYSSEY_COLLECT_METRICS`.</p>
-      )}
+      ) : (
+        <>
+          <MetricsChart snapshots={filteredSnapshots} />
+          <SnapshotsByDateChart snapshots={filteredSnapshots} />
 
-      {sortedHosts.map((hostname) => {
-        const rows = hostGroups
-          .get(hostname)!
-          .slice()
-          .sort((a, b) => b.ts.localeCompare(a.ts));
-        const latestForHost = rows[0];
-        return (
-          <div key={hostname} className="host-group">
-            <div className="host-group-header">
-              <span className="host-group-name mono">{hostname}</span>
-              <span className="host-group-meta">
-                <span className="host-group-chip">{latestForHost.os ?? "unknown OS"}</span>
-                {latestForHost.cpu_count != null && (
-                  <span className="host-group-chip">{latestForHost.cpu_count} CPUs</span>
-                )}
-                {latestForHost.public_ip && (
-                  <span className="host-group-chip mono">{latestForHost.public_ip}</span>
-                )}
-              </span>
-            </div>
-            <DataTable
-              rows={rows}
-              keyFor={(m) => `${m.hostname}-${m.ts}`}
-              emptyLabel="No snapshots for this host."
-              columns={[
-                { header: "Timestamp", render: (m) => m.ts, sortValue: (m) => m.ts },
-                {
-                  header: "Disk free / total",
-                  render: (m) =>
-                    m.disk_free_bytes != null && m.disk_total_bytes != null
-                      ? `${(m.disk_free_bytes / 1e9).toFixed(1)} / ${(m.disk_total_bytes / 1e9).toFixed(1)} GB`
-                      : "—",
-                  sortValue: (m) => m.disk_free_bytes ?? null,
-                },
-                { header: "Project", render: (m) => m.project ?? "—", sortValue: (m) => m.project ?? null },
-              ]}
-            />
+          <h2>Hosts</h2>
+          <div className="host-card-grid">
+            {sortedHosts.map((hostname) => {
+              const m = latestByHost.get(hostname)!;
+              return (
+                <div key={hostname} className="card card-padded host-card">
+                  <div className="host-card-name mono">{hostname}</div>
+                  <div className="host-card-meta">
+                    <span className="host-group-chip">{m.os ?? "unknown OS"}</span>
+                    {m.cpu_count != null && <span className="host-group-chip">{m.cpu_count} CPUs</span>}
+                    {m.public_ip && <span className="host-group-chip mono">{m.public_ip}</span>}
+                  </div>
+                  <dl className="host-card-stats">
+                    <div>
+                      <dt>Disk free / total</dt>
+                      <dd>
+                        {gb(m.disk_free_bytes)} / {gb(m.disk_total_bytes)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Memory available / total</dt>
+                      <dd>
+                        {gb(m.memory_available_bytes)} / {gb(m.memory_total_bytes)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Project</dt>
+                      <dd>{m.project ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>Last reported</dt>
+                      <dd className="mono">{m.ts}</dd>
+                    </div>
+                  </dl>
+                </div>
+              );
+            })}
           </div>
-        );
-      })}
+        </>
+      )}
     </div>
   );
 }

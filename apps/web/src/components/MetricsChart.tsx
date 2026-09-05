@@ -23,24 +23,45 @@ const SERIES_COLOR_VARS = [
 
 type Point = { x: number; y: number; pct: number; ts: string };
 type Series = { hostname: string; color: string; points: Point[] };
+type MetricKind = "disk" | "memory";
 
-/** Disk-free % per host, one line per hostname on a shared real-time x-axis
- * (unlike a single-series index axis, comparing hosts needs their actual
- * report times aligned, not just reporting order) -- lets you see which
- * host is trending down relative to the others, not just one host in
- * isolation. */
+const METRIC_LABEL: Record<MetricKind, string> = {
+  disk: "Disk free %",
+  memory: "Memory available %",
+};
+
+function pctFor(kind: MetricKind, m: MetricsSnapshotOut): number | null {
+  if (kind === "disk") {
+    if (m.disk_free_bytes == null || m.disk_total_bytes == null || m.disk_total_bytes <= 0) return null;
+    return (m.disk_free_bytes / m.disk_total_bytes) * 100;
+  }
+  if (m.memory_available_bytes == null || m.memory_total_bytes == null || m.memory_total_bytes <= 0) return null;
+  return (m.memory_available_bytes / m.memory_total_bytes) * 100;
+}
+
+/** One metric (disk-free % or memory-available %) per host, one line per
+ * hostname on a shared real-time x-axis (unlike a single-series index
+ * axis, comparing hosts needs their actual report times aligned, not just
+ * reporting order) -- lets you see which host is trending down relative
+ * to the others, not just one host in isolation. Never both metrics on
+ * one chart at once (two y-scales on one axis is the #1 charting
+ * mistake) -- a toggle switches the whole chart, reusing the same
+ * per-host categorical color so a host's identity/color never changes
+ * when you switch metrics. */
 export function MetricsChart({ snapshots, title }: { snapshots: MetricsSnapshotOut[]; title?: string }) {
   const [hoverX, setHoverX] = useState<number | null>(null);
   const [hiddenHosts, setHiddenHosts] = useState<Set<string>>(new Set());
+  const [metric, setMetric] = useState<MetricKind>("disk");
 
   const series = useMemo(() => {
     const byHost = new Map<string, { ts: string; time: number; pct: number }[]>();
     for (const m of snapshots) {
-      if (m.disk_free_bytes == null || m.disk_total_bytes == null || m.disk_total_bytes <= 0) continue;
+      const pct = pctFor(metric, m);
+      if (pct == null) continue;
       const time = Date.parse(m.ts);
       if (Number.isNaN(time)) continue;
       const list = byHost.get(m.hostname) ?? [];
-      list.push({ ts: m.ts, time, pct: (m.disk_free_bytes / m.disk_total_bytes) * 100 });
+      list.push({ ts: m.ts, time, pct });
       byHost.set(m.hostname, list);
     }
 
@@ -69,17 +90,42 @@ export function MetricsChart({ snapshots, title }: { snapshots: MetricsSnapshotO
     });
 
     return series;
-  }, [snapshots]);
+  }, [snapshots, metric]);
 
   const visibleSeries = series.filter((s) => s.points.length >= 2 && !hiddenHosts.has(s.hostname));
+  const hasData = series.some((s) => s.points.length >= 2);
+  const totalPoints = series.reduce((sum, s) => sum + s.points.length, 0);
+  const chartTitle = title ?? `${METRIC_LABEL[metric]} by host — last ${totalPoints} snapshots`;
 
-  if (series.every((s) => s.points.length < 2)) {
-    return null;
+  const metricToggle = (
+    <div className="chart-metric-toggle" role="group" aria-label="Chart metric">
+      {(["disk", "memory"] as const).map((k) => (
+        <button
+          key={k}
+          type="button"
+          className="chart-metric-toggle-btn"
+          data-active={metric === k}
+          onClick={() => setMetric(k)}
+        >
+          {METRIC_LABEL[k]}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (!hasData) {
+    return (
+      <div className="card card-padded chart-card">
+        <div className="chart-title-row">
+          <div className="chart-title">{chartTitle}</div>
+          {metricToggle}
+        </div>
+        <p className="empty">No {METRIC_LABEL[metric].toLowerCase()} data reported yet.</p>
+      </div>
+    );
   }
 
   const baselineY = PAD_TOP + (HEIGHT - PAD_TOP - PAD_BOTTOM);
-  const totalPoints = series.reduce((sum, s) => sum + s.points.length, 0);
-  const chartTitle = title ?? `Disk free % by host — last ${totalPoints} snapshots`;
   const directLabel = series.length <= 4;
 
   const toggleHost = (hostname: string) => {
@@ -118,7 +164,10 @@ export function MetricsChart({ snapshots, title }: { snapshots: MetricsSnapshotO
 
   return (
     <div className="card card-padded chart-card">
-      <div className="chart-title">{chartTitle}</div>
+      <div className="chart-title-row">
+        <div className="chart-title">{chartTitle}</div>
+        {metricToggle}
+      </div>
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         className="chart-svg"
@@ -200,7 +249,8 @@ export function MetricsChart({ snapshots, title }: { snapshots: MetricsSnapshotO
           {active.map((a) => (
             <div key={a.hostname} className="chart-tooltip-row">
               <span className="chart-legend-swatch" style={{ background: a.color }} />
-              <strong>{a.point.pct.toFixed(1)}%</strong> free — {a.hostname} · {a.point.ts}
+              <strong>{a.point.pct.toFixed(1)}%</strong>{" "}
+              {metric === "disk" ? "free" : "available"} — {a.hostname} · {a.point.ts}
             </div>
           ))}
         </div>

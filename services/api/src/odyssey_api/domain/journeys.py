@@ -80,7 +80,9 @@ def list_journeys_with_status_indexed(
     if date is not None:
         sql += " AND date = ?"
         params.append(date)
-    sql += " ORDER BY date, journey_id"
+    # Newest date first by default -- matches the dashboard's own
+    # date-count chips, which are already sorted descending.
+    sql += " ORDER BY date DESC, journey_id DESC"
     rows = index.query(sql, tuple(params))
     return [(r["journey_id"], r["date"], bool(r["complete"])) for r in rows]
 
