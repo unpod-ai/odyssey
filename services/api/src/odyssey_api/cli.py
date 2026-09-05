@@ -107,6 +107,28 @@ def register(app: Any) -> None:
             if methods:
                 print(f"{methods:10s} {path}")
 
+    def reindex() -> None:
+        """Force one full index pass (journeys + metrics + exports +
+        reconciliation) right now, outside the background worker's
+        interval -- useful right after a deploy or in scripts/tests."""
+        from odyssey_api.index.exports_indexer import index_exports
+        from odyssey_api.index.journeys_indexer import index_journeys
+        from odyssey_api.index.metrics_indexer import index_metrics
+        from odyssey_api.index.reconcile import reconcile
+        from odyssey_api.settings import get_settings
+        from odyssey_store.db import connect
+
+        settings = get_settings()
+        conn = connect(settings.db_uri)
+        try:
+            j = index_journeys(conn, settings.journeys_dir)
+            m = index_metrics(conn, settings.journeys_dir)
+            e = index_exports(conn, settings.exports_dir)
+            removed = reconcile(conn)
+        finally:
+            conn.close()
+        print(f"journeys indexed: {j}, metrics indexed: {m}, exports indexed: {e}, reconciled away: {removed}")
+
     @app.callback()
     def _group() -> None:
         """the read API: serve it, regenerate its OpenAPI schema, list routes."""
@@ -114,3 +136,4 @@ def register(app: Any) -> None:
     app.command("serve")(serve)
     app.command("openapi")(openapi)
     app.command("routes")(routes)
+    app.command("reindex")(reindex)
