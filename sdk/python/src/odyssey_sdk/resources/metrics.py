@@ -8,11 +8,14 @@ from typing import Optional
 
 from urllib.parse import urlencode
 
-from odyssey_schemas import MetricsPageOut
+from odyssey_schemas import (
+    CountsOut,
+    MetricsPageOut,
+)
 
 
 class MetricsResource:
-    """Generated from `/metrics`."""
+    """Generated from `/metrics`, `/metrics/counts`."""
 
     def __init__(self, transport) -> None:
         self._transport = transport
@@ -23,3 +26,7 @@ class MetricsResource:
         query = ("?" + urlencode(params)) if params else ""
         data = self._transport.get(f"/metrics{query}")
         return MetricsPageOut.model_validate(data)
+
+    def counts(self) -> CountsOut:
+        data = self._transport.get("/metrics/counts")
+        return CountsOut.model_validate(data)

@@ -2,9 +2,9 @@
 // services/api/openapi.json. Do not edit by hand — see codegen.ts.
 
 import type { Transport } from "../client.js";
-import type { JourneyDetailOut, JourneyPageOut } from "../types.generated.js";
+import type { CountsOut, JourneyDetailOut, JourneyPageOut } from "../types.generated.js";
 
-/** Generated from `/journeys`, `/journeys/{journey_id}`. */
+/** Generated from `/journeys`, `/journeys/counts`, `/journeys/{journey_id}`. */
 export class JourneysResource {
   constructor(private readonly transport: Transport) {}
 
@@ -16,6 +16,10 @@ export class JourneysResource {
     if (options.limit != null) params.set("limit", String(options.limit));
     const query = params.toString() ? `?${params.toString()}` : "";
     return this.transport.get<JourneyPageOut>(`/journeys${query}`);
+  }
+
+  async counts(): Promise<CountsOut> {
+    return this.transport.get<CountsOut>("/journeys/counts");
   }
 
   async get(journey_id: string): Promise<JourneyDetailOut> {

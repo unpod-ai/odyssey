@@ -33,6 +33,10 @@ __all__ = [
     "MetricsSnapshotOut",
     "MetricsPageOut",
     "ProductOut",
+    "ProductCountOut",
+    "ProjectCountOut",
+    "DateCountOut",
+    "CountsOut",
 ]
 
 
@@ -150,3 +154,25 @@ class MetricsPageOut(BaseModel):
 class ProductOut(BaseModel):
     slug: str
     name: str
+
+
+class ProductCountOut(BaseModel):
+    product_slug: Optional[str] = None
+    count: int
+
+
+class ProjectCountOut(BaseModel):
+    product_slug: Optional[str] = None
+    project: Optional[str] = None
+    count: int
+
+
+class DateCountOut(BaseModel):
+    date: str
+    count: int
+
+
+class CountsOut(BaseModel):
+    by_product: List[ProductCountOut]
+    by_project: List[ProjectCountOut]
+    by_date: List[DateCountOut] = []

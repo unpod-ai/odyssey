@@ -37,7 +37,7 @@ interface OpenAPIDoc {
 type QueryParam = { name: string; type: "string" | "number" };
 
 type Operation = {
-  methodName: "list" | "get";
+  methodName: string;
   path: string;
   params: string[];
   queryParams: QueryParam[];
@@ -121,8 +121,18 @@ export function operationsByResource(openapi: OpenAPIDoc): Record<string, Operat
     const schema = op.responses["200"].content["application/json"].schema;
     const { model, isList } = modelRef(schema);
     const resource = segments[0];
+    let methodName: string;
+    if (params.length) {
+      methodName = "get";
+    } else if (segments.length > 1) {
+      // e.g. `/journeys/counts` -> `counts()`, distinct from the
+      // resource-root `/journeys` -> `list()` on the same class.
+      methodName = segments[segments.length - 1];
+    } else {
+      methodName = "list";
+    }
     (byResource[resource] ??= []).push({
-      methodName: params.length ? "get" : "list",
+      methodName,
       path,
       params,
       queryParams,

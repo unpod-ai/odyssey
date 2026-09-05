@@ -4,10 +4,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from odyssey_schemas import (
+    CountsOut,
     JourneyDetailOut,
     JourneyMetricsOut,
     JourneyPageOut,
     JourneySummaryOut,
+    ProductCountOut,
+    ProjectCountOut,
+    DateCountOut,
     StepOut,
 )
 
@@ -40,6 +44,27 @@ def list_journeys(
     ]
     items, next_cursor, has_more, total = paginate(all_journeys, cursor, limit)
     return JourneyPageOut(items=items, next_cursor=next_cursor, has_more=has_more, total=total)
+
+
+@router.get("/counts", response_model=CountsOut)
+def journey_counts(index: IndexHandle = Depends(get_index_dep)) -> CountsOut:
+    """Registered before `/{journey_id}` -- otherwise FastAPI would match
+    ``GET /journeys/counts`` as ``GET /journeys/{journey_id}`` with
+    ``journey_id="counts"``."""
+    by_product = index.query(
+        "SELECT product_slug, COUNT(*) AS count FROM journeys GROUP BY product_slug"
+    )
+    by_project = index.query(
+        "SELECT product_slug, project, COUNT(*) AS count FROM journeys GROUP BY product_slug, project"
+    )
+    by_date = index.query(
+        "SELECT date, COUNT(*) AS count FROM journeys GROUP BY date ORDER BY date"
+    )
+    return CountsOut(
+        by_product=[ProductCountOut(**dict(r)) for r in by_product],
+        by_project=[ProjectCountOut(**dict(r)) for r in by_project],
+        by_date=[DateCountOut(**dict(r)) for r in by_date],
+    )
 
 
 @router.get("/{journey_id}", response_model=JourneyDetailOut)

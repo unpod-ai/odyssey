@@ -114,7 +114,14 @@ def _operations_by_resource(openapi: Dict[str, Any]) -> Dict[str, List[Operation
         model, is_list = _model_ref(schema)
 
         resource = segments[0]
-        method_name = "get" if path_params else "list"
+        if path_params:
+            method_name = "get"
+        elif len(segments) > 1:
+            # e.g. `/journeys/counts` -> `counts()`, distinct from the
+            # resource-root `/journeys` -> `list()` on the same class.
+            method_name = segments[-1]
+        else:
+            method_name = "list"
         by_resource.setdefault(resource, []).append(
             Operation(method_name, path, path_params, query_params, model, is_list)
         )

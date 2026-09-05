@@ -1,6 +1,38 @@
 {
   "components": {
     "schemas": {
+      "CountsOut": {
+        "properties": {
+          "by_date": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DateCountOut"
+            },
+            "title": "By Date",
+            "type": "array"
+          },
+          "by_product": {
+            "items": {
+              "$ref": "#/components/schemas/ProductCountOut"
+            },
+            "title": "By Product",
+            "type": "array"
+          },
+          "by_project": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectCountOut"
+            },
+            "title": "By Project",
+            "type": "array"
+          }
+        },
+        "required": [
+          "by_product",
+          "by_project"
+        ],
+        "title": "CountsOut",
+        "type": "object"
+      },
       "DatasetOut": {
         "properties": {
           "name": {
@@ -43,6 +75,24 @@
           "uri"
         ],
         "title": "DatasetVersionOut",
+        "type": "object"
+      },
+      "DateCountOut": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "count"
+        ],
+        "title": "DateCountOut",
         "type": "object"
       },
       "EvalRunOut": {
@@ -566,6 +616,30 @@
         "title": "ModelVersionOut",
         "type": "object"
       },
+      "ProductCountOut": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "product_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Slug"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "title": "ProductCountOut",
+        "type": "object"
+      },
       "ProductOut": {
         "properties": {
           "name": {
@@ -582,6 +656,41 @@
           "name"
         ],
         "title": "ProductOut",
+        "type": "object"
+      },
+      "ProjectCountOut": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "product_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Slug"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "title": "ProjectCountOut",
         "type": "object"
       },
       "StepOut": {
@@ -833,7 +942,7 @@
     },
     "/journeys": {
       "get": {
-        "description": "``?product=<slug>`` narrows to one product's partition in a\nproduct-scoped (`--products-file`) collector deployment \u2014 see\n`domain.journeys.list_journeys_with_status`. ``?date=<YYYY-MM-DD>``\nnarrows to journeys reported on that date. ``?cursor=``/``?limit=``\npaginate the (already-filtered) result \u2014 see\n`odyssey_api.pagination.paginate`.",
+        "description": "``?product=<slug>``/``?date=<YYYY-MM-DD>`` filter server-side against\nthe SQLite index (see `odyssey_api.index`) rather than the filesystem.\n``?cursor=``/``?limit=`` paginate the (already-filtered) result.",
         "operationId": "list_journeys_journeys_get",
         "parameters": [
           {
@@ -934,6 +1043,33 @@
         ]
       }
     },
+    "/journeys/counts": {
+      "get": {
+        "description": "Registered before `/{journey_id}` -- otherwise FastAPI would match\n``GET /journeys/counts`` as ``GET /journeys/{journey_id}`` with\n``journey_id=\"counts\"``.",
+        "operationId": "journey_counts_journeys_counts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CountsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Journey Counts",
+        "tags": [
+          "journeys"
+        ]
+      }
+    },
     "/journeys/{journey_id}": {
       "get": {
         "operationId": "get_journey_journeys__journey_id__get",
@@ -983,7 +1119,7 @@
     },
     "/metrics": {
       "get": {
-        "description": "A snapshot missing `MetricsSnapshotOut`'s required fields (older\nprobe payloads predate ``ts``/``os`` being sent on every snapshot) is\nskipped rather than 500ing the whole listing \u2014 the same\n\"malformed entries don't take down the rest\" defensiveness\n`domain.list_metrics` already applies to unparseable JSON lines.\n``?product=<slug>`` narrows to one product's ``metrics/`` directory,\nsame filter `/journeys` supports. ``?cursor=``/``?limit=`` paginate\nthe result \u2014 see `odyssey_api.pagination.paginate`.",
+        "description": "A snapshot missing `MetricsSnapshotOut`'s required fields (older\nprobe payloads predate ``ts``/``os`` being sent on every snapshot) is\nskipped rather than 500ing the whole listing \u2014 the same\n\"malformed entries don't take down the rest\" defensiveness\n`domain.list_metrics` already applies to unparseable JSON lines.\n``?product=<slug>`` narrows to one product against the SQLite index\n(see `odyssey_api.index`), same filter `/journeys` supports.\n``?cursor=``/``?limit=`` paginate the result \u2014 see\n`odyssey_api.pagination.paginate`.",
         "operationId": "list_metrics_metrics_get",
         "parameters": [
           {
@@ -1063,6 +1199,32 @@
           }
         ],
         "summary": "List Metrics",
+        "tags": [
+          "metrics"
+        ]
+      }
+    },
+    "/metrics/counts": {
+      "get": {
+        "operationId": "metrics_counts_metrics_counts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CountsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Metrics Counts",
         "tags": [
           "metrics"
         ]

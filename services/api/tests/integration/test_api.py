@@ -444,3 +444,29 @@ def test_journeys_list_does_not_fold_every_shard_per_request(tmp_path, monkeypat
     assert resp.status_code == 200
     assert len(resp.json()["items"]) == 5
     assert call_count == 0  # no refolding on a request against an already-indexed, unchanged set
+
+
+def test_journeys_counts(tmp_path):
+    journeys_dir = tmp_path / "journeys"
+    for slug, jid, date in [("unpod", "j1", "2026-08-28"), ("unpod", "j2", "2026-08-28"), ("acme", "j3", "2026-08-29")]:
+        date_dir = journeys_dir / slug / date
+        date_dir.mkdir(parents=True, exist_ok=True)
+        write_events(
+            date_dir / f"{jid}.jsonl",
+            [
+                JourneyEvent(journey_id=jid, seq=0, kind="message", event_id="e0", message=Message(role="user", content="hi")),
+                JourneyEvent(journey_id=jid, seq=1, kind="terminal", event_id="e1", terminal=Terminal(termination_reason="ENV_DONE")),
+            ],
+            header=JourneyHeader(journey_id=jid, data_source="livekit"),
+        )
+    settings = Settings(journeys_dir=journeys_dir, db_uri=f"sqlite:///{tmp_path}/db.sqlite3", index_interval_seconds=3600)
+    client = _client(settings)
+
+    resp = client.get("/journeys/counts")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    by_product = {row["product_slug"]: row["count"] for row in body["by_product"]}
+    assert by_product == {"unpod": 2, "acme": 1}
+    by_date = {row["date"]: row["count"] for row in body["by_date"]}
+    assert by_date == {"2026-08-28": 2, "2026-08-29": 1}

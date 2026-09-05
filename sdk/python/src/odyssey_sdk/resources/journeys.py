@@ -9,13 +9,14 @@ from typing import Optional
 from urllib.parse import urlencode
 
 from odyssey_schemas import (
+    CountsOut,
     JourneyDetailOut,
     JourneyPageOut,
 )
 
 
 class JourneysResource:
-    """Generated from `/journeys`, `/journeys/{journey_id}`."""
+    """Generated from `/journeys`, `/journeys/counts`, `/journeys/{journey_id}`."""
 
     def __init__(self, transport) -> None:
         self._transport = transport
@@ -26,6 +27,10 @@ class JourneysResource:
         query = ("?" + urlencode(params)) if params else ""
         data = self._transport.get(f"/journeys{query}")
         return JourneyPageOut.model_validate(data)
+
+    def counts(self) -> CountsOut:
+        data = self._transport.get("/journeys/counts")
+        return CountsOut.model_validate(data)
 
     def get(self, journey_id: str) -> JourneyDetailOut:
         data = self._transport.get(f"/journeys/{journey_id}")
