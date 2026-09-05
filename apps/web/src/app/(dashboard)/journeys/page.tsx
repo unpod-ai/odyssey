@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { apiClient } from "@/lib/api";
-import { collectAll } from "@/lib/pagination";
 import { DataTable } from "@/components/DataTable";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/Badge";
@@ -23,31 +22,28 @@ export default async function JourneysPage({
   let total = 0;
   let hasMore = false;
   let nextCursor: string | null | undefined = null;
-  let allForCounts: JourneySummaryOut[] = [];
+  let dateCounts: { date: string; count: number }[] = [];
   let products: ProductOut[] = [];
   let error: string | null = null;
   try {
     const client = apiClient();
-    const [page, forCounts, productList] = await Promise.all([
+    const [page, counts, productList] = await Promise.all([
       client.journeys.list({
         product: productFilter || undefined,
         date: dateFilter || undefined,
         cursor: cursorParam,
         limit: PAGE_SIZE,
       }),
-      // Date counts must reflect the whole (product-scoped) collection, not
-      // just the current page or the date-filtered view — so this ignores
-      // `date` and walks every page via `next_cursor`.
-      collectAll<JourneySummaryOut>((c) =>
-        client.journeys.list({ product: productFilter || undefined, cursor: c, limit: 100 }),
-      ),
+      client.journeys.counts(),
       client.products.list(),
     ]);
     journeys = page.items;
     total = page.total;
     hasMore = page.has_more;
     nextCursor = page.next_cursor;
-    allForCounts = forCounts;
+    dateCounts = (counts.by_date ?? [])
+      .map(({ date, count }) => ({ date, count }))
+      .sort((a, b) => b.date.localeCompare(a.date));
     products = productList;
   } catch (err) {
     error = (err as Error).message;
@@ -61,14 +57,6 @@ export default async function JourneysPage({
       </div>
     );
   }
-
-  const dateCountMap = new Map<string, number>();
-  for (const j of allForCounts) {
-    dateCountMap.set(j.date, (dateCountMap.get(j.date) ?? 0) + 1);
-  }
-  const dateCounts = [...dateCountMap.entries()]
-    .map(([d, count]) => ({ date: d, count }))
-    .sort((a, b) => b.date.localeCompare(a.date));
 
   const hrefFor = (d: string) => {
     const params = new URLSearchParams();
