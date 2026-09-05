@@ -6,11 +6,8 @@ import { TableFilters } from "@/components/TableFilters";
 import { MetricsChart } from "@/components/MetricsChart";
 import { SnapshotsByDateChart } from "@/components/SnapshotsByDateChart";
 import { distinctProjects } from "@/lib/projects";
+import { formatBytes } from "@/lib/format";
 import type { MetricsSnapshotOut, ProductOut } from "@odyssey/sdk";
-
-function gb(bytes: number | null | undefined): string {
-  return bytes != null ? `${(bytes / 1e9).toFixed(1)} GB` : "—";
-}
 
 export default async function MetricsPage({
   searchParams,
@@ -129,13 +126,13 @@ export default async function MetricsPage({
                     <div>
                       <dt>Disk free / total</dt>
                       <dd>
-                        {gb(m.disk_free_bytes)} / {gb(m.disk_total_bytes)}
+                        {formatBytes(m.disk_free_bytes)} / {formatBytes(m.disk_total_bytes)}
                       </dd>
                     </div>
                     <div>
                       <dt>Memory available / total</dt>
                       <dd>
-                        {gb(m.memory_available_bytes)} / {gb(m.memory_total_bytes)}
+                        {formatBytes(m.memory_available_bytes)} / {formatBytes(m.memory_total_bytes)}
                       </dd>
                     </div>
                     <div>

@@ -9,6 +9,7 @@ import { Badge } from "@/components/Badge";
 import { TableFilters } from "@/components/TableFilters";
 import { Pagination } from "@/components/Pagination";
 import { distinctProjects } from "@/lib/projects";
+import { formatBytes } from "@/lib/format";
 import type { JourneySummaryOut, MetricsSnapshotOut, ProductOut } from "@odyssey/sdk";
 
 const PAGE_SIZE = 25;
@@ -173,7 +174,7 @@ export default async function ProductDetailPage({
             header: "Disk free / total",
             render: (m) =>
               m.disk_free_bytes != null && m.disk_total_bytes != null
-                ? `${(m.disk_free_bytes / 1e9).toFixed(1)} / ${(m.disk_total_bytes / 1e9).toFixed(1)} GB`
+                ? `${formatBytes(m.disk_free_bytes)} / ${formatBytes(m.disk_total_bytes)}`
                 : "—",
             sortValue: (m) => m.disk_free_bytes ?? null,
           },
