@@ -152,12 +152,34 @@ sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
   --db-uri sqlite:////var/lib/odyssey/odyssey.db --rotate-product acme
 ```
 
-If migrating from an older deployment that used a `products.json` file, use the one-time migration command:
+**Upgrading an existing deployment that used `--products-file`/`products.json`:**
+that flag and `ODYSSEY_COLLECTOR_PRODUCTS_FILE` no longer exist — there
+is no dual-mode fallback. Order matters:
 
-```bash
-sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
-  --db-uri sqlite:////var/lib/odyssey/odyssey.db --migrate-products-from-json /path/to/old/products.json
-```
+1. Stop the collector (existing `products.json` tenants keep failing to
+   authenticate at this point, briefly — that's expected).
+2. Run the one-time migration into the new shared database, hashing
+   every existing product's `api_key` as-is (no key rotation, no
+   disruption to already-integrated callers once the collector comes
+   back up):
+   ```bash
+   sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
+     --db-uri sqlite:////var/lib/odyssey/odyssey.db --migrate-products-from-json /path/to/old/products.json
+   ```
+3. Update the unit file: replace `--products-file`/`ODYSSEY_COLLECTOR_PRODUCTS_FILE`
+   with `--db-uri`/`ODYSSEY_DB_URI` (same value used in step 2).
+4. Set the identical `ODYSSEY_DB_URI` on the `odyssey-api` unit too (see
+   below) — both services must point at the same file.
+5. Restart both services.
+
+The database is initialized automatically on first use if it doesn't
+exist — no separate `--init-products-file`-style bootstrap step. It
+also now holds the only copy of every product's key hash: **back it up**
+(`sqlite3 /var/lib/odyssey/odyssey.db ".backup /path/to/backup.db"`) as
+part of your regular backup rotation. A corrupt or unreadable file makes
+both services refuse to start rather than ever auto-deleting it — restore
+from backup, don't try to recreate it from scratch (that reissues every
+product's key).
 
 All other collector CLI flags (`--host`/`--port`/`--data-dir`/`--timezone`) have `ODYSSEY_COLLECTOR_*` env equivalents — see `services/collector/README.md`'s config table. Set them as `Environment=` lines (or `EnvironmentFile=/etc/odyssey/collector.env` for a real deployment, kept out of git).
 
@@ -195,6 +217,7 @@ Environment=ODYSSEY_API_MODELS_REGISTRY=/opt/odyssey/training/models/registry.ya
 Environment=ODYSSEY_API_EVAL_REGISTRY=/opt/odyssey/evaluation/datasets/registry.yaml
 Environment=ODYSSEY_API_EVAL_REPORTS_DIR=/opt/odyssey/evaluation/reports
 Environment=ODYSSEY_API_EXPORTS_DIR=/var/lib/odyssey/exports
+Environment=ODYSSEY_DB_URI=sqlite:////var/lib/odyssey/odyssey.db
 # Environment=ODYSSEY_API_AUTH_KEY=change-me
 ExecStart=/opt/odyssey/.venv/bin/uvicorn odyssey_api.main:app \
   --app-dir /opt/odyssey/services/api/src \
@@ -216,6 +239,17 @@ bearer token on every route except `/health`. **If you set it here,
 you must set the identical value on the `odyssey-web` unit below** —
 `services/api` and `apps/web` have to agree on the key or the
 dashboard will silently 401 every page.
+
+**`ODYSSEY_DB_URI` here must be the exact same value as the
+`odyssey-collector` unit's** — both services read/write one shared
+SQLite file (`services/api`'s read-only index; `services/collector`'s
+`products` table, when running in `--db-uri`/product-scoped mode). A
+mismatch means `services/api` builds its own separate, empty index
+against a file `services/collector` never writes to. With `--workers
+4` above, each uvicorn worker process runs its own independent
+background indexer thread against that same file — harmless (SQLite's
+WAL mode serializes the writes) but redundant; not worth tuning down
+unless indexing shows up as measurable overhead.
 
 ### Option B — gunicorn, `uvicorn.workers.UvicornWorker`
 
