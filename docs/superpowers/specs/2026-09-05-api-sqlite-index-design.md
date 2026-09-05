@@ -67,6 +67,7 @@ alternative considered:
 | DB file scope | **One shared file** (`ODYSSEY_DB_URI`) for both services | Two separate files (collector's products DB, api's index cache) — the user chose the shared file after weighing the corruption-recovery consequence (see Edge cases) |
 | Corruption recovery | Both services **refuse to start** on a corrupt/unreadable DB and log a clear error — no auto-delete | Auto-delete and rebuild on corruption — safe when the file was api-only cache, but now `products` holds real, unrecoverable tenant credentials in the same file; auto-wiping it is unacceptable |
 | Config surface | One shared setting, `ODYSSEY_DB_URI`, read by both services | Separate `ODYSSEY_API_DB` (api-only) — superseded once product identity moved into the same file; a single setting now, since one file has two writers |
+| Collector's auth-check cost | In-memory cache of the whole `products` table, refreshed every `ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS` (default 60s, env-configurable), with a DB-query fallback on cache miss | A DB query on every ingest request — rejected by the user as too much per-request overhead on collector's high-throughput ingest path; the cache trades up to one TTL cycle of revoke-propagation delay for near-zero per-request auth cost |
 
 Explicitly **out of scope** for this pass: any change to how
 `services/collector` stores journeys/metrics themselves (still local
@@ -255,13 +256,27 @@ CREATE TABLE products (
 CREATE UNIQUE INDEX ix_products_api_key_hash ON products(api_key_hash);
 ```
 
-### Auth check becomes hash-based, per-request, no in-memory cache
+### Auth check becomes hash-based, cached in-memory with a miss fallback
 
-`Product.product_for_key(api_key)` becomes: hash the incoming key,
-`SELECT slug, name FROM products WHERE api_key_hash = ? AND revoked =
-0` — an indexed point lookup (microseconds). No reload-interval to
-reason about: a `revoke` takes effect on the very next request, not
-after some cache TTL.
+`Product.product_for_key(api_key)` becomes: hash the incoming key, look
+it up in an **in-memory cache of the whole `products` table**, refreshed
+on a background thread every `ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS`
+(default `60`, override via env var) — the same "background thread
+refreshes an in-process cache" pattern Component 1's index worker
+already uses. A cache **miss** falls through to a direct, indexed DB
+query (`SELECT slug, name FROM products WHERE api_key_hash = ? AND
+revoked = 0`) before rejecting the request, so a product created
+seconds ago via `products create` authenticates immediately rather than
+waiting for the next refresh.
+
+This reintroduces a small staleness window on the *other* direction:
+`revoke`/`rotate` can take up to one TTL cycle (60s by default) to take
+effect, since a still-cached, now-revoked hash keeps resolving until the
+cache refreshes. This is a deliberate trade against per-request DB
+latency on collector's high-throughput ingest path — the same class of
+staleness already accepted for `services/api`'s index (default 5s
+there; collector's default is longer since ingest volume, not
+dashboard-count freshness, is the priority here).
 
 ### New `odyssey-collector products` subcommands (entirely replace the file-based ones)
 
@@ -340,10 +355,14 @@ generates and prints it).
   indexer call counts, or a perf-shaped test with a large fixture that
   would time out under the old O(M²) behavior).
 - Collector product-CLI tests: `create` prints a key once and only a
-  hash is ever persisted; `revoke` takes effect on the very next auth
-  check; `rotate` invalidates the old key and issues a new one;
-  `migrate-from-json` preserves existing tenants' keys (same hash as
-  hashing the original plaintext) without requiring rotation.
+  hash is ever persisted; a freshly created product authenticates
+  immediately (cache-miss fallback path); `revoke`/`rotate` take effect
+  within one cache TTL cycle (test with a short injected TTL, not the
+  60s default); `migrate-from-json` preserves existing tenants' keys
+  (same hash as hashing the original plaintext) without requiring
+  rotation.
+- Auth cache unit test: cache hit avoids a DB query entirely (assert on
+  query count); cache miss falls through to exactly one DB query.
 - A shared-schema test: both services independently applying `CREATE
   TABLE IF NOT EXISTS` against a fresh file (in either start order)
   converges on the same schema with no error.
