@@ -111,6 +111,7 @@ import gzip
 import json
 import logging
 import os
+import secrets
 import sys
 import threading
 from dataclasses import dataclass, field
@@ -544,7 +545,7 @@ class _Handler(BaseHTTPRequestHandler):
             return (product is not None, product.slug if product else None)
         if not config.api_key:
             return (True, None)
-        return (presented == f"Bearer {config.api_key}", None)
+        return (secrets.compare_digest(presented, f"Bearer {config.api_key}"), None)
 
     def _store(self, journey_id: str, body: bytes, product_slug: Optional[str]) -> int:
         """Parse the posted batch through the real codec, then append it.
