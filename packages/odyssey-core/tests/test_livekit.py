@@ -1152,6 +1152,7 @@ def test_interim_transcripts_are_never_subscribed_to(tmp_path):
     assert set(session.handlers) == {
         "conversation_item_added",
         "function_tools_executed",
+        "metrics_collected",
         "close",
     }
 
@@ -1771,3 +1772,323 @@ def test_a_callable_prompt_is_also_skipped_when_recording_is_off(tmp_path):
     say(session, "user", "hi")
 
     assert [m.role for m in messages()] == ["user"]
+
+
+# --------------------------------------------------------------------------
+# metrics_collected: the latency budget LiveKit already measures
+# --------------------------------------------------------------------------
+
+
+class LLMMetrics:
+    """Shaped like ``livekit.agents.metrics.LLMMetrics`` — seconds, not ms."""
+
+    def __init__(self, ttft=0.214, duration=1.02, **kw):
+        self.ttft = ttft
+        self.duration = duration
+        self.prompt_tokens = 412
+        self.completion_tokens = 37
+        self.total_tokens = 449
+        self.tokens_per_second = 36.2
+        self.speech_id = "sp_1"
+        self.label = "livekit.plugins.openai.LLM"
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+class TTSMetrics:
+    def __init__(self, ttfb=0.089, duration=0.41, audio_duration=2.6):
+        self.ttfb = ttfb
+        self.duration = duration
+        self.audio_duration = audio_duration
+        self.characters_count = 58
+        self.speech_id = "sp_1"
+        self.label = "livekit.plugins.cartesia.TTS"
+
+
+class STTMetrics:
+    def __init__(self, duration=0.143, audio_duration=1.9):
+        self.duration = duration
+        self.audio_duration = audio_duration
+        self.label = "livekit.plugins.deepgram.STT"
+
+
+class EOUMetrics:
+    def __init__(self, end_of_utterance_delay=0.52):
+        self.end_of_utterance_delay = end_of_utterance_delay
+        self.transcription_delay = 0.13
+        self.on_user_turn_completed_delay = 0.02
+        self.speech_id = "sp_1"
+
+
+class VADMetrics:
+    """Carries no duration at all — the "nothing to record" case."""
+
+    def __init__(self):
+        self.inference_count = 900
+        self.label = "livekit.plugins.silero.VAD"
+
+
+class MetricsCollected:
+    def __init__(self, metrics):
+        self.metrics = metrics
+
+
+def voice_events(jid=JID):
+    return [e.voice for e in events(jid) if e.kind == "voice" and e.voice]
+
+
+def latencies(jid=JID):
+    return [v for v in voice_events(jid) if v.voice_kind == "latency"]
+
+
+def test_llm_metrics_become_a_latency_event_in_milliseconds(tmp_path):
+    """LiveKit reports seconds; the schema's field is named ``_ms``.
+
+    Recording the raw float would make every consumer guess the unit, and the
+    two differ by 1000 — a guess that is silently wrong, not loudly wrong.
+    """
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "hello")
+    session.emit("metrics_collected", MetricsCollected(LLMMetrics(ttft=0.214)))
+
+    (reading,) = latencies()
+    assert reading.latency_ms == 214.0
+    assert reading.metadata is not None
+    assert reading.metadata["stage"] == "llm"
+
+
+def test_each_stage_of_the_pipeline_is_labelled(tmp_path):
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "hello")
+    for metric in (LLMMetrics(), TTSMetrics(), STTMetrics(), EOUMetrics()):
+        session.emit("metrics_collected", MetricsCollected(metric))
+
+    stages = [r.metadata["stage"] for r in latencies() if r.metadata]
+    assert stages == ["llm", "tts", "stt", "eou"]
+
+
+def test_a_metric_with_no_duration_records_nothing(tmp_path):
+    """A zero would claim the stage was instant. None means "not measured"."""
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "hello")
+    session.emit("metrics_collected", MetricsCollected(VADMetrics()))
+
+    assert latencies() == []
+
+
+def test_a_metrics_class_this_build_has_never_seen_still_records(tmp_path):
+    """The stage falls back to the class name rather than dropping the reading.
+
+    LiveKit adds metrics types; a build that refuses what it does not recognise
+    silently stops covering the pipeline the moment one ships.
+    """
+    start(tmp_path)
+
+    class TurnDetectorMetrics:
+        duration = 0.031
+
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "hello")
+    session.emit("metrics_collected", MetricsCollected(TurnDetectorMetrics()))
+
+    (reading,) = latencies()
+    assert reading.metadata is not None
+    assert reading.metadata["stage"] == "turndetector"
+    assert reading.latency_ms == 31.0
+
+
+def test_the_plugin_behind_a_reading_is_recorded(tmp_path):
+    """Which vendor produced the latency is the point of measuring it."""
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "hello")
+    session.emit("metrics_collected", MetricsCollected(TTSMetrics()))
+
+    (reading,) = latencies()
+    assert reading.metadata is not None
+    assert reading.metadata["label"] == "livekit.plugins.cartesia.TTS"
+    assert reading.metadata["speech_id"] == "sp_1"
+    assert reading.metadata["audio_duration_ms"] == 2600.0
+    assert reading.metadata["characters_count"] == 58
+
+
+def test_llm_time_to_first_token_lands_on_the_assistant_turn(tmp_path):
+    """The reading is also attached to the turn it produced.
+
+    A consumer building a training corpus filters on the turn, not on a
+    separate telemetry stream, so the number has to be reachable from the
+    message as well as recorded on its own.
+    """
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "book me")
+    session.emit("metrics_collected", MetricsCollected(LLMMetrics(ttft=0.214)))
+    say(session, "assistant", "booked")
+
+    answers = [m for m in messages() if m.role == "assistant"]
+    assert answers[0].ttft_ms == 214.0
+
+
+def test_a_ttft_reading_is_consumed_once(tmp_path):
+    """The second answer had its own generation; inheriting the first one's
+    number would be a fabricated measurement."""
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "book me")
+    session.emit("metrics_collected", MetricsCollected(LLMMetrics(ttft=0.214)))
+    say(session, "assistant", "booked")
+    say(session, "user", "and cancel")
+    say(session, "assistant", "cancelled")
+
+    answers = [m for m in messages() if m.role == "assistant"]
+    assert [m.ttft_ms for m in answers] == [214.0, None]
+
+
+def test_a_user_turn_never_carries_a_time_to_first_token(tmp_path):
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    session.emit("metrics_collected", MetricsCollected(LLMMetrics(ttft=0.214)))
+    say(session, "user", "hello")
+
+    assert [m.ttft_ms for m in messages() if m.role == "user"] == [None]
+
+
+def test_a_negative_reading_is_dropped_rather_than_recorded(tmp_path):
+    """A negative latency means the reading is wrong; writing it would put a
+    number into the corpus that no query can make sense of."""
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "hello")
+    session.emit(
+        "metrics_collected", MetricsCollected(LLMMetrics(ttft=-1.0, duration=-1.0))
+    )
+
+    assert latencies() == []
+
+
+def test_one_bad_field_does_not_cost_the_whole_reading(tmp_path):
+    """A broken `ttft` still leaves a usable `duration`. Dropping the object
+    over its worst field would throw away a measurement that is fine."""
+    start(tmp_path)
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "hello")
+    session.emit(
+        "metrics_collected", MetricsCollected(LLMMetrics(ttft=-1.0, duration=1.02))
+    )
+
+    (reading,) = latencies()
+    assert reading.latency_ms == 1020.0
+    assert reading.metadata is not None
+    assert reading.metadata["stage"] == "llm"
+
+
+def test_a_broken_metrics_object_never_reaches_the_call(tmp_path):
+    """An exception escaping a LiveKit callback can take the call down."""
+    start(tmp_path)
+
+    class Exploding:
+        @property
+        def ttft(self):
+            raise RuntimeError("boom")
+
+    session = FakeSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "hello")
+    session.emit("metrics_collected", MetricsCollected(Exploding()))
+
+    assert latencies() == []
+    assert odyssey.health()["stats"]["capture_errors"] >= 1
+
+
+def test_a_session_too_old_to_know_the_event_still_records(tmp_path):
+    """`metrics_collected` is newer than the conversation events. Refusing to
+    attach over it would trade every turn for some timings."""
+    start(tmp_path)
+
+    class OldSession(FakeSession):
+        def on(self, name, handler):
+            if name == "metrics_collected":
+                raise ValueError(f"unknown event {name}")
+            return FakeSession.on(self, name, handler)
+
+    session = OldSession()
+    attach(session, journey_id=JID)
+    say(session, "user", "hello")
+
+    assert [m.content for m in messages()] == ["hello"]
+
+
+# --------------------------------------------------------------------------
+# Agent identity in the header
+# --------------------------------------------------------------------------
+
+
+def test_the_header_names_the_agent_and_the_framework(tmp_path):
+    start(tmp_path)
+    session = FakeSession()
+    session.current_agent = FakeAgent("You book appointments.")
+    attach(session, journey_id=JID)
+    say(session, "user", "hello")
+
+    head = header()
+    assert head is not None
+    assert head.framework == "livekit"
+    assert head.agent_name == "FakeAgent"
+    assert head.agent_id == "FakeAgent"
+
+
+def test_a_caller_supplied_agent_id_survives_a_handoff(tmp_path):
+    """Their id names their own agent concept; replacing it with a Python class
+    name would lose exactly what they asked to be able to query on."""
+    start(tmp_path)
+    session = FakeSession()
+    session.current_agent = FakeAgent("greeter")
+    attach(session, journey_id=JID, agent_id="agent_row_7")
+    say(session, "user", "hello")
+
+    class Specialist:
+        def __init__(self, instructions):
+            self.instructions = instructions
+
+    session.current_agent = Specialist("booking specialist")
+    say(session, "user", "book me")
+
+    head = header()
+    assert head is not None
+    assert head.agent_id == "agent_row_7"
+    assert [m.agent_id for m in messages()] == [None] * len(messages())
+
+
+def test_a_handoff_retags_the_turns_after_it(tmp_path):
+    start(tmp_path)
+    session = FakeSession()
+    session.current_agent = FakeAgent("greeter")
+    attach(session, journey_id=JID)
+    say(session, "user", "hello")
+
+    class Specialist:
+        def __init__(self, instructions):
+            self.instructions = instructions
+
+    session.current_agent = Specialist("booking specialist")
+    say(session, "user", "book me")
+
+    head = header()
+    assert head is not None
+    assert head.agent_id == "FakeAgent"
+    tagged = [(m.role, m.agent_id) for m in messages()]
+    assert ("user", "Specialist") in tagged
+    assert ("user", None) in tagged

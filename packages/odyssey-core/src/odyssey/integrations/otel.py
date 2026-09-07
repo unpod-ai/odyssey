@@ -320,11 +320,21 @@ def OdysseySpanProcessor(
     recorder = _Recorder(data_source=data_source, metadata=metadata)
 
     class _Processor(SpanProcessor):
+        # A `TracerProvider` offers no way to remove a processor once added, so
+        # `shutdown()` is the only detach OTel gives us. Honouring it here is
+        # what makes `uninstrument()` mean something rather than leaving a
+        # recorder attached for the life of the process.
+        stopped = False
+
         def on_start(self, span: Any, parent_context: Any = None) -> None:
+            if self.stopped:
+                return
             trace_id = format(span.get_span_context().trace_id, "032x")
             recorder.on_start(trace_id)
 
         def on_end(self, span: Any) -> None:
+            if self.stopped:
+                return
             trace_id = format(span.context.trace_id, "032x")
             attributes = dict(span.attributes or {})
             events = [
@@ -342,9 +352,77 @@ def OdysseySpanProcessor(
             )
 
         def shutdown(self) -> None:
-            pass
+            self.stopped = True
 
         def force_flush(self, timeout_millis: int = 30000) -> bool:
             return True
 
     return _Processor()
+
+
+# ---------------------------------------------------------------------------
+# Process-wide attachment
+# ---------------------------------------------------------------------------
+
+_PROCESSOR: Any = None
+
+
+def instrument() -> None:
+    """Attach :class:`OdysseySpanProcessor` to the global ``TracerProvider``.
+
+    This is the catch-all capture path: any library already instrumented for
+    OpenTelemetry — OpenInference, OpenLLMetry/Traceloop, a framework's own
+    exporter — emits spans to the global provider, and a processor on it
+    records them without a wrapper per framework.
+
+    Deliberately **not** part of ``instrument="auto"``. A process that has both
+    this and a patched provider client records the same call twice: once as the
+    wrapper's turn and once as the span's, under two different journeys. Since
+    ``opentelemetry-sdk`` is a common transitive dependency, auto-enabling on
+    its mere presence would silently double corpora that were fine. Ask for it:
+    ``odyssey.init(instrument=["otel"])``, or ``instrument="all"``.
+
+    Installs a ``TracerProvider`` when the process has none. The default global
+    provider is a proxy with nothing to attach to, so the choice is between
+    setting one and recording nothing; OTel's own SDK does the same on
+    ``configure``. An existing provider is used as-is and never replaced.
+
+    Idempotent. Requires ``opentelemetry-sdk`` (``odyssey[otel]``).
+    """
+    global _PROCESSOR
+    if _PROCESSOR is not None:
+        return
+    # pyrefly: ignore[missing-import]  — optional extra, `odyssey[otel]`.
+    from opentelemetry import trace
+
+    # pyrefly: ignore[missing-import]
+    from opentelemetry.sdk.trace import TracerProvider
+
+    provider = trace.get_tracer_provider()
+    if not hasattr(provider, "add_span_processor"):
+        provider = TracerProvider()
+        trace.set_tracer_provider(provider)
+    processor = OdysseySpanProcessor()
+    provider.add_span_processor(processor)
+    _PROCESSOR = processor
+
+
+def uninstrument() -> None:
+    """Forget the attached processor. Safe to call when nothing was attached.
+
+    The processor stays on the provider — OTel's ``TracerProvider`` offers no
+    removal — but it is shut down, which the processor honours by ignoring
+    every span from then on.
+    """
+    global _PROCESSOR
+    processor, _PROCESSOR = _PROCESSOR, None
+    if processor is None:
+        return
+    try:
+        processor.shutdown()
+    except Exception:  # noqa: BLE001 - detaching must always succeed
+        pass
+
+
+def is_instrumented() -> bool:
+    return _PROCESSOR is not None

@@ -40,6 +40,8 @@ from typing import Any, Callable, Dict, Optional
 from odyssey.capture import journey
 from odyssey.client import require_client
 from odyssey.integrations._openai_base import capture_request, capture_response
+from odyssey.integrations._reentry import outermost
+from odyssey.integrations._timing import Timer
 
 # Set by instrument(); cleared by uninstrument(). Module-level because patching
 # is a process-wide act and must be reversible exactly once.
@@ -63,14 +65,25 @@ def _record_call(kwargs: Dict[str, Any], call: Callable[[], Any]) -> Any:
     leaves the prompt in the corpus — a journey that shows what was asked and
     then terminates with an error is useful; one that shows nothing is not.
     """
-    with journey():
-        _safe("openai.request", lambda: capture_request(kwargs))
-        result = call()
-        _safe(
-            "openai.response",
-            lambda: capture_response(result, model=kwargs.get("model")),
-        )
-        return result
+    with outermost() as mine:
+        if not mine:
+            # An outer wrapper is already recording this call -- the drop-in
+            # client with the in-place patch underneath it. See `_reentry`.
+            return call()
+        with journey():
+            _safe("openai.request", lambda: capture_request(kwargs))
+            timer = Timer()
+            result = call()
+            # Read before the capture step, so the number is the provider's
+            # latency and not odyssey's own parsing of the response.
+            elapsed = timer.latency_ms
+            _safe(
+                "openai.response",
+                lambda: capture_response(
+                    result, model=kwargs.get("model"), latency_ms=elapsed
+                ),
+            )
+            return result
 
 
 class _CompletionsProxy:
@@ -164,14 +177,23 @@ class _AsyncCompletionsProxy:
     async def create(self, *args: Any, **kwargs: Any) -> Any:
         if kwargs.get("stream"):
             return await self._inner.create(*args, **kwargs)
-        with journey():
-            _safe("openai.request", lambda: capture_request(kwargs))
-            result = await self._inner.create(*args, **kwargs)
-            _safe(
-                "openai.response",
-                lambda: capture_response(result, model=kwargs.get("model")),
-            )
-            return result
+        with outermost() as mine:
+            if not mine:
+                return await self._inner.create(*args, **kwargs)
+            with journey():
+                _safe("openai.request", lambda: capture_request(kwargs))
+                timer = Timer()
+                result = await self._inner.create(*args, **kwargs)
+                # Read before the capture step, so the number is the provider's
+                # latency and not odyssey's own parsing of the response.
+                elapsed = timer.latency_ms
+                _safe(
+                    "openai.response",
+                    lambda: capture_response(
+                        result, model=kwargs.get("model"), latency_ms=elapsed
+                    ),
+                )
+                return result
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)

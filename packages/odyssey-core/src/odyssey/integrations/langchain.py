@@ -358,3 +358,78 @@ def OdysseyCallbackHandler(
             recorder.on_chain_error(*args, **kwargs)
 
     return _Handler()
+
+
+# ---------------------------------------------------------------------------
+# Process-wide attachment
+# ---------------------------------------------------------------------------
+
+# The registered hook, kept so `uninstrument()` can clear it. Module-level
+# because registering is a process-wide act.
+_HOOK: Any = None
+
+
+def instrument() -> None:
+    """Attach the handler to every LangChain run in this process.
+
+    The alternative is the per-call form — ``config={"callbacks": [...]}`` on
+    every ``invoke()`` — which is one edit per call site and silently records
+    nothing at the call site somebody forgot. This is the difference between
+    "odyssey is installed" and "odyssey is installed everywhere it matters",
+    and it is what makes ``odyssey.init()`` the single integration point for a
+    LangChain app rather than the first of many.
+
+    Uses ``langchain_core.tracers.context.register_configure_hook``, the same
+    mechanism LangSmith and the other tracing integrations attach through: the
+    handler is held in a ``ContextVar`` that LangChain's own ``_configure``
+    reads when it assembles the callback list for a run, so a run started
+    anywhere — including inside a nested chain or a LangGraph node that never
+    forwards ``config`` — is covered.
+
+    One handler serves the whole process. That is safe because
+    :class:`_Recorder` keys every journey on the run tree's root id rather than
+    on instance state, so concurrent runs never see each other's turns.
+
+    Idempotent. Requires ``langchain-core``; a failure to attach is the
+    caller's to see through :func:`odyssey.health`, not an exception — an app
+    that cannot be traced must still run.
+    """
+    global _HOOK
+    if _HOOK is not None:
+        return
+    from contextvars import ContextVar
+
+    # pyrefly: ignore[missing-import]  — optional extra, `odyssey[langchain]`.
+    from langchain_core.tracers.context import register_configure_hook
+
+    handler = OdysseyCallbackHandler()
+    var: ContextVar = ContextVar("odyssey_langchain_handler", default=None)
+    # `inheritable=True`: a run started in a child context — a thread from
+    # LangChain's own executor, an asyncio task — inherits the handler. Without
+    # it, exactly the fan-out cases that most need tracing would be the ones
+    # missing it.
+    register_configure_hook(var, True)
+    var.set(handler)
+    _HOOK = (var, handler)
+
+
+def uninstrument() -> None:
+    """Detach the process-wide handler. Safe to call when nothing was attached.
+
+    The hook itself stays registered — ``register_configure_hook`` appends to a
+    module-level list LangChain owns and offers no removal — but the
+    ``ContextVar`` it reads is cleared, so it contributes no handler.
+    """
+    global _HOOK
+    if _HOOK is None:
+        return
+    var, _handler = _HOOK
+    _HOOK = None
+    try:
+        var.set(None)
+    except Exception:  # noqa: BLE001 - detaching must always succeed
+        pass
+
+
+def is_instrumented() -> bool:
+    return _HOOK is not None

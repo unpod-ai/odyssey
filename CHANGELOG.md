@@ -6,6 +6,150 @@ project has not yet made a versioned release, so entries accumulate under
 
 ## [Unreleased]
 
+### Added
+
+- **`odyssey.init()` is now the *only* line an application adds** —
+  `instrument` defaults to `"auto"` (it was `()`, i.e. nothing; see
+  "Changed" below for the behavior change that implies). `"auto"` patches
+  every provider SDK that is actually installed — `anthropic`, `openai`
+  (including every OpenAI-compatible gateway, same SDK shape), `google-genai`
+  — and registers LangChain's handler process-wide, so a provider-calling app
+  records with no import to swap and no `callbacks=` threaded through each
+  `invoke()`. New `ODYSSEY_INSTRUMENT` env var / `instrument=` argument accept
+  `"auto"`, `"all"` (adds the OTel bridge), `"none"`/`()`, a single target
+  name, or any list mixing them (`["auto", "otel"]` is the common one) —
+  resolved by `client._resolve_instrument`, deduplicated and order-preserving.
+  Presence is probed with `importlib.util.find_spec` (plus a `sys.modules`
+  check), so asking "is `anthropic` installed" never costs the import of
+  `anthropic` in a process that does not use it. An *expanded group* skips a
+  missing package silently; an *explicitly named* target is always attempted,
+  so a typo or a missing extra is reported through `odyssey.health()` instead
+  of vanishing. `livekit`/`pipecat` are recognized but not attachable from
+  `init()` (they need an object the app owns) — naming one raises with the
+  `attach(...)` call to write instead of "unknown target".
+- **Process-wide attachment for LangChain and the OTel bridge** —
+  `integrations/langchain.instrument()`/`uninstrument()` register the handler
+  through `langchain_core.tracers.context.register_configure_hook` (the same
+  mechanism LangSmith attaches through, `inheritable=True` so a run started in
+  a child thread/task is still covered), which is what makes a LangGraph node
+  that never forwards `config` recordable at all. `integrations/otel.
+  instrument()`/`uninstrument()` attach `OdysseySpanProcessor` to the global
+  `TracerProvider` (installing one only when the process has none — the
+  default global provider is a proxy with nothing to attach to; an existing
+  provider is used as-is, never replaced), and `OdysseySpanProcessor.shutdown()`
+  now actually detaches, since a `TracerProvider` offers no processor removal.
+  `otel` is deliberately **excluded** from `"auto"`: a process running both it
+  and a patched provider client records the same call twice under two
+  journeys, and `opentelemetry-sdk` is a common transitive dependency nobody
+  chose. Opt in with `instrument=["otel"]` or `"all"`.
+- **Double-capture guard** (`integrations/_reentry.py`) — with `"auto"` on, an
+  app that still uses the explicit drop-in client also has the in-place patch
+  active underneath it, and the proxy's `create` calls the patched real method:
+  without a guard the assistant's turn lands in the corpus twice, with two
+  fresh `event_id`s the fold cannot dedupe. A `ContextVar` (not a thread local
+  — the async wrappers await inside the guarded region) makes the outermost
+  attachment the one that records; every provider wrapper now runs its capture
+  inside `with outermost() as mine`. The outermost one wins because it sees the
+  arguments the application actually passed.
+- **Pipecat capture** — new `odyssey.integrations.pipecat`:
+  `attach(task, journey_id=...)` on a `PipelineTask`, or
+  `observers=[observer(journey_id=...)]` on the construction path. Implemented
+  as a `BaseObserver` rather than a provider wrapper on purpose: which service
+  sits in Pipecat's LLM slot is a deployment choice (`OpenAILLMService`,
+  `AnthropicLLMService`, `GeminiMultimodalLiveLLMService`, a gateway), so
+  patching a provider SDK would capture some deployments and silently miss
+  others. Consumes `TranscriptionFrame` (never `InterimTranscriptionFrame` —
+  that fires per partial hypothesis and would spool prefixes of one sentence),
+  `LLMFullResponseStartFrame`/`LLMTextFrame`/`LLMFullResponseEndFrame`
+  assembled into one turn per response (never one per chunk),
+  `FunctionCallInProgressFrame`/`FunctionCallResultFrame` correlated by
+  `tool_call_id`, `MetricsFrame` TTFB/processing time as `voice` latency
+  events, `StartInterruptionFrame`/`InterruptionFrame` marking the interrupted
+  reply truncated rather than trainable, and `EndFrame`/`CancelFrame` closing
+  the journey so it folds. `on_push_frame` fires once per *hop*, so every
+  frame is recorded at most once keyed on `frame.id`, held in a bounded ring —
+  otherwise a six-processor pipeline would multiply the corpus by its own
+  length. New `odyssey[pipecat]` extra (`pipecat-ai>=0.0.60`); the base class
+  is imported lazily and falls back to a plain object when absent.
+- **`SCHEMA_VERSION` `2.0` → `2.1` — timing and agent attribution on the
+  wire** (additive MINOR, both directions safe: every field is optional and
+  defaults to `None`, so a 2.0 shard decodes under 2.1 unchanged and a 2.0
+  reader ignores the new keys the way a 1.0 reader ignored 1.1's). `Message`
+  gained `latency_ms` (wall time of the provider call, on the *response* turn
+  only — a request has no duration, and putting the pair's latency on both
+  halves double-counts for anything summing the column), `ttft_ms` (streamed
+  completions and voice, `None` for a non-streamed call where it would be
+  indistinguishable from `latency_ms`), `agent_id`, and `provider` (the SDK
+  behind the call, distinct from the event's `model_id` — one provider serves
+  many models, and an OpenAI-compatible gateway serves models that are not
+  OpenAI's). `JourneyHeader` gained `agent_id`, `agent_name`, and `framework`
+  (`"livekit"`, `"pipecat"`, `"langchain"`, `"otel"`, or `None` for a directly
+  wrapped provider client — "which integration is actually feeding the corpus",
+  otherwise only inferable from the shape of what arrived). Attribution
+  follows the same snapshot-plus-delta rule `journey_metadata` already uses:
+  the header names the agent once, and `JourneyContext.agent_delta()` stamps
+  `Message.agent_id` **only** on turns after a handoff, so a single-agent
+  journey (nearly all of them) repeats nothing and a reader takes the header
+  value and overrides it wherever a message names one. Timing is measured in
+  the shared `integrations/_timing.py` (`Timer`, `perf_counter`-based so a
+  wall-clock adjustment mid-call cannot produce a negative duration; `stamp()`
+  never overwrites a value an integration that knew better already set) and
+  wired through all three provider bases plus the Anthropic sync/async
+  streaming wrappers. `jsonl.py` decodes the timing fields through an
+  `_opt_float` helper — a string or null from a third-party object degrades
+  that one field to `None` rather than taking the whole turn down. Golden
+  fixture regenerated at `2.1` with header agent identity, a stamped
+  assistant turn, and a latency-carrying `voice` event.
+- **LiveKit agent identity and latency events** — `attach()` gained
+  `agent_id`; the header now carries `framework="livekit"` plus the agent
+  LiveKit actually started with, and `session.current_agent` handoffs update
+  `JourneyContext.agent_id`/`agent_name` so subsequent turns carry the new
+  agent (a caller-supplied `agent_id` is never rewritten — it names the
+  deployment's own agent concept). `metrics_collected` readings are recorded
+  as `voice` latency events (LLM TTFT, TTS TTFB, EOU delay, STT/processing
+  duration, with the stage named in metadata), and an LLM TTFT reading is also
+  pipelined onto the next assistant turn's `ttft_ms`.
+
+### Changed
+
+- **`odyssey.init(instrument=...)`'s default changed from `()` to `"auto"`** —
+  a process that has a provider SDK installed now records that provider's
+  calls after `init()` alone, where before it recorded nothing until the app
+  swapped an import or passed `instrument=[...]`. This is the behavior change
+  behind "one integration point", and it is deliberately opt-*out*:
+  `instrument="none"` (or `ODYSSEY_INSTRUMENT=none`, or `()`) restores the old
+  do-nothing default, and `ODYSSEY_ENABLED=false` still disables capture
+  wholesale. The explicit drop-in clients are unchanged and still the clearer
+  thing to read in a traceback — they are just no longer something a
+  deployment has to remember, and the new `_reentry` guard means having both
+  attached records one turn, not two.
+- **`init()` now picks its default sink from `ODYSSEY_ENDPOINT`** — set, and
+  drained journeys go to `HttpSink()` (the collector); unset, they land in
+  `out_dir` through `FileSink` exactly as before. Having to *also* write
+  `sink=HttpSink(...)` in application code made a deployment concern into a
+  code change when the endpoint was already configured out of process. A
+  malformed endpoint falls back to the file sink and counts the failure
+  (visible in `odyssey.health()`) rather than raising — `init()` must never
+  take the application down over a typo in an env var.
+
+### Fixed
+
+- **A background drain that failed every tick was completely silent.**
+  `IntervalDrainer._loop` kept each tick's `DrainResult` in `last_result` and
+  did nothing else, so a sink rejecting every batch — a collector answering
+  401 because no API key was configured, a wrong `ODYSSEY_ENDPOINT` — ticked
+  forever with nothing logged and nothing counted: `odyssey.health()` reported
+  `capture_errors: 0` while the spool grew without bound and no journey ever
+  reached the collector. Recording looked healthy because, locally, it was.
+  `IntervalDrainer` now takes (and exposes, rebindable) an `on_result`
+  callback, `Client` wires `_note_drain_result` into it, and a failed drain is
+  counted through the same `note_error` path every other swallowed failure
+  uses — surfacing as a new `DrainFailed` entry in
+  `health()["stats"]["recent_errors"]`. Not raised: a failed drain leaves the
+  watermark and the events in place, which makes the next tick the retry. A
+  callback that itself raises is swallowed too — reporting the failure must
+  not become the failure.
+
 ### Fixed
 
 - `services/api`'s `GET /journeys` (and `GET /journeys/{id}`) and

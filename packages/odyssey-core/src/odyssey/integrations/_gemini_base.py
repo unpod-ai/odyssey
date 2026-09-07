@@ -26,7 +26,11 @@ from odyssey.builders.messages import messages_from_gemini, normalize_role
 from odyssey.capture import _emit, _jsonable
 from odyssey.client import require_client
 from odyssey.context import current
+from odyssey.integrations._timing import stamp
 from odyssey.primitives import Message, ToolDefinition
+
+# The SDK behind these calls. Lands on `Message.provider`.
+PROVIDER = "gemini"
 
 # Request parameters worth keeping. The schema has no field for sampling
 # settings, so they ride along in metadata — enough to reproduce a call later.
@@ -224,7 +228,14 @@ def capture_request(kwargs: Dict[str, Any]) -> None:
     ctx.state[_STATE_CONSUMED] = len(entries)
 
 
-def capture_response(response: Any, *, model: Optional[str] = None) -> None:
+def capture_response(
+    response: Any,
+    *,
+    model: Optional[str] = None,
+    latency_ms: Optional[float] = None,
+    ttft_ms: Optional[float] = None,
+    provider: Optional[str] = None,
+) -> None:
     """Record the assistant turn a provider returned.
 
     Unlike Anthropic/OpenAI, ``finish_reason``/usage live on the response's
@@ -278,7 +289,17 @@ def capture_response(response: Any, *, model: Optional[str] = None) -> None:
                 finish_reason=msg.finish_reason or finish_reason,
                 usage=msg.usage or usage,
             )
-        _emit("message", message=msg, model_id=model_id, metadata=meta)
+        _emit(
+            "message",
+            message=stamp(
+                msg,
+                latency_ms=latency_ms,
+                ttft_ms=ttft_ms,
+                provider=provider or PROVIDER,
+            ),
+            model_id=model_id,
+            metadata=meta,
+        )
 
     # The caller will append this turn to its own contents list before the
     # next call. Account for it now so the next delta starts at the new turn.

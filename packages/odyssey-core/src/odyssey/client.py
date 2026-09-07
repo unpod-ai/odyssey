@@ -15,26 +15,63 @@ which re-raises so a developer can see the problem during development.
 from __future__ import annotations
 
 import atexit
+import importlib.util
+import os
 import signal
+import sys
 import threading
 import traceback
 import warnings
 import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Sequence, runtime_checkable
+from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 from uuid import uuid4
 
-from odyssey.config import UNSET, Config, resolve
+from odyssey.config import ENV_INSTRUMENT, UNSET, Config, resolve
 from odyssey.context import SeqAllocator
 from odyssey.metrics import MetricsReporter
 from odyssey.primitives import TerminationReason
-from odyssey.sinks import FileSink, HttpTransport
-from odyssey.spool import DrainResult, IntervalDrainer, Sink, Spool, SpoolConfig
+from odyssey.sinks import ENV_ENDPOINT, FileSink, HttpTransport
+from odyssey.spool import (
+    DrainFailed,
+    DrainResult,
+    IntervalDrainer,
+    Sink,
+    Spool,
+    SpoolConfig,
+)
 
 # How many recent failures to keep with their tracebacks. Enough to diagnose a
 # repeating fault, small enough to never be a memory concern.
 _ERROR_RING = 5
+
+# What `instrument="auto"` attaches, and the module whose presence means the
+# target is worth attaching. Checked with `find_spec`, which does not import
+# the package -- asking "is anthropic installed" must not cost the import of
+# anthropic in a process that never uses it.
+_TARGET_MODULE: Dict[str, str] = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+    "gemini": "google.genai",
+    "langchain": "langchain_core",
+    "otel": "opentelemetry.sdk",
+}
+
+# `auto` deliberately excludes `otel`: a process with both a patched provider
+# client and an OTel processor records the same call twice, under two journeys,
+# and `opentelemetry-sdk` is a common transitive dependency that nobody chose.
+# See `integrations/otel.instrument`. `all` is the opt-in that includes it.
+_AUTO = ("anthropic", "openai", "gemini", "langchain")
+_ALL = _AUTO + ("otel",)
+
+# Integrations that cannot be attached from `init()` because they need an
+# object the application owns -- an `AgentSession`, a `PipelineTask`. Named so
+# asking for one gets a useful answer instead of "unknown target".
+_ATTACH_ONLY = {
+    "livekit": "odyssey.integrations.livekit.attach(session, journey_id=...)",
+    "pipecat": "odyssey.integrations.pipecat.attach(task, journey_id=...)",
+}
 
 # What a journey that was never closed is stamped with at process exit. `STALE`
 # is the schema's word for "recording stopped without an ending", and it is what
@@ -100,7 +137,7 @@ class Client:
             )
         )
         self.allocator = SeqAllocator(self.spool.highest_seq)
-        self.sink: Sink = sink if sink is not None else FileSink(config.out_dir)
+        self.sink: Sink = sink if sink is not None else _default_sink(config, self)
 
         self.drainer: Optional[IntervalDrainer] = None
         if config.drain_interval is not None:
@@ -109,6 +146,7 @@ class Client:
                 self.sink,
                 config.drain_interval,
                 batch_size=config.drain_batch_size,
+                on_result=self._note_drain_result,
             )
             self.drainer.start()
 
@@ -197,6 +235,26 @@ class Client:
             self.stats.note_error(label, exc)
         if self.config.debug:
             raise exc
+
+    def _note_drain_result(self, result: DrainResult) -> None:
+        """Count a failed background drain the way every other swallowed
+        failure is counted.
+
+        The gap this closes: `IntervalDrainer._loop` kept each tick's outcome
+        in `last_result` and nothing else, so a sink rejecting every batch --
+        a collector answering 401 because no API key was configured, say --
+        ticked silently forever. Nothing logged, nothing counted, `health()`
+        reporting `capture_errors: 0` while the spool grew without bound and
+        no journey ever reached the collector. Recording looked healthy
+        because, locally, it was.
+
+        Not fatal, so not raised: a failed drain leaves the watermark where
+        it was and the events on disk, which makes the next tick the retry.
+        """
+        if result.ok:
+            return
+        detail = "; ".join(result.errors[:3]) or f"{result.failed} events failed"
+        self.note_error("drain", DrainFailed(detail))
 
     # -- lifecycle --------------------------------------------------------
 
@@ -326,7 +384,7 @@ def init(
     sink: Optional[Sink] = None,
     drain_interval: Optional[float] = 30.0,
     drain_batch_size: Optional[int] = None,
-    instrument: Sequence[str] = (),
+    instrument: Any = UNSET,
     enabled: Optional[bool] = None,
     flush_on_exit: bool = True,
     handle_sigterm: bool = False,
@@ -381,11 +439,32 @@ def init(
     same thing regardless of which machine wrote it. IANA names only (e.g.
     ``"Asia/Kolkata"``); an unrecognised one falls back to UTC.
 
-    ``instrument`` opt-in patches provider SDKs in place — ``["anthropic"]``
-    makes every existing ``anthropic`` client record without touching app code.
+    ``instrument`` (``ODYSSEY_INSTRUMENT``) decides what attaches itself to
+    this process, and defaults to ``"auto"`` — every provider SDK that is
+    actually installed (``anthropic``, ``openai``, ``google-genai``) is patched
+    in place, and LangChain's handler is registered process-wide. That default
+    is what makes this call the *single* integration point: an app that adds
+    ``odyssey.init()`` and nothing else is recording, with no import to swap
+    and no callback to thread through every ``invoke()``.
+
+    ``"auto"`` deliberately leaves out ``otel``, because a process running both
+    it and a patched provider client records every call twice under two
+    journeys — see ``integrations/otel.instrument``. Ask for it explicitly:
+    ``instrument=["auto", "otel"]``, or ``instrument="all"``.
+
+    Other accepted forms: ``"none"`` (or ``()``) attaches nothing, and an
+    explicit list — ``["openai"]`` — attaches exactly that and reports through
+    :func:`odyssey.health` if the package is missing, where an expanded
+    ``"auto"`` would have skipped it silently.
+
+    LiveKit and Pipecat are not in any of these: they attach to an object the
+    application owns (``attach(session, ...)`` / ``attach(task, ...)``), which
+    ``init`` has no way to reach. Naming one says so rather than failing as an
+    unknown target.
+
     The explicit drop-in (``from odyssey.integrations.anthropic import
-    Anthropic``) is the default path because a patched call stack is harder to
-    debug; reach for patching when you cannot edit the call sites.
+    Anthropic``) remains available and is still the clearer thing to read in a
+    traceback; it is no longer the thing a deployment has to remember.
 
     Calling twice is a no-op that warns and returns the existing client, because
     a second one would start a second drainer. Pass ``force=True`` to replace.
@@ -426,9 +505,87 @@ def init(
 
     if config.flush_on_exit:
         atexit.register(_atexit_flush, client)
-    for name in instrument:
+    for name in _resolve_instrument(instrument):
         _instrument(name, client)
     return client
+
+
+def _resolve_instrument(requested: Any) -> List[str]:
+    """Which integrations :func:`init` should attach, in order, deduplicated.
+
+    Accepts a string (``"auto"``, ``"all"``, ``"none"``, or one target name), a
+    sequence of those, or ``UNSET`` to fall back to ``ODYSSEY_INSTRUMENT`` and
+    then to ``"auto"``. ``"auto"`` and ``"all"`` are expanded here rather than
+    inside the dispatch so a caller can mix them with explicit names --
+    ``["auto", "otel"]`` is the common one.
+    """
+    if requested is UNSET:
+        raw = os.environ.get(ENV_INSTRUMENT)
+        requested = raw if raw is not None else "auto"
+    if requested is None:
+        return []
+    names = [requested] if isinstance(requested, str) else list(requested)
+
+    out: List[str] = []
+    for entry in names:
+        for name in str(entry).replace(",", " ").split():
+            key = name.strip().lower()
+            if key in ("", "none", "off"):
+                continue
+            group = {"auto": _AUTO, "all": _ALL}.get(key)
+            for target in group if group is not None else (key,):
+                # Only what is actually installed, for the expanded groups.
+                # An explicitly named target is always attempted, so a typo or
+                # a missing package is reported rather than silently skipped.
+                if group is not None and not _installed(target):
+                    continue
+                if target not in out:
+                    out.append(target)
+    return out
+
+
+def _installed(target: str) -> bool:
+    """Whether ``target``'s package is importable, without importing it."""
+    module = _TARGET_MODULE.get(target)
+    if module is None:
+        return False
+    if module in sys.modules:
+        # Already imported is proof it is importable, and cheaper than asking.
+        # It is also the only answer that works for a module installed into
+        # `sys.modules` directly, which is how the tests inject a provider and
+        # how some vendored/shimmed deployments ship one.
+        return True
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        # A namespace package mid-install, or a parent that itself fails to
+        # import. Either way: not usable, and not a reason to fail init.
+        return False
+
+
+def _default_sink(config: Config, client: Client) -> Sink:
+    """Where drained journeys go when the caller named no sink.
+
+    ``ODYSSEY_ENDPOINT`` means "ship to the collector", and having to *also*
+    write ``sink=HttpSink(...)`` in the app made a deployment concern into a
+    code change — the endpoint is already configured out-of-process, so the
+    code should not have to name it. With no endpoint set, journeys land on
+    disk exactly as before.
+
+    A malformed endpoint falls back to the file sink rather than raising.
+    ``init()`` failing would take the application down over a typo in an
+    environment variable, which is the one thing this layer must never do; the
+    failure is counted and visible through :func:`odyssey.health`.
+    """
+    if not os.environ.get(ENV_ENDPOINT):
+        return FileSink(config.out_dir)
+    try:
+        from odyssey.sinks import HttpSink
+
+        return HttpSink()
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        client.note_error("sink:http", exc)
+        return FileSink(config.out_dir)
 
 
 def _atexit_flush(client: Client) -> None:
@@ -455,6 +612,19 @@ def _instrument(name: str, client: Client) -> None:
             from odyssey.integrations.gemini import instrument
 
             instrument()
+        elif key == "langchain":
+            from odyssey.integrations.langchain import instrument as instrument_lc
+
+            instrument_lc()
+        elif key == "otel":
+            from odyssey.integrations.otel import instrument as instrument_otel
+
+            instrument_otel()
+        elif key in _ATTACH_ONLY:
+            raise ValueError(
+                f"{key!r} attaches to an object the application owns, not to "
+                f"the process: call {_ATTACH_ONLY[key]}"
+            )
         else:
             raise ValueError(f"unknown instrumentation target {name!r}")
     except Exception as exc:  # noqa: BLE001 - a missing provider is not fatal

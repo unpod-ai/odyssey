@@ -155,7 +155,40 @@ _ROLE: Dict[str, Role] = {
     "assistant": "assistant",
 }
 
-_EVENTS = ("conversation_item_added", "function_tools_executed", "close")
+_EVENTS = (
+    "conversation_item_added",
+    "function_tools_executed",
+    "metrics_collected",
+    "close",
+)
+
+# What a LiveKit metrics object is measuring, decided by which field it carries
+# rather than by its class name. LiveKit ships `LLMMetrics`, `TTSMetrics`,
+# `STTMetrics`, `EOUMetrics` and `VADMetrics`, and the set grows; duck-typing
+# the distinguishing field means a new one still records instead of raising.
+#
+# Ordered: `EOUMetrics` also carries a `duration`, so the specific fields must
+# be tried before the generic one.
+_METRIC_STAGES = (
+    ("ttft", "llm"),
+    ("ttfb", "tts"),
+    ("end_of_utterance_delay", "eou"),
+    ("duration", None),
+)
+
+# Carried alongside the latency so a consumer can normalise it -- tokens for an
+# LLM turn, audio seconds for STT/TTS. Numbers only; anything else stays off.
+_METRIC_EXTRAS = (
+    "duration",
+    "audio_duration",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "tokens_per_second",
+    "characters_count",
+    "transcription_delay",
+    "on_user_turn_completed_delay",
+)
 
 
 class _Turn:
@@ -324,11 +357,18 @@ class LiveKitRecorder:
         journey_id: str,
         instructions: Optional[str | Callable[[], Optional[str]]] = None,
         record_instructions: bool = True,
+        agent_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._session = session
         self.journey_id = journey_id
         self._closed = False
+        # Whether the caller owns the agent identity. When they do, a handoff
+        # does not rewrite it: their id names their own agent concept, and
+        # replacing it with a Python class name would lose the thing they asked
+        # to be able to query on. The handoff is still visible either way, on
+        # the system message's `instructions_origin`/`agent` metadata.
+        self._agent_id_is_callers = agent_id is not None
         self._handlers: List[Tuple[str, Callable[..., None]]] = []
         # The last system prompt written to the spool. `None` means none yet, so
         # the first recorded item emits one; after that only a *change* does.
@@ -339,6 +379,14 @@ class LiveKitRecorder:
         # ever held, and every exit path flushes it, so a crash can lose the turn
         # in flight and nothing before it.
         self._pending: Optional[_Turn] = None
+        # Time-to-first-token from the most recent `LLMMetrics`, waiting for the
+        # assistant turn it belongs to. LiveKit reports the metric when the
+        # generation completes and adds the conversation item after the speech
+        # is committed, so the metric arrives first and this is consumed by the
+        # next assistant flush. Cleared on consume, so a turn never inherits an
+        # older generation's number, and `None` if the ordering does not hold —
+        # the `voice` event below is the authoritative record either way.
+        self._pending_ttft: Optional[float] = None
 
         client = require_client()
         self._enabled = client is not None and client.config.enabled
@@ -357,6 +405,15 @@ class LiveKitRecorder:
             # make every caller supply by hand, and the reason `source:
             # "livekit"` no longer needs stamping onto all N events.
             data_source="livekit",
+            # Which capture path produced the shard. `data_source` says where
+            # the conversation came from; this says what recorded it, and the
+            # two stop being the same answer as soon as a second integration
+            # can also feed a voice journey.
+            framework="livekit",
+            # May be None here and filled by the first `_sync_instructions`
+            # from the agent LiveKit actually started with -- `current_agent`
+            # raises before `session.start()`, so there is nothing to read yet.
+            agent_id=agent_id,
         )
         if client is not None:
             client.count_journey()
@@ -387,7 +444,17 @@ class LiveKitRecorder:
     def _register(self) -> None:
         for name in _EVENTS:
             handler = getattr(self, f"_on_{name}")
-            self._session.on(name, handler)
+            try:
+                self._session.on(name, handler)
+            except Exception as exc:  # noqa: BLE001 - see below
+                # An `AgentSession` too old to know this event must still record
+                # everything it does know. `metrics_collected` in particular is
+                # newer than the conversation events, and refusing to attach at
+                # all over it would trade every turn for some timings.
+                client = require_client()
+                if client is not None:
+                    client.note_error(f"livekit.register:{name}", exc)
+                continue
             self._handlers.append((name, handler))
         client = require_client()
         if client is not None:
@@ -418,10 +485,18 @@ class LiveKitRecorder:
         self._pending = None
         if turn is None or turn.is_empty():
             return
+        ttft = None
+        if turn.role == "assistant":
+            ttft, self._pending_ttft = self._pending_ttft, None
         with bind(self._ctx):
             handle = self._handle()
             handle.message(
-                Message(role=turn.role, content=turn.content, metadata=turn.metadata()),
+                Message(
+                    role=turn.role,
+                    content=turn.content,
+                    metadata=turn.metadata(),
+                    ttft_ms=ttft,
+                ),
             )
             # Voice events (item 0'.4): the same signals `metadata()` already
             # folds into the message's `metadata` dict, recorded a second time
@@ -545,6 +620,12 @@ class LiveKitRecorder:
         name = _agent_name(self._session)
         if name:
             turn["agent"] = name
+            # Header on the first prompt, per-turn delta on every handoff after
+            # it -- `JourneyContext.agent_delta` decides which, so a
+            # single-agent call still says the name exactly once.
+            self._ctx.agent_name = name
+            if not self._agent_id_is_callers:
+                self._ctx.agent_id = name
         with bind(self._ctx):
             self._handle().message(
                 Message(role="system", content=text, metadata=turn),
@@ -771,6 +852,53 @@ class LiveKitRecorder:
         self._guard("tool", run)
         return self._ctx.last_message_seq
 
+    # -- metrics ----------------------------------------------------------
+
+    def _on_metrics_collected(self, event: Any) -> None:
+        self._guard("metrics_collected", lambda: self._record_metrics(event))
+
+    def _record_metrics(self, event: Any) -> None:
+        """Record one LiveKit metric as a ``voice`` latency event.
+
+        This is the whole reason to subscribe: LiveKit already measures the
+        voice pipeline's latency budget — LLM time-to-first-token, TTS
+        time-to-first-byte, STT and end-of-utterance delay — and without this
+        handler every one of those numbers was computed and thrown away.
+
+        Recorded as ``voice`` rather than as a message: a latency reading is not
+        a turn, and folding it into one would put a number the model never said
+        into a training example. ``fold()`` already keeps voice events on their
+        own side (``FoldResult.voice_events``) for exactly this reason.
+
+        Nothing here imports LiveKit. The metric object is read by attribute, so
+        a metrics class this build has never heard of still records — see
+        ``_METRIC_STAGES``.
+        """
+        metrics = getattr(event, "metrics", event)
+        if metrics is None:
+            return
+        reading = _metric_reading(metrics)
+        if reading is None:
+            return
+        stage, latency_ms, extras = reading
+        if stage == "llm":
+            # Held for the assistant turn this generation produced; see
+            # `_pending_ttft`.
+            self._pending_ttft = latency_ms
+        meta: Dict[str, Any] = {"stage": stage}
+        speech_id = getattr(metrics, "speech_id", None)
+        if speech_id:
+            meta["speech_id"] = str(speech_id)
+        label = getattr(metrics, "label", None)
+        if label:
+            # Which plugin produced it (`livekit.plugins.deepgram.STT`, ...).
+            # The one thing that says *whose* latency this is when a deployment
+            # swaps vendors mid-experiment.
+            meta["label"] = str(label)
+        meta.update(extras)
+        with bind(self._ctx):
+            self._handle().voice("latency", latency_ms=latency_ms, metadata=meta)
+
     def _on_close(self, event: Any) -> None:
         self._guard("close", lambda: self.close(event=event))
 
@@ -834,6 +962,7 @@ def attach(
     journey_id: str,
     instructions: Optional[str | Callable[[], Optional[str]]] = None,
     record_instructions: bool = True,
+    agent_id: Optional[str] = None,
     **metadata: Any,
 ) -> LiveKitRecorder:
     """Record an ``AgentSession`` into ``journey_id``. The one line to add.
@@ -868,6 +997,13 @@ def attach(
     training example: the same user turn under two different prompts is
     indistinguishable.
 
+    ``agent_id`` names which agent this journey ran, and lands in the shard
+    header rather than on every event. Leave it unset and the agent's own class
+    name is used, updated on each handoff so a turn after one carries the new
+    id and a single-agent call carries none at all. Pass it when the deployment
+    has its own identity for the agent -- a row id, a version tag -- in which
+    case a handoff does not overwrite it.
+
     ``record_instructions=False`` keeps the system prompt out of the journey
     entirely. Some prompts are thousands of tokens of business rules that dwarf
     the call itself, and a deployment may not want that text copied into every
@@ -882,6 +1018,7 @@ def attach(
         journey_id=journey_id,
         instructions=instructions,
         record_instructions=record_instructions,
+        agent_id=agent_id,
         metadata=metadata,
     )
     recorder._register()
@@ -936,6 +1073,68 @@ def _arguments(raw: Any) -> Dict[str, Any]:
             "_odyssey_unparsed_arguments": raw if isinstance(raw, str) else repr(raw),
             "_odyssey_parse_error": str(exc),
         }
+
+
+def _seconds_to_ms(raw: Any) -> Optional[float]:
+    """A LiveKit duration (seconds, float) as milliseconds. None if unusable.
+
+    Negative is treated as unusable rather than clamped: a negative latency
+    means the reading is wrong, and a zero would claim it was instant.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    if raw < 0:
+        return None
+    return round(float(raw) * 1000, 3)
+
+
+def _metric_reading(
+    metrics: Any,
+) -> Optional[Tuple[str, float, Dict[str, Any]]]:
+    """``(stage, latency_ms, extras)`` for one LiveKit metrics object, or None.
+
+    ``None`` when nothing on the object reads as a duration — a `VADMetrics`
+    counting inference runs, say. Returning None rather than writing a zero
+    keeps "not measured" distinguishable from "measured as instant".
+
+    Read by attribute and never by type, so this does not import LiveKit and a
+    metrics class newer than this build still records under its own class name.
+    """
+    stage: Optional[str] = None
+    latency_ms: Optional[float] = None
+    for field_name, known_stage in _METRIC_STAGES:
+        value = _seconds_to_ms(getattr(metrics, field_name, None))
+        if value is None:
+            continue
+        latency_ms = value
+        stage = known_stage or _stage_from_type(metrics)
+        break
+    if stage is None or latency_ms is None:
+        return None
+
+    extras: Dict[str, Any] = {}
+    for name in _METRIC_EXTRAS:
+        value = getattr(metrics, name, None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        # Durations are reported in seconds and named in milliseconds here, so
+        # the unit is on the key rather than in a docstring nobody reads at
+        # query time. Counts keep their own name.
+        if name.endswith("_duration") or name in ("duration", "transcription_delay"):
+            extras[f"{name}_ms"] = round(float(value) * 1000, 3)
+        elif name.endswith("_delay"):
+            extras[f"{name}_ms"] = round(float(value) * 1000, 3)
+        else:
+            extras[name] = value
+    return stage, latency_ms, extras
+
+
+def _stage_from_type(metrics: Any) -> str:
+    """``STTMetrics`` -> ``stt``. The fallback for a class not in the table."""
+    name = type(metrics).__name__
+    if name.endswith("Metrics"):
+        name = name[: -len("Metrics")]
+    return name.lower() or "unknown"
 
 
 def _agent_name(session: Any) -> Optional[str]:

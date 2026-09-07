@@ -124,6 +124,19 @@ class JourneyContext:
     data_source: Optional[str] = None
     trace_id: Optional[str] = None
     started_at: str = field(default_factory=_utc_now_iso)
+
+    # Who is answering, and what recorded it. `framework` and `agent_name` are
+    # fixed for the journey and live only in the header.
+    #
+    # `agent_id` is the exception: it is *mutable*, because a handoff (LiveKit
+    # `session.current_agent`, a LangGraph node, a Pipecat flow node) changes
+    # who is answering mid-journey. The header freezes whoever started, and
+    # :meth:`agent_delta` reports the difference so only the turns that actually
+    # changed hands carry the field -- the same snapshot-plus-delta rule
+    # ``metadata``/:meth:`event_metadata` already follow.
+    agent_id: Optional[str] = None
+    agent_name: Optional[str] = None
+    framework: Optional[str] = None
     # SDK bookkeeping — integration state, seen-system-prompt, and so on.
     # Deliberately separate from ``metadata``: that one is emitted, this one is
     # not, and mixing them would smear internal counters across the corpus.
@@ -170,8 +183,26 @@ class JourneyContext:
                 trace_id=self.trace_id,
                 started_at=self.started_at,
                 journey_metadata=dict(self.metadata) or None,
+                agent_id=self.agent_id,
+                agent_name=self.agent_name,
+                framework=self.framework,
             )
         return self._header
+
+    def agent_delta(self) -> Optional[str]:
+        """The agent id this event must carry, or ``None`` when the header says it.
+
+        ``None`` for the whole of a single-agent journey, which is nearly all of
+        them: the header already named the agent, and stamping the same string
+        onto every turn is the per-event repetition the header exists to end.
+        After a handoff it returns the new id, and every turn from there carries
+        it until the next change -- so a reader taking the header value and
+        overriding it wherever a message names one gets the right attribution at
+        every seq without tracking handoff events of its own.
+        """
+        if self.agent_id is None:
+            return None
+        return self.agent_id if self.agent_id != self.header().agent_id else None
 
     def event_metadata(self) -> Dict[str, Any]:
         """Caller tags this event must carry because the header does not.

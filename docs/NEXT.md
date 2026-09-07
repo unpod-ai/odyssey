@@ -1,5 +1,46 @@
 # odyssey — session handoff
 
+## One integration point + schema 2.1 (timing, agent attribution) + Pipecat — built, tested, **uncommitted**
+
+Working tree on `main` carries this; nothing is committed yet. `801 passed,
+1 skipped`, `task lint` and `task types` clean, golden fixture current
+(regenerated at `2.1`).
+
+**What landed** (details in `CHANGELOG.md`'s `[Unreleased]`, items 0.17/0.18/
+0′.7 in [`WORKING.md`](WORKING.md), and
+[`journey-schema.md`](journey-schema.md#timing-and-agent-attribution-21)):
+
+- `odyssey.init()` is now the only line an app adds — `instrument` defaults to
+  `"auto"` (`ODYSSEY_INSTRUMENT`), patching every provider SDK actually
+  installed and registering LangChain's handler process-wide. `otel` stays out
+  of `auto` (it would double-record a patched client, and `opentelemetry-sdk`
+  is a transitive dependency nobody chose); `livekit`/`pipecat` answer with the
+  `attach(...)` call to write. `integrations/_reentry.py` keeps one provider
+  call to one recorded turn when a drop-in client sits over a patched SDK.
+- `init()`'s default sink now follows `ODYSSEY_ENDPOINT` (set → `HttpSink`,
+  unset → `FileSink`, malformed → `FileSink` + a counted error, never a raise).
+- `SCHEMA_VERSION` `2.0` → `2.1`, additive: `Message.latency_ms`/`ttft_ms`/
+  `agent_id`/`provider`, `JourneyHeader.agent_id`/`agent_name`/`framework`.
+  Header-plus-delta attribution — only a turn that changed hands carries
+  `agent_id`. Timing from the shared `integrations/_timing.py`.
+- `integrations/pipecat.py` — `attach(task, journey_id=...)`, a `BaseObserver`
+  so it is agnostic to which LLM service the pipeline runs; frames
+  deduplicated on `frame.id` because `on_push_frame` fires once per hop.
+- LiveKit gained agent identity through handoffs and `metrics_collected` →
+  `voice` latency events.
+- A background drain that failed every tick was silent; `IntervalDrainer` now
+  reports each tick through `on_result` and `Client` counts a `DrainFailed`,
+  so `health()` shows a sink that is rejecting everything.
+
+**Next, and not started: push the 2.1 fields downstream.** `packages/odyssey-schemas`
+DTOs, `services/api`, both SDKs and `apps/web` know nothing about `latency_ms`,
+`ttft_ms`, `provider`, `agent_id` or the header's agent identity — the corpus
+carries them and no read path exposes them. The `GET /metrics` work below is
+the precedent to copy: DTO in `odyssey-schemas` → repository/domain/router in
+`services/api` → regenerate `openapi.json` + both SDK resources (remembering
+that codegen does not wire the top-level client) → the `apps/web` page.
+
+
 ## Metrics exposed end to end: services/collector → GET /metrics → apps/web dashboard — done
 
 Built exactly what the previous handoff below designed, verified against

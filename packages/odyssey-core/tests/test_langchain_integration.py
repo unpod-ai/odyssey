@@ -359,3 +359,113 @@ def test_a_toolnode_inside_a_langgraph_run_records_the_tool_call(tmp_path):
     assert tool_responses[0].tool_response is not None
     assert tool_responses[0].tool_response.response == "booked mon"
     assert recorded[-1].kind == "terminal"
+
+
+# --------------------------------------------------------------------------
+# Process-wide attachment
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_tracers(monkeypatch):
+    """A stand-in for ``langchain_core.tracers.context``.
+
+    Records what was registered, which is the only observable effect: LangChain
+    reads the registered ``ContextVar`` when it assembles a run's callbacks, and
+    there is nothing to invoke from the outside.
+    """
+    context_mod = types.ModuleType("langchain_core.tracers.context")
+    registered: list = []
+
+    def register_configure_hook(var, inheritable, handle_class=None, env_var=None):
+        registered.append((var, inheritable))
+
+    context_mod.register_configure_hook = register_configure_hook  # type: ignore[attr-defined]
+    tracers_mod = types.ModuleType("langchain_core.tracers")
+    tracers_mod.context = context_mod  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "langchain_core.tracers", tracers_mod)
+    monkeypatch.setitem(sys.modules, "langchain_core.tracers.context", context_mod)
+    sys.modules["langchain_core"].tracers = tracers_mod  # type: ignore[attr-defined]
+    from odyssey.integrations.langchain import uninstrument
+
+    uninstrument()
+    yield registered
+    uninstrument()
+
+
+def test_the_handler_attaches_process_wide(tmp_path, fake_tracers):
+    """The per-call form is one edit per call site, and records nothing at the
+    site somebody forgot. This is what makes `init()` the single line."""
+    from odyssey.integrations.langchain import instrument, is_instrumented
+
+    start(tmp_path)
+    instrument()
+
+    assert is_instrumented()
+    var, inheritable = fake_tracers[0]
+    assert var.get() is not None
+
+
+def test_the_hook_is_inheritable(tmp_path, fake_tracers):
+    """A run started in a child context — LangChain's own executor thread, an
+    asyncio task — is exactly the fan-out case that most needs tracing."""
+    from odyssey.integrations.langchain import instrument
+
+    start(tmp_path)
+    instrument()
+
+    assert fake_tracers[0][1] is True
+
+
+def test_attaching_twice_registers_one_hook(tmp_path, fake_tracers):
+    from odyssey.integrations.langchain import instrument
+
+    start(tmp_path)
+    instrument()
+    instrument()
+
+    assert len(fake_tracers) == 1
+
+
+def test_detaching_clears_the_handler(tmp_path, fake_tracers):
+    from odyssey.integrations.langchain import (
+        instrument,
+        is_instrumented,
+        uninstrument,
+    )
+
+    start(tmp_path)
+    instrument()
+    var = fake_tracers[0][0]
+    uninstrument()
+
+    assert not is_instrumented()
+    assert var.get() is None
+
+
+def test_detaching_when_nothing_was_attached_is_safe():
+    from odyssey.integrations.langchain import uninstrument
+
+    uninstrument()
+
+
+def test_one_handler_serves_concurrent_runs(tmp_path, fake_tracers):
+    """Safe because every journey is keyed on the run tree's root id, not on
+    instance state — two interleaved runs never see each other's turns."""
+    from odyssey.integrations.langchain import instrument
+
+    start(tmp_path)
+    instrument()
+    handler = fake_tracers[0][0].get()
+
+    a, b = uuid.uuid4(), uuid.uuid4()
+    handler.on_llm_start({}, ["from a"], run_id=a, parent_run_id=None)
+    handler.on_llm_start({}, ["from b"], run_id=b, parent_run_id=None)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="a done")]]), run_id=a)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="b done")]]), run_id=b)
+
+    client = odyssey.get_client()
+    assert client is not None
+    for jid in client.spool.journey_ids():
+        contents = [e.message.content for e in client.spool.read(jid) if e.message]
+        assert contents in (["from a", "a done"], ["from b", "b done"])

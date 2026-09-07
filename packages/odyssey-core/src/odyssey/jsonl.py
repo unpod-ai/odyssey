@@ -7,7 +7,7 @@ an unknown MAJOR version refuses to parse rather than guessing.
 
 File layout — a header line, then one event per line::
 
-    {"odyssey_schema_version": "2.0", "journey_id": "j_1", "data_source": "livekit",
+    {"odyssey_schema_version": "2.1", "journey_id": "j_1", "data_source": "livekit",
      "trace_id": "t_9", "started_at": "...", "journey_metadata": {"tenant": "acme"}}
     {"journey_id": "j_1", "seq": 0, "kind": "message", ...}
     {"journey_id": "j_1", "seq": 1, "kind": "message", ...}
@@ -165,6 +165,9 @@ def decode_header(d: Dict[str, Any]) -> JourneyHeader:
         trace_id=d.get("trace_id"),
         started_at=d.get("started_at"),
         journey_metadata=meta if isinstance(meta, dict) else None,
+        agent_id=d.get("agent_id"),
+        agent_name=d.get("agent_name"),
+        framework=d.get("framework"),
     )
 
 
@@ -263,6 +266,21 @@ def _reward(d: Dict[str, Any]) -> Reward:
     )
 
 
+def _opt_float(raw: Any) -> Optional[float]:
+    """A number, or None for absent/unusable.
+
+    Timing fields are written by integrations reading third-party objects, so a
+    string or a null is a shape a real shard can carry. A bad value must not
+    take the whole event down with it -- the rest of the turn is still a turn.
+    """
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _message(d: Dict[str, Any]) -> Message:
     calls = d.get("tool_calls")
     defs = d.get("tool_definitions")
@@ -278,6 +296,10 @@ def _message(d: Dict[str, Any]) -> Message:
         metadata=d.get("metadata"),
         reasoning=d.get("reasoning"),
         trainable_status=d.get("trainable_status", "not_trainable"),
+        latency_ms=_opt_float(d.get("latency_ms")),
+        ttft_ms=_opt_float(d.get("ttft_ms")),
+        agent_id=d.get("agent_id"),
+        provider=d.get("provider"),
     )
 
 

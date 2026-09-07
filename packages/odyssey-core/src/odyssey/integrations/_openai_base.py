@@ -31,7 +31,13 @@ from odyssey.builders.messages import messages_from_openai_chat, normalize_role
 from odyssey.capture import _emit, _jsonable
 from odyssey.client import require_client
 from odyssey.context import JourneyContext, current
+from odyssey.integrations._timing import stamp
 from odyssey.primitives import Message, ToolDefinition
+
+# The SDK behind these calls. Stays "openai" for an OpenAI-compatible gateway
+# (Groq, vLLM, Ollama, DeepSeek): the wire protocol and the client are
+# OpenAI's, and which host served it is already visible in the model id.
+PROVIDER = "openai"
 
 # Request parameters worth keeping. The schema has no field for sampling
 # settings, so they ride along in metadata — enough to reproduce a call later.
@@ -182,7 +188,14 @@ def capture_request(kwargs: Dict[str, Any]) -> None:
     ctx.state[_STATE_CONSUMED] = len(entries)
 
 
-def capture_response(response: Any, *, model: Optional[str] = None) -> None:
+def capture_response(
+    response: Any,
+    *,
+    model: Optional[str] = None,
+    latency_ms: Optional[float] = None,
+    ttft_ms: Optional[float] = None,
+    provider: Optional[str] = None,
+) -> None:
     """Record the assistant turn a provider returned."""
     ctx = current()
     if ctx is None:
@@ -219,7 +232,12 @@ def capture_response(response: Any, *, model: Optional[str] = None) -> None:
     for msg in messages:
         _emit(
             "message",
-            message=msg,
+            message=stamp(
+                msg,
+                latency_ms=latency_ms,
+                ttft_ms=ttft_ms,
+                provider=provider or PROVIDER,
+            ),
             model_id=str(resolved_model) if resolved_model else None,
             metadata=meta,
         )

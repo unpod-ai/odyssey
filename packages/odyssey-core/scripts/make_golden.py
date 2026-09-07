@@ -132,10 +132,19 @@ def golden_events() -> list[JourneyEvent]:
                 edited_output="You're all set for Tuesday at 3pm.",
             ),
         ),
-        # The accepted answer, thumbs-upped — the `chosen` half.
+        # The accepted answer, thumbs-upped — the `chosen` half. Also the one
+        # turn carrying v2.1's timing and attribution, so the fixture exercises
+        # them on decode rather than only declaring them in the dataclass.
         _msg(
             8,
-            Message(role="assistant", content="You're all set for Tuesday at 3pm."),
+            Message(
+                role="assistant",
+                content="You're all set for Tuesday at 3pm.",
+                latency_ms=812.5,
+                ttft_ms=214.0,
+                agent_id="agent_booking_v3",
+                provider="openai",
+            ),
             model_id=MODEL,
         ),
         _sig(9, Signal(signal="thumbs_up", target_seq=8)),
@@ -176,6 +185,7 @@ def golden_events() -> list[JourneyEvent]:
                 voice_kind="stt_transcript",
                 text="Book me for Tuesday at 3.",
                 confidence=0.94,
+                latency_ms=143.0,
             ),
         ),
         JourneyEvent(
@@ -190,7 +200,7 @@ def golden_events() -> list[JourneyEvent]:
 
 
 def golden_header() -> JourneyHeader:
-    """The v2.0 header the fixture must carry.
+    """The v2.1 header the fixture must carry.
 
     Part of the contract, not decoration: a producer that writes only the version
     key leaves the consumer to be told out-of-band what the file records, which
@@ -206,6 +216,12 @@ def golden_header() -> JourneyHeader:
         trace_id=TRACE,
         started_at=_ts(0),
         journey_metadata={"tenant": "acme", "channel": "voice"},
+        # v2.1: who ran the journey and which capture path recorded it. In the
+        # fixture because a field no artifact carries is a field no consumer is
+        # forced to handle -- which is how a schema addition rots.
+        agent_id="agent_booking_v3",
+        agent_name="BookingAgent",
+        framework="livekit",
     )
 
 

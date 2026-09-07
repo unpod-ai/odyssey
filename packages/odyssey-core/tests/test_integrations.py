@@ -175,6 +175,12 @@ def fake_sdk(monkeypatch):
 
 
 def start(tmp_path, **kw):
+    # `instrument="none"`: this file is about the drop-in client, and its fake
+    # SDK is a bare module with no `resources` package for the patcher to reach.
+    # Left at the default, `init()` would find the fake in `sys.modules`, try to
+    # patch it, and count a failure that says nothing about the wrapper under
+    # test. `test_one_integration_point.py` covers auto-instrumentation.
+    kw.setdefault("instrument", "none")
     return odyssey.init(
         spool_dir=tmp_path / "spool",
         out_dir=tmp_path / "out",
@@ -718,3 +724,94 @@ def test_init_never_dies_because_instrumentation_failed(tmp_path, monkeypatch):
     )
     client = start(tmp_path, instrument=["anthropic"])
     assert client.stats.capture_errors == 1
+
+
+# --------------------------------------------------------------------------
+# v2.1: how long the call took, and which SDK made it
+# --------------------------------------------------------------------------
+
+
+def _assistant_turns(jid):
+    return [
+        e.message
+        for e in events(jid)
+        if e.kind == "message" and e.message and e.message.role == "assistant"
+    ]
+
+
+def test_the_response_turn_carries_latency_and_provider(tmp_path):
+    start(tmp_path)
+    from odyssey.integrations.anthropic import Anthropic
+
+    client = Anthropic(scripted=[FakeResponse([{"type": "text", "text": "hi"}])])
+    with odyssey.journey("j_lat"):
+        client.messages.create(
+            model="claude", messages=[{"role": "user", "content": "q"}]
+        )
+
+    (answer,) = _assistant_turns("j_lat")
+    assert answer.latency_ms is not None
+    assert answer.provider == "anthropic"
+
+
+def test_a_stream_reports_time_to_first_token(tmp_path):
+    """TTFT is the number a stream can report and a plain call cannot.
+
+    The clock starts when the stream opens and is marked on the first chunk the
+    caller pulls, so it measures what the user waited for before text appeared
+    — not how long the whole completion took.
+    """
+    start(tmp_path)
+    from odyssey.integrations.anthropic import Anthropic
+
+    client = Anthropic(scripted=[FakeResponse([{"type": "text", "text": "hi"}])])
+    with client.messages.stream(
+        model="claude", messages=[{"role": "user", "content": "q"}]
+    ) as stream:
+        list(stream.text_stream)
+        stream.get_final_message()
+
+    (answer,) = _assistant_turns(_only_journey_id())
+    assert answer.ttft_ms is not None
+    assert answer.latency_ms is not None
+    assert answer.ttft_ms <= answer.latency_ms
+
+
+def test_a_stream_nobody_iterated_reports_latency_but_no_ttft(tmp_path):
+    """No chunk was pulled, so there is no first-token moment to report.
+
+    Reporting the final-message time as TTFT would make a caller that only ever
+    wanted the finished text look like it streamed.
+    """
+    start(tmp_path)
+    from odyssey.integrations.anthropic import Anthropic
+
+    client = Anthropic(scripted=[FakeResponse([{"type": "text", "text": "hi"}])])
+    with client.messages.stream(
+        model="claude", messages=[{"role": "user", "content": "q"}]
+    ) as stream:
+        stream.get_final_message()
+
+    (answer,) = _assistant_turns(_only_journey_id())
+    assert answer.latency_ms is not None
+    assert answer.ttft_ms is None
+
+
+def test_the_async_stream_reports_time_to_first_token(tmp_path):
+    start(tmp_path)
+    from odyssey.integrations.anthropic import AsyncAnthropic
+
+    client = AsyncAnthropic(scripted=[FakeResponse([{"type": "text", "text": "hi"}])])
+
+    async def main():
+        async with client.messages.stream(
+            model="claude", messages=[{"role": "user", "content": "q"}]
+        ) as stream:
+            async for _ in stream.text_stream:
+                pass
+            await stream.get_final_message()
+
+    asyncio.run(main())
+    (answer,) = _assistant_turns(_only_journey_id())
+    assert answer.ttft_ms is not None
+    assert answer.provider == "anthropic"

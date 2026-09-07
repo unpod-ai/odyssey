@@ -31,7 +31,12 @@ from odyssey.builders.messages import messages_from_anthropic_messages
 from odyssey.capture import _emit, _jsonable
 from odyssey.client import require_client
 from odyssey.context import JourneyContext, current
+from odyssey.integrations._timing import stamp
 from odyssey.primitives import Message
+
+# The SDK behind these calls. Lands on `Message.provider`; distinct from
+# `model_id`, which the provider itself reports per response.
+PROVIDER = "anthropic"
 
 # Blocks the ported parser understands.
 _PARSEABLE_BLOCKS = frozenset({"text", "tool_use", "tool_result"})
@@ -236,7 +241,14 @@ def capture_request(kwargs: Dict[str, Any]) -> None:
     ctx.state[_STATE_CONSUMED] = len(entries)
 
 
-def capture_response(response: Any, *, model: Optional[str] = None) -> None:
+def capture_response(
+    response: Any,
+    *,
+    model: Optional[str] = None,
+    latency_ms: Optional[float] = None,
+    ttft_ms: Optional[float] = None,
+    provider: Optional[str] = None,
+) -> None:
     """Record the assistant turn a provider returned."""
     ctx = current()
     if ctx is None:
@@ -268,7 +280,12 @@ def capture_response(response: Any, *, model: Optional[str] = None) -> None:
     for msg in messages:
         _emit(
             "message",
-            message=msg,
+            message=stamp(
+                msg,
+                latency_ms=latency_ms,
+                ttft_ms=ttft_ms,
+                provider=provider or PROVIDER,
+            ),
             model_id=str(payload.get("model") or model or "") or None,
             metadata=meta,
         )

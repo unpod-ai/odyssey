@@ -22,6 +22,7 @@ training-relevant because tool use is behaviour we want the model to reproduce.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import inspect
 import random
@@ -157,6 +158,14 @@ def _emit(
             meta.update(_jsonable(delta))
         if metadata:
             meta.update(_jsonable(metadata))
+
+        # Attribution after a handoff. Only set when the journey's agent has
+        # moved off whatever the header froze (see `JourneyContext.agent_delta`),
+        # and never over a value the caller supplied itself.
+        if message is not None and message.agent_id is None:
+            handed_to = ctx.agent_delta()
+            if handed_to is not None:
+                message = dataclasses.replace(message, agent_id=handed_to)
 
         seq = ctx.next_seq()
         client.spool.record(

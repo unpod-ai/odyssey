@@ -115,6 +115,12 @@ def fake_sdk(monkeypatch):
 
 
 def start(tmp_path, **kw):
+    # `instrument="none"`: this file is about the drop-in client, and its fake
+    # SDK is a bare module with no `resources` package for the patcher to reach.
+    # Left at the default, `init()` would find the fake in `sys.modules`, try to
+    # patch it, and count a failure that says nothing about the wrapper under
+    # test. `test_one_integration_point.py` covers auto-instrumentation.
+    kw.setdefault("instrument", "none")
     return odyssey.init(
         spool_dir=tmp_path / "spool",
         out_dir=tmp_path / "out",
@@ -611,3 +617,237 @@ def test_init_never_dies_because_instrumentation_failed(tmp_path, monkeypatch):
     )
     client = start(tmp_path, instrument=["openai"])
     assert client.stats.capture_errors == 1
+
+
+# --------------------------------------------------------------------------
+# v2.1: how long the call took, and which SDK made it
+# --------------------------------------------------------------------------
+
+
+def _responses(jid):
+    return [
+        e.message
+        for e in events(jid)
+        if e.kind == "message" and e.message and e.message.role == "assistant"
+    ]
+
+
+def _requests(jid):
+    return [
+        e.message
+        for e in events(jid)
+        if e.kind == "message" and e.message and e.message.role == "user"
+    ]
+
+
+def test_the_response_turn_carries_the_call_latency(tmp_path):
+    start(tmp_path)
+    from odyssey.integrations.openai import OpenAI
+
+    client = OpenAI(scripted=[FakeResponse({"role": "assistant", "content": "hi"})])
+    with odyssey.journey("j_lat"):
+        client.chat.completions.create(
+            model="gpt-4.1-mini", messages=[{"role": "user", "content": "q"}]
+        )
+
+    (answer,) = _responses("j_lat")
+    assert answer.latency_ms is not None
+    assert answer.latency_ms >= 0.0
+
+
+def test_the_request_turn_carries_no_latency_of_its_own(tmp_path):
+    """A prompt has no duration; only the call that answered it does.
+
+    Stamping the pair's latency on both halves would double the column for any
+    consumer that sums it.
+    """
+    start(tmp_path)
+    from odyssey.integrations.openai import OpenAI
+
+    client = OpenAI(scripted=[FakeResponse({"role": "assistant", "content": "hi"})])
+    with odyssey.journey("j_req"):
+        client.chat.completions.create(
+            model="gpt-4.1-mini", messages=[{"role": "user", "content": "q"}]
+        )
+
+    (prompt,) = _requests("j_req")
+    assert prompt.latency_ms is None
+    assert prompt.provider is None
+
+
+def test_the_response_turn_names_the_provider(tmp_path):
+    start(tmp_path)
+    from odyssey.integrations.openai import OpenAI
+
+    client = OpenAI(scripted=[FakeResponse({"role": "assistant", "content": "hi"})])
+    with odyssey.journey("j_prov"):
+        client.chat.completions.create(
+            model="gpt-4.1-mini", messages=[{"role": "user", "content": "q"}]
+        )
+
+    assert _responses("j_prov")[0].provider == "openai"
+
+
+def test_an_openai_compatible_gateway_still_reports_openai(tmp_path):
+    """Groq/vLLM/Ollama speak OpenAI's protocol through OpenAI's client.
+
+    `provider` names the SDK, not the host — which model actually served the
+    call is already visible in `model_id`.
+    """
+    start(tmp_path)
+    from odyssey.integrations.openai import OpenAI
+
+    client = OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        scripted=[FakeResponse({"role": "assistant", "content": "hi"}, model="llama")],
+    )
+    with odyssey.journey("j_gw"):
+        client.chat.completions.create(
+            model="llama", messages=[{"role": "user", "content": "q"}]
+        )
+
+    assert _responses("j_gw")[0].provider == "openai"
+
+
+def test_the_async_client_records_latency_too(tmp_path):
+    start(tmp_path)
+    from odyssey.integrations.openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        scripted=[FakeResponse({"role": "assistant", "content": "hi"})]
+    )
+
+    async def main():
+        with odyssey.journey("j_async_lat"):
+            await client.chat.completions.create(
+                model="gpt-4.1-mini", messages=[{"role": "user", "content": "q"}]
+            )
+
+    asyncio.run(main())
+    answer = _responses("j_async_lat")[0]
+    assert answer.latency_ms is not None
+    assert answer.provider == "openai"
+
+
+def test_a_non_streamed_call_reports_no_time_to_first_token(tmp_path):
+    """None, not a copy of `latency_ms`.
+
+    For a non-streamed call the two would be the same number, and a consumer
+    averaging TTFT across a corpus would silently be averaging total latency.
+    """
+    start(tmp_path)
+    from odyssey.integrations.openai import OpenAI
+
+    client = OpenAI(scripted=[FakeResponse({"role": "assistant", "content": "hi"})])
+    with odyssey.journey("j_ttft"):
+        client.chat.completions.create(
+            model="gpt-4.1-mini", messages=[{"role": "user", "content": "q"}]
+        )
+
+    assert _responses("j_ttft")[0].ttft_ms is None
+
+
+# --------------------------------------------------------------------------
+# Two attachments, one turn
+# --------------------------------------------------------------------------
+
+
+def test_the_dropin_over_a_patched_sdk_records_the_turn_once(
+    tmp_path, fake_sdk, monkeypatch
+):
+    """The combination `instrument="auto"` made normal.
+
+    An app that already used the drop-in client now has the in-place patch
+    active underneath it: the proxy's `create` calls the real `Completions.create`,
+    which is the patched one. Without a guard the assistant's turn lands in the
+    corpus twice — and the fold cannot tell the copies apart, because each
+    recording carries a fresh `event_id`. A corpus with every answer twice
+    looks like a corpus and trains like a broken one.
+    """
+    start(tmp_path)
+    from odyssey.integrations.openai import instrument
+
+    target = make_patch_target()
+    instrument(target)
+
+    class PatchedClient:
+        """A client whose completions object is the patched class."""
+
+        def __init__(self, **_kw):
+            self.chat = types.SimpleNamespace(completions=target.Completions())
+
+    from odyssey.integrations.openai import OpenAI
+
+    monkeypatch.setattr(fake_sdk, "OpenAI", PatchedClient)
+    client = OpenAI()
+    with odyssey.journey(id="j_double"):
+        client.chat.completions.create(
+            model="m", messages=[{"role": "user", "content": "q"}]
+        )
+
+    assert roles("j_double") == ["user", "assistant"]
+
+
+def test_the_outermost_wrapper_is_the_one_that_records(tmp_path, fake_sdk, monkeypatch):
+    """It sees the arguments the application actually passed, rather than
+    whatever a client layer rewrote them into."""
+    start(tmp_path)
+    from odyssey.integrations.openai import instrument
+
+    target = make_patch_target()
+    instrument(target)
+
+    class RewritingClient:
+        def __init__(self, **_kw):
+            self.chat = types.SimpleNamespace(completions=target.Completions())
+
+    from odyssey.integrations.openai import OpenAI
+
+    monkeypatch.setattr(fake_sdk, "OpenAI", RewritingClient)
+    client = OpenAI()
+    with odyssey.journey(id="j_outer"):
+        client.chat.completions.create(
+            model="caller-model", messages=[{"role": "user", "content": "asked"}]
+        )
+
+    prompts = [m.content for m in _requests("j_outer")]
+    assert prompts == ["asked"]
+
+
+def test_the_guard_is_released_when_the_provider_raises(tmp_path):
+    """A wedged guard would silently stop recording for the rest of the
+    process — a worse failure than the one that caused it."""
+    start(tmp_path)
+    from odyssey.integrations._reentry import outermost
+
+    class Boom(RuntimeError):
+        pass
+
+    with pytest.raises(Boom):
+        with outermost() as mine:
+            assert mine
+            raise Boom()
+
+    with outermost() as mine:
+        assert mine
+
+
+def test_the_guard_is_per_task_not_per_thread(tmp_path):
+    """The async wrappers await inside the guarded region; a thread local
+    would leak the flag across every coroutine sharing that thread."""
+    from odyssey.integrations._reentry import outermost
+
+    seen = []
+
+    async def inner():
+        with outermost() as mine:
+            seen.append(mine)
+
+    async def main():
+        with outermost() as mine:
+            seen.append(mine)
+            await asyncio.gather(inner())
+        await asyncio.gather(inner())
+
+    asyncio.run(main())
+    assert seen == [True, False, True]
