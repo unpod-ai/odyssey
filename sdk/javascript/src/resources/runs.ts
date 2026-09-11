@@ -2,13 +2,17 @@
 // services/api/openapi.json. Do not edit by hand — see codegen.ts.
 
 import type { Transport } from "../client.js";
-import type { EvalRunOut } from "../types.generated.js";
+import type { EvalRunPageOut } from "../types.generated.js";
 
 /** Generated from `/runs`. */
 export class RunsResource {
   constructor(private readonly transport: Transport) {}
 
-  async list(): Promise<EvalRunOut[]> {
-    return this.transport.get<EvalRunOut[]>("/runs");
+  async list(options: { cursor?: string; limit?: number } = {}): Promise<EvalRunPageOut> {
+    const params = new URLSearchParams();
+    if (options.cursor != null) params.set("cursor", String(options.cursor));
+    if (options.limit != null) params.set("limit", String(options.limit));
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return this.transport.get<EvalRunPageOut>(`/runs${query}`);
   }
 }

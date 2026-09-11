@@ -12,6 +12,7 @@ members = [
     "odyssey-eval",
     "odyssey-schemas",
     "odyssey-sdk",
+    "odyssey-store",
     "odyssey-training",
 ]
 
@@ -1004,6 +1005,7 @@ dependencies = [
     { name = "odyssey-dataprep" },
     { name = "odyssey-eval" },
     { name = "odyssey-schemas" },
+    { name = "odyssey-store" },
     { name = "odyssey-training" },
     { name = "pyyaml" },
     { name = "uvicorn" },
@@ -1034,6 +1036,7 @@ requires-dist = [
     { name = "odyssey-dataprep", editable = "data_preparation" },
     { name = "odyssey-eval", editable = "evaluation" },
     { name = "odyssey-schemas", editable = "packages/odyssey-schemas" },
+    { name = "odyssey-store", editable = "packages/odyssey-store" },
     { name = "odyssey-training", editable = "training" },
     { name = "pyrefly", marker = "extra == 'dev'", specifier = ">=0.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
@@ -1082,6 +1085,7 @@ version = "0.1.0"
 source = { editable = "services/collector" }
 dependencies = [
     { name = "odyssey" },
+    { name = "odyssey-store" },
 ]
 
 [package.optional-dependencies]
@@ -1099,6 +1103,7 @@ requires-dist = [
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.3" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=5.13" },
     { name = "odyssey", editable = "packages/odyssey-core" },
+    { name = "odyssey-store", editable = "packages/odyssey-store" },
     { name = "pyrefly", marker = "extra == 'dev'", specifier = ">=0.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
 ]
@@ -1231,6 +1236,30 @@ requires-dist = [
     { name = "pyrefly", marker = "extra == 'dev'", specifier = ">=0.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.30" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "odyssey-store"
+version = "0.1.0"
+source = { editable = "packages/odyssey-store" }
+
+[package.optional-dependencies]
+dev = [
+    { name = "black" },
+    { name = "flake8" },
+    { name = "isort" },
+    { name = "pyrefly" },
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "black", marker = "extra == 'dev'", specifier = "==26.3.1" },
+    { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.3" },
+    { name = "isort", marker = "extra == 'dev'", specifier = ">=5.13" },
+    { name = "pyrefly", marker = "extra == 'dev'", specifier = ">=0.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
 ]
 provides-extras = ["dev"]
 

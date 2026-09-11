@@ -40,60 +40,82 @@ Env-first, explicit argument wins — same precedence as `odyssey.config.resolve
 | `ODYSSEY_COLLECTOR_HOST` | `--host` | `127.0.0.1` | |
 | `ODYSSEY_COLLECTOR_PORT` | `--port` | `8787` | |
 | `ODYSSEY_COLLECTOR_DATA_DIR` | `--data-dir` | `./collector-data` | where `<date>/<journey_id>.jsonl` files land |
-| `ODYSSEY_COLLECTOR_API_KEY` | `--api-key` | unset (open) | one shared bearer token, unscoped. Mutually exclusive with `--products-file` |
-| `ODYSSEY_COLLECTOR_PRODUCTS_FILE` | `--products-file` | unset | JSON `{"products": [{"slug", "name", "api_key"}, ...]}` file (product scoping, below). Mutually exclusive with `--api-key` |
+| `ODYSSEY_COLLECTOR_API_KEY` | `--api-key` | unset (open) | one shared bearer token, unscoped. Mutually exclusive with `--db-uri` |
+| `ODYSSEY_DB_URI` | `--db-uri` | unset (optional; required only for the product-management CLI flags below) | SQLite database file/URI for product/tenant roster and shared auth cache with `services/api`. Mutually exclusive with `--api-key`. Must be identical in both services (see `docs/runbooks/run-services.md`) |
+
+`ODYSSEY_DB_URI`/`--db-uri` must be a `sqlite:///` URI, not a bare filesystem path — three slashes for a relative path (`sqlite:///./odyssey.sqlite3`) or four slashes for an absolute path (`sqlite:////var/lib/odyssey/odyssey.db`); a bare path like `/var/lib/odyssey/odyssey.db` raises `ValueError` at startup.
+| `ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS` | `--auth-cache-ttl-seconds` | `60` | Auth cache time-to-live in seconds (product/api_key lookups cached to reduce DB hits) |
 | `ODYSSEY_COLLECTOR_TIMEZONE` | `--timezone` | `UTC` | IANA name (e.g. `Asia/Kolkata`); which day a batch's date-partition belongs to. Unrecognised names fall back to UTC |
 | `ODYSSEY_COLLECTOR_DEBUG` | `--debug` | unset (off) | per-request access log (method, path, status) to stdout, via the `odyssey_collector.requests` logger. Quiet by default — same as before this existed |
 
+## Auth modes
+
+Three independent modes, chosen by which of `--api-key`/`--db-uri` (if
+either) is set — passing both raises at startup:
+
+- Neither set: no auth at all, every request is accepted. For local dev.
+- `--api-key`/`ODYSSEY_COLLECTOR_API_KEY`: one shared bearer token,
+  unscoped — any caller with the key can post as anyone.
+- `--db-uri`/`ODYSSEY_DB_URI`: product-scoped, multi-tenant, via the
+  SQLite database described below. This is also the flag required (but
+  not otherwise) to run the product-management CLI commands
+  (`--create-product`, `--list-products`, `--revoke-product`,
+  `--rotate-product`, `--migrate-products-from-json`) — the server
+  itself does not require `--db-uri` to start.
+
 ## Product scoping
 
-For more than one tenant, use `--products-file` instead of `--api-key`:
+For more than one tenant, use the SQLite database (via `--db-uri`) with the product management CLI commands. Each product has its own `slug`, `name`, and API key (stored as a hash for security). Each product's data writes into its own `<data_dir>/<slug>/<date>/` partition — isolation is structural (one caller's key can never resolve into another product's directory), not just an access check layered on shared storage.
 
-```json
-{
-  "products": [
-    {"slug": "acme", "name": "Acme Corp", "api_key": "sk-acme-..."},
-    {"slug": "globex", "name": "Globex Inc", "api_key": "sk-globex-..."}
-  ]
-}
-```
+`GET /products` (any registered key) returns the roster as `{slug, name}` pairs, never keys — a debugging/operator aid, not a privacy boundary between products (storage partitioning already is that).
 
-### Bootstrapping the file
+### Managing products
 
-`odyssey-collector` deliberately refuses to start on a missing, empty, or
-malformed `--products-file` — a silently-created empty roster would be
-indistinguishable from "no keys configured", and every request would
-just 401 with no explanation. `--init-products-file` is the safe way to
-create a real starting one instead: run once, by hand, before starting
-the server (never as a side effect of `serve`, and never via an env var
-— see `docs/runbooks/run-services.md` for why):
+Create a new product with a fresh random API key:
 
 ```bash
-odyssey-collector --init-products-file ./collector-products.json \
+odyssey-collector --db-uri sqlite:///./odyssey.db --create-product \
   --product-slug acme --product-name "Acme Corp"
 ```
 
-Writes one product with a fresh `secrets.token_urlsafe(32)` `api_key` —
-a real secret, not a placeholder — and prints it once. Refuses to
-overwrite an existing file. Add more products by editing the file
-directly (same as any other products-file edit — restart the server to
-pick it up).
+This prints the generated API key once — save it now, as it cannot be retrieved later (only hashes are stored in the database).
 
-Each product's key writes into its own `<data_dir>/<slug>/<date>/` partition
-— isolation is structural (one caller's key can never resolve into another
-product's directory), not just an access check layered on shared storage.
+List all products currently in the database:
+
+```bash
+odyssey-collector --db-uri sqlite:///./odyssey.db --list-products
+```
+
+Revoke a product's access (prevent it from authenticating):
+
+```bash
+odyssey-collector --db-uri sqlite:///./odyssey.db --revoke-product acme
+```
+
+Rotate a product's API key (invalidate the old key, generate a new one):
+
+```bash
+odyssey-collector --db-uri sqlite:///./odyssey.db --rotate-product acme
+```
+
+This prints the new API key once — the old key is no longer valid.
+
+### Shared database with services/api
+
+`ODYSSEY_DB_URI` must point to the same SQLite file in both `services/collector` and `services/api` so they share the same product roster and auth cache. The database is initialized automatically on first use if it doesn't exist; see `docs/runbooks/run-services.md` for deployment guidance.
+
+## Migrating from products.json
+
+If you have an existing `products.json` file from an earlier deployment, use the one-time migration command:
+
+```bash
+odyssey-collector --db-uri sqlite:///./odyssey.db --migrate-products-from-json /path/to/old/products.json
+```
+
+This imports all products from the old JSON file into the SQLite database, with API keys hashed. The old `products.json` file is no longer needed after migration and can be safely deleted.
+
 `slug` is what names the directory and every CLI/`prune.py` invocation;
 `name` exists for `GET /products` and log/operator legibility.
-
-`GET /products` (any registered key) returns the roster as `{slug, name}`
-pairs, never keys — a debugging/operator aid, not a privacy boundary between
-products (storage partitioning already is that).
-
-This is a stopgap, not real multi-tenant infrastructure: the roster is a
-flat file loaded once at startup — edit it and restart the process to
-add/revoke a product. `services/api` (Step 8) is a read-only service and
-does not manage collector keys/products either — real key/product
-management is still unbuilt anywhere in this repo.
 
 `prune.py` (below) is unaware of products — point `--data-dir` at
 `<data_dir>/<slug>` once per product rather than at the root.
@@ -160,7 +182,7 @@ Authorization: Bearer <api_key>          # only when the server requires one
 ```
 
 Its own channel, independent of journey capture — same auth rules as
-every other POST (`--api-key` or a `--products-file` key), but its own
+every other POST (any product API key from the database), but its own
 storage subdirectory, never mixed into a journey shard file:
 `<data_dir>/<product_slug>/metrics/<YYYY-MM-DD>.jsonl` in product-scoped
 mode, `<data_dir>/metrics/<YYYY-MM-DD>.jsonl` in single-shared-key mode.
@@ -195,7 +217,5 @@ inside `_Handler._store`, the endpoint contract doesn't move.
 
 ## Not done here
 
-- Real multi-tenant key/product management (the `--products-file` roster above
-  is a flat-file stopgap, not a database)
 - Object-store backing (still local disk)
 - Any read path — that's `services/api`

@@ -9,7 +9,7 @@ import yaml
 from odyssey.jsonl import write_events
 from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
 
-from odyssey_api.domain import eval_runs, exports, journeys, registries
+from odyssey_api.domain import eval_runs, exports, journeys, products, registries
 
 JID = "j_domain"
 HEADER = JourneyHeader(journey_id=JID, data_source="livekit")
@@ -105,3 +105,15 @@ def test_list_exports(tmp_path):
     (tmp_path / "sft.jsonl").write_text('{"a": 1}\n')
     out = exports.list_exports(tmp_path)
     assert out[0]["rows"] == 1
+
+
+def test_list_products_unset():
+    assert products.list_products(None) == []
+
+
+def test_list_products_real_file(tmp_path):
+    path = tmp_path / "products.json"
+    path.write_text(
+        json.dumps({"products": [{"slug": "unpod", "name": "Unpod", "api_key": "x"}]})
+    )
+    assert products.list_products(path) == [{"slug": "unpod", "name": "Unpod"}]

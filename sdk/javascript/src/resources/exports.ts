@@ -2,13 +2,17 @@
 // services/api/openapi.json. Do not edit by hand — see codegen.ts.
 
 import type { Transport } from "../client.js";
-import type { ExportArtifactOut } from "../types.generated.js";
+import type { ExportPageOut } from "../types.generated.js";
 
 /** Generated from `/exports`. */
 export class ExportsResource {
   constructor(private readonly transport: Transport) {}
 
-  async list(): Promise<ExportArtifactOut[]> {
-    return this.transport.get<ExportArtifactOut[]>("/exports");
+  async list(options: { cursor?: string; limit?: number } = {}): Promise<ExportPageOut> {
+    const params = new URLSearchParams();
+    if (options.cursor != null) params.set("cursor", String(options.cursor));
+    if (options.limit != null) params.set("limit", String(options.limit));
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return this.transport.get<ExportPageOut>(`/exports${query}`);
   }
 }

@@ -1,0 +1,28 @@
+<svg width="280" height="64" viewBox="0 0 280 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Odyssey">
+  <defs>
+    <linearGradient id="odyssey-lockup-grad-l" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#14e8c4"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(0, 8)">
+    <circle
+      cx="24" cy="24" r="16"
+      fill="none"
+      stroke="url(#odyssey-lockup-grad-l)"
+      stroke-width="5"
+      stroke-linecap="round"
+      stroke-dasharray="23.51 10"
+      transform="rotate(-90 24 24)"
+    />
+    <circle cx="24" cy="8" r="4" fill="url(#odyssey-lockup-grad-l)"/>
+  </g>
+  <text
+    x="62" y="41"
+    font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif"
+    font-size="30"
+    font-weight="700"
+    letter-spacing="-0.5"
+    fill="#111827"
+  >Odyssey</text>
+</svg>

@@ -1,4 +1,4 @@
-# <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/unpod-ai/odyssey/main/docs/assets/banner_dark.png"><img alt="odyssey" src="https://img.shields.io/badge/odyssey-%E2%9C%A8-blueviolet?style=for-the-badge&logo=rocket"></picture>
+# <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/logo-lockup-dark.svg"><img alt="Odyssey" src="docs/assets/brand/logo-lockup-light.svg" width="280"></picture>
 
 <p align="center">
   <strong>The Enterprise-Grade Data Engine for LLM Agents</strong><br>

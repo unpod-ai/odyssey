@@ -34,10 +34,13 @@ interface OpenAPIDoc {
   components: { schemas: Record<string, JsonSchema> };
 }
 
+type QueryParam = { name: string; type: "string" | "number" };
+
 type Operation = {
-  methodName: "list" | "get";
+  methodName: string;
   path: string;
   params: string[];
+  queryParams: QueryParam[];
   model: string;
   isList: boolean;
 };
@@ -48,6 +51,26 @@ const BANNER =
 
 export function loadOpenapi(): OpenAPIDoc {
   return JSON.parse(readFileSync(OPENAPI_PATH, "utf-8"));
+}
+
+const JSON_TO_TS_SCALAR: Record<string, "string" | "number"> = {
+  string: "string",
+  integer: "number",
+};
+
+function optionalQueryTsType(schema: JsonSchema): "string" | "number" | null {
+  if (schema.type && schema.type in JSON_TO_TS_SCALAR) {
+    return JSON_TO_TS_SCALAR[schema.type];
+  }
+  if (schema.anyOf) {
+    const types = new Set(schema.anyOf.map((s) => s.type));
+    for (const [jsonType, tsType] of Object.entries(JSON_TO_TS_SCALAR)) {
+      if (types.size === 2 && types.has(jsonType) && types.has("null")) {
+        return tsType;
+      }
+    }
+  }
+  return null;
 }
 
 function modelRef(schema: JsonSchema): { model: string; isList: boolean } {
@@ -65,6 +88,7 @@ function modelRef(schema: JsonSchema): { model: string; isList: boolean } {
 
 export function operationsByResource(openapi: OpenAPIDoc): Record<string, Operation[]> {
   const byResource: Record<string, Operation[]> = {};
+  const methodNamesByResource: Record<string, Record<string, string>> = {};
   for (const path of Object.keys(openapi.paths).sort()) {
     const methods = openapi.paths[path];
     const segments = path.split("/").filter(Boolean);
@@ -84,13 +108,46 @@ export function operationsByResource(openapi: OpenAPIDoc): Record<string, Operat
     if (params.length > 1) {
       throw new UnsupportedOperationError(`${path}: more than one path parameter`);
     }
+    const queryParams: QueryParam[] = [];
+    for (const p of op.parameters ?? []) {
+      if (p.in !== "query") continue;
+      const type = optionalQueryTsType(p.schema ?? {});
+      if (!type) {
+        throw new UnsupportedOperationError(
+          `${path}: query parameter ${p.name} must be an optional string or integer`,
+        );
+      }
+      queryParams.push({ name: p.name, type });
+    }
     const schema = op.responses["200"].content["application/json"].schema;
     const { model, isList } = modelRef(schema);
     const resource = segments[0];
+    let methodName: string;
+    if (params.length) {
+      methodName = "get";
+    } else if (segments.length > 1) {
+      // e.g. `/journeys/counts` -> `counts()`, distinct from the
+      // resource-root `/journeys` -> `list()` on the same class.
+      methodName = segments[segments.length - 1];
+    } else {
+      methodName = "list";
+    }
+
+    const usedNames = (methodNamesByResource[resource] ??= {});
+    if (methodName in usedNames) {
+      throw new UnsupportedOperationError(
+        `${path}: derived method name "${methodName}" collides with "${usedNames[methodName]}" ` +
+          `on resource "${resource}" — rename one of the routes' last path segment so ` +
+          `generated methods don't clobber each other`,
+      );
+    }
+    usedNames[methodName] = path;
+
     (byResource[resource] ??= []).push({
-      methodName: params.length ? "get" : "list",
+      methodName,
       path,
       params,
+      queryParams,
       model,
       isList,
     });
@@ -117,14 +174,27 @@ export function renderResource(resource: string, ops: Operation[]): string {
     `  constructor(private readonly transport: Transport) {}`,
     "",
   ];
-  for (const { methodName, path, params, model, isList } of ops) {
-    const sig = params.map((p) => `${p}: string`).join(", ");
+  for (const { methodName, path, params, queryParams, model, isList } of ops) {
+    const sigParts = params.map((p) => `${p}: string`);
+    if (queryParams.length) {
+      const optionsType = queryParams.map((q) => `${q.name}?: ${q.type}`).join("; ");
+      sigParts.push(`options: { ${optionsType} } = {}`);
+    }
+    const sig = sigParts.join(", ");
     const returnType = isList ? `${model}[]` : model;
-    const pathExpr = params.length
-      ? "`" + path.replace(/{([^}]+)}/g, (_, p) => `\${${p}}`) + "`"
-      : `"${path}"`;
+    const pathTemplate = path.replace(/{([^}]+)}/g, (_, p) => `\${${p}}`);
+    const pathExpr = params.length ? "`" + pathTemplate + "`" : `"${path}"`;
     lines.push(`  async ${methodName}(${sig}): Promise<${returnType}> {`);
-    lines.push(`    return this.transport.get<${returnType}>(${pathExpr});`);
+    if (queryParams.length) {
+      lines.push(`    const params = new URLSearchParams();`);
+      for (const q of queryParams) {
+        lines.push(`    if (options.${q.name} != null) params.set("${q.name}", String(options.${q.name}));`);
+      }
+      lines.push(`    const query = params.toString() ? \`?\${params.toString()}\` : "";`);
+      lines.push(`    return this.transport.get<${returnType}>(\`${pathTemplate}\${query}\`);`);
+    } else {
+      lines.push(`    return this.transport.get<${returnType}>(${pathExpr});`);
+    }
     lines.push(`  }`);
     lines.push("");
   }

@@ -16,6 +16,7 @@ from odyssey_api.routers import (
     journeys,
     metrics,
     models,
+    products,
     runs,
 )
 
@@ -31,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(journeys.router, dependencies=[Depends(require_api_key)])
     app.include_router(datasets.router, dependencies=[Depends(require_api_key)])
     app.include_router(models.router, dependencies=[Depends(require_api_key)])
+    app.include_router(products.router, dependencies=[Depends(require_api_key)])
     app.include_router(runs.router, dependencies=[Depends(require_api_key)])
     app.include_router(exports.router, dependencies=[Depends(require_api_key)])
     app.include_router(metrics.router, dependencies=[Depends(require_api_key)])

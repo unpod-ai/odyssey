@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import yaml
 from odyssey.jsonl import write_events
 from odyssey.primitives import JourneyEvent, JourneyHeader, Message, Terminal
@@ -205,3 +207,80 @@ def test_list_exports(tmp_path):
     assert exports[0]["name"] == "sft.jsonl"
     assert exports[0]["rows"] == 2
     assert len(exports[0]["sha256"]) == 64
+
+
+def test_list_journeys_product_filter(tmp_path):
+    for slug, jid in (("unpod", "j_a"), ("otherpod", "j_b")):
+        date_dir = tmp_path / slug / "2026-08-28"
+        date_dir.mkdir(parents=True)
+        header = JourneyHeader(journey_id=jid, data_source="livekit")
+        write_events(
+            date_dir / f"{jid}.jsonl",
+            [
+                JourneyEvent(
+                    journey_id=jid,
+                    seq=0,
+                    kind="message",
+                    event_id="e0",
+                    message=Message(role="user", content="hi"),
+                ),
+                JourneyEvent(
+                    journey_id=jid,
+                    seq=1,
+                    kind="terminal",
+                    event_id="e1",
+                    terminal=Terminal(termination_reason="ENV_DONE"),
+                ),
+            ],
+            header=header,
+        )
+
+    assert filesystem.list_journeys(tmp_path, product_slug="unpod") == [
+        ("j_a", "2026-08-28")
+    ]
+    assert filesystem.list_journeys(tmp_path, product_slug="nope") == []
+
+
+def test_list_metrics_product_filter(tmp_path):
+    (tmp_path / "unpod" / "metrics").mkdir(parents=True)
+    (tmp_path / "unpod" / "metrics" / "2026-08-28.jsonl").write_text(
+        '{"ts": "2026-08-28T00:00:00Z", "host": "unpod"}\n', encoding="utf-8"
+    )
+    (tmp_path / "otherpod" / "metrics").mkdir(parents=True)
+    (tmp_path / "otherpod" / "metrics" / "2026-08-28.jsonl").write_text(
+        '{"ts": "2026-08-28T00:00:00Z", "host": "otherpod"}\n', encoding="utf-8"
+    )
+
+    out = filesystem.list_metrics(tmp_path, product_slug="unpod")
+    assert [m["host"] for m in out] == ["unpod"]
+
+
+def test_read_products_missing_path():
+    assert filesystem.read_products(None) == []
+
+
+def test_read_products_missing_file(tmp_path):
+    assert filesystem.read_products(tmp_path / "nope.json") == []
+
+
+def test_read_products_real_file_drops_api_key(tmp_path):
+    path = tmp_path / "products.json"
+    path.write_text(
+        json.dumps(
+            {
+                "products": [
+                    {"slug": "unpod", "name": "Unpod", "api_key": "secret-key"},
+                ]
+            }
+        )
+    )
+    out = filesystem.read_products(path)
+    assert out == [{"slug": "unpod", "name": "Unpod"}]
+    assert "api_key" not in out[0]
+    assert "secret-key" not in json.dumps(out)
+
+
+def test_read_products_malformed_file(tmp_path):
+    path = tmp_path / "products.json"
+    path.write_text("not json")
+    assert filesystem.read_products(path) == []

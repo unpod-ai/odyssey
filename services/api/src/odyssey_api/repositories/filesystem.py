@@ -12,21 +12,23 @@ import hashlib
 import json
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml  # pyrefly: ignore[missing-import]
 
 __all__ = [
+    "is_date_dir",
     "list_journeys",
     "find_journey_path",
     "read_registry",
     "list_eval_reports",
     "list_exports",
     "list_metrics",
+    "read_products",
 ]
 
 
-def _is_date_dir(path: Path) -> bool:
+def is_date_dir(path: Path) -> bool:
     """True for a directory whose name parses as an ISO date — the same
     partition-name discipline ``odyssey_collector.prune.prune_dir`` uses,
     which is what keeps a non-date directory (e.g. the collector's own
@@ -41,7 +43,22 @@ def _is_date_dir(path: Path) -> bool:
     return True
 
 
-def list_journeys(journeys_dir: Path) -> List[Tuple[str, str]]:
+def _list_journeys_flat(dir_path: Path) -> List[Tuple[str, str]]:
+    """``[(journey_id, date), ...]`` from date-partition subdirectories
+    directly under ``dir_path`` — the flat-layout walk, reused both for a
+    bare ``journeys_dir`` and for one product-slug subdirectory of it."""
+    if not dir_path.is_dir():
+        return []
+    out: List[Tuple[str, str]] = []
+    for date_dir in sorted(p for p in dir_path.iterdir() if is_date_dir(p)):
+        for shard in sorted(date_dir.glob("*.jsonl")):
+            out.append((shard.stem, date_dir.name))
+    return out
+
+
+def list_journeys(
+    journeys_dir: Path, product_slug: Optional[str] = None
+) -> List[Tuple[str, str]]:
     """``[(journey_id, date), ...]`` from ``<journeys_dir>/<date>/<journey_id>.jsonl``
     (flat collector layout) or ``<journeys_dir>/<product_slug>/<date>/<journey_id>.jsonl``
     (product-scoped layout, ``--products-file``) — both are walked, since a
@@ -58,20 +75,24 @@ def list_journeys(journeys_dir: Path) -> List[Tuple[str, str]]:
     they always could on disk (there is no per-product namespacing here);
     that's the same "isolation is structural, not by id" tradeoff
     ``services/collector`` itself makes.
+
+    ``product_slug``, when given, narrows the walk to just
+    ``<journeys_dir>/<product_slug>`` (a product-scoped deployment's own
+    partition) instead of pooling every product together.
     """
+    if product_slug is not None:
+        return _list_journeys_flat(journeys_dir / product_slug)
     if not journeys_dir.is_dir():
         return []
     out: List[Tuple[str, str]] = []
     for entry in sorted(p for p in journeys_dir.iterdir() if p.is_dir()):
-        if _is_date_dir(entry):
+        if is_date_dir(entry):
             for shard in sorted(entry.glob("*.jsonl")):
                 out.append((shard.stem, entry.name))
             continue
         if entry.name == "metrics":
             continue
-        for date_dir in sorted(p for p in entry.iterdir() if _is_date_dir(p)):
-            for shard in sorted(date_dir.glob("*.jsonl")):
-                out.append((shard.stem, date_dir.name))
+        out.extend(_list_journeys_flat(entry))
     return out
 
 
@@ -90,7 +111,7 @@ def find_journey_path(journeys_dir: Path, journey_id: str) -> Path | None:
     for entry in journeys_dir.iterdir():
         if not entry.is_dir():
             continue
-        if _is_date_dir(entry):
+        if is_date_dir(entry):
             candidate = entry / f"{journey_id}.jsonl"
             if candidate.is_file():
                 return candidate
@@ -98,7 +119,7 @@ def find_journey_path(journeys_dir: Path, journey_id: str) -> Path | None:
         if entry.name == "metrics":
             continue
         for date_dir in entry.iterdir():
-            if not _is_date_dir(date_dir):
+            if not is_date_dir(date_dir):
                 continue
             candidate = date_dir / f"{journey_id}.jsonl"
             if candidate.is_file():
@@ -157,23 +178,28 @@ def list_exports(exports_dir: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def list_metrics(journeys_dir: Path) -> List[Dict[str, Any]]:
+def list_metrics(
+    journeys_dir: Path, product_slug: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """Host telemetry snapshots from ``<journeys_dir>/metrics/*.jsonl``
     (flat collector layout) and ``<journeys_dir>/<product_slug>/metrics/*.jsonl``
     (product-scoped layout, ``--products-file``) — mirrors
     `services/collector`'s own per-mode storage path exactly, same as
     `list_journeys`/`find_journey_path` now do for journey shards. Snapshots
-    from every product are pooled into one list — there's no per-product
-    filter here, same as `/journeys`. Malformed lines are skipped rather
-    than raising, same defensiveness as `list_journeys_with_status`'s
-    per-shard fold failure handling. Sorted by ``ts`` descending (newest
-    first)."""
+    from every product are pooled into one list unless ``product_slug`` is
+    given, in which case only that product's ``metrics/`` directory is read.
+    Malformed lines are skipped rather than raising, same defensiveness as
+    `list_journeys_with_status`'s per-shard fold failure handling. Sorted by
+    ``ts`` descending (newest first)."""
     if not journeys_dir.is_dir():
         return []
-    metrics_dirs = [journeys_dir / "metrics"]
-    for entry in journeys_dir.iterdir():
-        if entry.is_dir() and not _is_date_dir(entry) and entry.name != "metrics":
-            metrics_dirs.append(entry / "metrics")
+    if product_slug is not None:
+        metrics_dirs = [journeys_dir / product_slug / "metrics"]
+    else:
+        metrics_dirs = [journeys_dir / "metrics"]
+        for entry in journeys_dir.iterdir():
+            if entry.is_dir() and not is_date_dir(entry) and entry.name != "metrics":
+                metrics_dirs.append(entry / "metrics")
     out: List[Dict[str, Any]] = []
     for metrics_dir in metrics_dirs:
         if not metrics_dir.is_dir():
@@ -189,4 +215,37 @@ def list_metrics(journeys_dir: Path) -> List[Dict[str, Any]]:
                     except json.JSONDecodeError:
                         continue
     out.sort(key=lambda snapshot: snapshot.get("ts", ""), reverse=True)
+    return out
+
+
+def read_products(path: Optional[Path]) -> List[Dict[str, Any]]:
+    """``[{"slug": ..., "name": ...}, ...]`` from a `services/collector`
+    ``--products-file`` roster (see ``odyssey_collector.server.
+    _load_products_file`` for the on-disk shape). ``api_key`` is dropped
+    here, at the read boundary, rather than trusted to every caller to
+    filter out downstream -- this is a read-only listing endpoint's data
+    source and must never be able to leak the tenant secret.
+
+    Empty list if ``path`` is unset, missing, or malformed -- this is a
+    read-only consumer of a file another member owns, not the collector's
+    own fail-fast startup check, so a bad roster degrades to "no products"
+    rather than 500ing every request.
+    """
+    if path is None or not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    entries = raw.get("products") if isinstance(raw, dict) else None
+    if not isinstance(entries, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for entry in entries:
+        if (
+            isinstance(entry, dict)
+            and isinstance(entry.get("slug"), str)
+            and isinstance(entry.get("name"), str)
+        ):
+            out.append({"slug": entry["slug"], "name": entry["name"]})
     return out

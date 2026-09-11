@@ -5,6 +5,7 @@ import { ExportsResource } from "./resources/exports.js";
 import { JourneysResource } from "./resources/journeys.js";
 import { MetricsResource } from "./resources/metrics.js";
 import { ModelsResource } from "./resources/models.js";
+import { ProductsResource } from "./resources/products.js";
 import { RunsResource } from "./resources/runs.js";
 
 export class Transport {
@@ -34,6 +35,7 @@ export class OdysseySDK {
   readonly runs: RunsResource;
   readonly exports: ExportsResource;
   readonly metrics: MetricsResource;
+  readonly products: ProductsResource;
   private readonly transport: Transport;
 
   constructor(baseUrl: string, apiKey?: string) {
@@ -49,6 +51,7 @@ export class OdysseySDK {
     this.runs = new RunsResource(this.transport);
     this.exports = new ExportsResource(this.transport);
     this.metrics = new MetricsResource(this.transport);
+    this.products = new ProductsResource(this.transport);
   }
 
   async health(): Promise<HealthOut> {

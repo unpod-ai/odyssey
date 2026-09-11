@@ -17,6 +17,7 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn>=0.30",
   "odyssey-schemas",
+  "odyssey-store",
   "odyssey",
   "odyssey-dataprep",
   "odyssey-training",
@@ -45,6 +46,7 @@ api = "odyssey_api.cli:register"
 [tool.uv.sources]
 odyssey = { workspace = true }
 odyssey-schemas = { workspace = true }
+odyssey-store = { workspace = true }
 odyssey-dataprep = { workspace = true }
 odyssey-training = { workspace = true }
 odyssey-eval = { workspace = true }

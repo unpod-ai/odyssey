@@ -44,8 +44,9 @@ Environment=ODYSSEY_COLLECTOR_HOST=127.0.0.1
 Environment=ODYSSEY_COLLECTOR_PORT=8787
 Environment=ODYSSEY_COLLECTOR_DATA_DIR=/var/lib/odyssey/collector-data
 # one of these two, never both — see services/collector/README.md
-Environment=ODYSSEY_COLLECTOR_API_KEY=change-me
-# Environment=ODYSSEY_COLLECTOR_PRODUCTS_FILE=/etc/odyssey/collector-products.json
+# Environment=ODYSSEY_COLLECTOR_API_KEY=change-me
+Environment=ODYSSEY_DB_URI=sqlite:////var/lib/odyssey/odyssey.db
+Environment=ODYSSEY_COLLECTOR_AUTH_CACHE_TTL_SECONDS=60
 ExecStart=/opt/odyssey/.venv/bin/odyssey-collector
 Restart=on-failure
 RestartSec=2
@@ -87,53 +88,100 @@ via the `odyssey_collector.requests` logger, visible through
 and `daemon-reload && restart` to turn it on; remove it and restart again
 to go back to quiet.
 
-### Switching to product-scoped mode (`--products-file`)
+### Auth: `--api-key` vs `--db-uri` (product-scoped), never both
 
-**Create the roster file before flipping the `Environment=` line** — do
-not skip this step. `_load_products_file` (`services/collector/server.py`)
-deliberately refuses to start with a missing, empty, or malformed products
-file, on purpose: a silently-created empty or placeholder roster would be
-functionally identical to "every future POST gets a 401 with no
-explanation" — the exact failure mode fail-fast startup exists to
-prevent.
+`services/collector` supports three independent auth modes: no auth
+(neither set, for local dev), `ODYSSEY_COLLECTOR_API_KEY`/`--api-key`
+(one shared bearer token, unscoped — unaffected by anything below), and
+`ODYSSEY_DB_URI`/`--db-uri` (multi-tenant, product-scoped, via a shared
+SQLite database). Setting both `ODYSSEY_COLLECTOR_API_KEY` and
+`ODYSSEY_DB_URI` raises at startup — pick one. Neither is required for
+the server to start; `ODYSSEY_DB_URI`/`--db-uri` is required specifically
+to run the product-management CLI flags below.
 
-`odyssey-collector --init-products-file` bootstraps a real one: one
-product, a fresh cryptographically random `api_key` (a genuine secret,
-not a placeholder you're expected to remember to replace), refuses to
-overwrite a file that already exists.
+`ODYSSEY_DB_URI`/`--db-uri` must be a `sqlite:///` URI, not a bare
+filesystem path — three slashes for a relative path
+(`sqlite:///./odyssey.sqlite3`) or four slashes for an absolute path
+(`sqlite:////var/lib/odyssey/odyssey.db`); a bare path raises `ValueError`
+and the collector will crash-loop under systemd.
+
+### Product/tenant management
+
+Product roster and authentication (when using `--db-uri` mode) are managed through the SQLite database pointed to by `ODYSSEY_DB_URI`. The database is initialized automatically on first use if it doesn't exist. Use the CLI commands to create, list, revoke, and rotate products:
+
+**Important:** `ODYSSEY_DB_URI` must point to the same SQLite file in both `services/collector` **and** `services/api`. Both services read from this shared database for product scoping and authentication caching. Mismatches will cause authentication failures.
+
+Create a new product with a fresh random API key:
 
 ```bash
-sudo install -d -m 0750 -o odyssey -g odyssey /etc/odyssey
 sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
-  --init-products-file /etc/odyssey/collector-products.json \
+  --db-uri sqlite:////var/lib/odyssey/odyssey.db --create-product \
   --product-slug acme --product-name "Acme Corp"
 ```
 
-This prints the generated `api_key` once — save it now, it's also in the
-file in plaintext but won't be echoed back to you again. Then, in the
-unit file: comment out `ODYSSEY_COLLECTOR_API_KEY`, uncomment
-`ODYSSEY_COLLECTOR_PRODUCTS_FILE=/etc/odyssey/collector-products.json`, and:
+This prints the generated `api_key` once — save it now, as it cannot be retrieved later (only hashes are stored in the database).
+
+List all products:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl restart odyssey-collector
-journalctl -u odyssey-collector -n 20   # confirm it started clean, not a FileNotFoundError
+sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
+  --db-uri sqlite:////var/lib/odyssey/odyssey.db --list-products
 ```
 
-**`--init-products-file`/`--product-slug`/`--product-name` have no
-`ODYSSEY_COLLECTOR_*` env var equivalent, deliberately.** They're a
-one-shot bootstrap action, not persistent server config — giving them an
-env var would mean a stray `Environment=` line in the unit file makes
-every `Restart=on-failure` restart re-run the bootstrap instead of
-serving (and since the file already exists after the first run, it would
-just exit 1 and restart-loop forever). Run it once, by hand, separately
-from `serve`.
+Add a new product to an already-running deployment:
 
-Every other collector CLI flag (`--host`/`--port`/`--data-dir`/
-`--api-key`/`--products-file`/`--timezone`) has an `ODYSSEY_COLLECTOR_*`
-env equivalent — see `services/collector/README.md`'s config table. Set
-them as `Environment=` lines (or `EnvironmentFile=/etc/odyssey/collector.env`
-for a real deployment, kept out of git).
+```bash
+sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
+  --db-uri sqlite:////var/lib/odyssey/odyssey.db --create-product \
+  --product-slug globex --product-name "Globex Inc"
+```
+
+The collector reads products and authentication state at request time (cached per `--auth-cache-ttl-seconds`), so new products are live immediately — no restart needed.
+
+Revoke a product's access (prevent it from authenticating):
+
+```bash
+sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
+  --db-uri sqlite:////var/lib/odyssey/odyssey.db --revoke-product acme
+```
+
+Rotate a product's API key (invalidate the old key, generate a new one):
+
+```bash
+sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
+  --db-uri sqlite:////var/lib/odyssey/odyssey.db --rotate-product acme
+```
+
+**Upgrading an existing deployment that used `--products-file`/`products.json`:**
+that flag and `ODYSSEY_COLLECTOR_PRODUCTS_FILE` no longer exist — there
+is no dual-mode fallback. Order matters:
+
+1. Stop the collector (existing `products.json` tenants keep failing to
+   authenticate at this point, briefly — that's expected).
+2. Run the one-time migration into the new shared database, hashing
+   every existing product's `api_key` as-is (no key rotation, no
+   disruption to already-integrated callers once the collector comes
+   back up):
+   ```bash
+   sudo -u odyssey /opt/odyssey/.venv/bin/odyssey-collector \
+     --db-uri sqlite:////var/lib/odyssey/odyssey.db --migrate-products-from-json /path/to/old/products.json
+   ```
+3. Update the unit file: replace `--products-file`/`ODYSSEY_COLLECTOR_PRODUCTS_FILE`
+   with `--db-uri`/`ODYSSEY_DB_URI` (same value used in step 2).
+4. Set the identical `ODYSSEY_DB_URI` on the `odyssey-api` unit too (see
+   below) — both services must point at the same file.
+5. Restart both services.
+
+The database is initialized automatically on first use if it doesn't
+exist — no separate `--init-products-file`-style bootstrap step. It
+also now holds the only copy of every product's key hash: **back it up**
+(`sqlite3 /var/lib/odyssey/odyssey.db ".backup /path/to/backup.db"`) as
+part of your regular backup rotation. A corrupt or unreadable file makes
+both services refuse to start rather than ever auto-deleting it — restore
+from backup, don't try to recreate it from scratch (that reissues every
+product's key).
+
+All other collector CLI flags (`--host`/`--port`/`--data-dir`/`--timezone`) have `ODYSSEY_COLLECTOR_*` env equivalents — see `services/collector/README.md`'s config table. Set them as `Environment=` lines (or `EnvironmentFile=/etc/odyssey/collector.env` for a real deployment, kept out of git).
 
 ## `services/api` — FastAPI/ASGI, two supported ways to run it
 
@@ -169,6 +217,7 @@ Environment=ODYSSEY_API_MODELS_REGISTRY=/opt/odyssey/training/models/registry.ya
 Environment=ODYSSEY_API_EVAL_REGISTRY=/opt/odyssey/evaluation/datasets/registry.yaml
 Environment=ODYSSEY_API_EVAL_REPORTS_DIR=/opt/odyssey/evaluation/reports
 Environment=ODYSSEY_API_EXPORTS_DIR=/var/lib/odyssey/exports
+Environment=ODYSSEY_DB_URI=sqlite:////var/lib/odyssey/odyssey.db
 # Environment=ODYSSEY_API_AUTH_KEY=change-me
 ExecStart=/opt/odyssey/.venv/bin/uvicorn odyssey_api.main:app \
   --app-dir /opt/odyssey/services/api/src \
@@ -190,6 +239,17 @@ bearer token on every route except `/health`. **If you set it here,
 you must set the identical value on the `odyssey-web` unit below** —
 `services/api` and `apps/web` have to agree on the key or the
 dashboard will silently 401 every page.
+
+**`ODYSSEY_DB_URI` here must be the exact same value as the
+`odyssey-collector` unit's** — both services read/write one shared
+SQLite file (`services/api`'s read-only index; `services/collector`'s
+`products` table, when running in `--db-uri`/product-scoped mode). A
+mismatch means `services/api` builds its own separate, empty index
+against a file `services/collector` never writes to. With `--workers
+4` above, each uvicorn worker process runs its own independent
+background indexer thread against that same file — harmless (SQLite's
+WAL mode serializes the writes) but redundant; not worth tuning down
+unless indexing shows up as measurable overhead.
 
 ### Option B — gunicorn, `uvicorn.workers.UvicornWorker`
 

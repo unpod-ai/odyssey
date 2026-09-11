@@ -90,6 +90,7 @@ write_events(
       env: {
         ...process.env,
         ODYSSEY_API_JOURNEYS_DIR: journeysDir,
+        ODYSSEY_DB_URI: `sqlite:///${join(tmp, "index.sqlite3")}`,
         ODYSSEY_API_DATASETS_REGISTRY: join(tmp, "no-such-datasets.yaml"),
         ODYSSEY_API_MODELS_REGISTRY: join(tmp, "no-such-models.yaml"),
         ODYSSEY_API_EVAL_REGISTRY: join(tmp, "no-such-eval.yaml"),
@@ -115,7 +116,7 @@ describe("OdysseySDK against a real services/api instance", () => {
   test("journeys list and get", async () => {
     const client = new OdysseySDK(baseUrl);
     const listed = await client.journeys.list();
-    expect(listed.map((j) => j.journey_id)).toEqual([JID]);
+    expect(listed.items.map((j) => j.journey_id)).toEqual([JID]);
 
     const detail = await client.journeys.get(JID);
     expect(detail.complete).toBe(true);
@@ -133,9 +134,9 @@ describe("OdysseySDK against a real services/api instance", () => {
     const client = new OdysseySDK(baseUrl);
     expect(await client.datasets.list()).toEqual([]);
     expect(await client.models.list()).toEqual([]);
-    expect(await client.runs.list()).toEqual([]);
-    expect(await client.exports.list()).toEqual([]);
-    expect(await client.metrics.list()).toEqual([]);
+    expect((await client.runs.list()).items).toEqual([]);
+    expect((await client.exports.list()).items).toEqual([]);
+    expect((await client.metrics.list()).items).toEqual([]);
   });
 });
 
@@ -155,6 +156,7 @@ describe("OdysseySDK against a real services/api instance with --api-key set", (
         env: {
           ...process.env,
           ODYSSEY_API_JOURNEYS_DIR: join(tmp, "journeys"),
+          ODYSSEY_DB_URI: `sqlite:///${join(tmp, "index.sqlite3")}`,
           ODYSSEY_API_DATASETS_REGISTRY: join(tmp, "no-such-datasets.yaml"),
           ODYSSEY_API_MODELS_REGISTRY: join(tmp, "no-such-models.yaml"),
           ODYSSEY_API_EVAL_REGISTRY: join(tmp, "no-such-eval.yaml"),
@@ -188,6 +190,6 @@ describe("OdysseySDK against a real services/api instance with --api-key set", (
 
   test("correct api key succeeds", async () => {
     const client = new OdysseySDK(authBaseUrl, "sk-test");
-    expect(await client.journeys.list()).toEqual([]);
+    expect((await client.journeys.list()).items).toEqual([]);
   });
 });

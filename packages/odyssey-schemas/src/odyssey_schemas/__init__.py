@@ -21,13 +21,22 @@ __all__ = [
     "JourneyMetricsOut",
     "JourneySummaryOut",
     "JourneyDetailOut",
+    "JourneyPageOut",
     "DatasetVersionOut",
     "DatasetOut",
     "ModelVersionOut",
     "ModelOut",
     "EvalRunOut",
+    "EvalRunPageOut",
     "ExportArtifactOut",
+    "ExportPageOut",
     "MetricsSnapshotOut",
+    "MetricsPageOut",
+    "ProductOut",
+    "ProductCountOut",
+    "ProjectCountOut",
+    "DateCountOut",
+    "CountsOut",
 ]
 
 
@@ -63,6 +72,13 @@ class JourneyDetailOut(BaseModel):
     steps: List[StepOut]
 
 
+class JourneyPageOut(BaseModel):
+    items: List[JourneySummaryOut]
+    next_cursor: Optional[str] = None
+    has_more: bool
+    total: int
+
+
 class DatasetVersionOut(BaseModel):
     version: int
     manifest_sha256: str
@@ -94,11 +110,25 @@ class EvalRunOut(BaseModel):
     report_path: str
 
 
+class EvalRunPageOut(BaseModel):
+    items: List[EvalRunOut]
+    next_cursor: Optional[str] = None
+    has_more: bool
+    total: int
+
+
 class ExportArtifactOut(BaseModel):
     name: str
     path: str
     rows: int
     sha256: str
+
+
+class ExportPageOut(BaseModel):
+    items: List[ExportArtifactOut]
+    next_cursor: Optional[str] = None
+    has_more: bool
+    total: int
 
 
 class MetricsSnapshotOut(BaseModel):
@@ -112,3 +142,37 @@ class MetricsSnapshotOut(BaseModel):
     disk_free_bytes: Optional[int] = None
     project: Optional[str] = None
     public_ip: Optional[str] = None
+
+
+class MetricsPageOut(BaseModel):
+    items: List[MetricsSnapshotOut]
+    next_cursor: Optional[str] = None
+    has_more: bool
+    total: int
+
+
+class ProductOut(BaseModel):
+    slug: str
+    name: str
+
+
+class ProductCountOut(BaseModel):
+    product_slug: Optional[str] = None
+    count: int
+
+
+class ProjectCountOut(BaseModel):
+    product_slug: Optional[str] = None
+    project: Optional[str] = None
+    count: int
+
+
+class DateCountOut(BaseModel):
+    date: str
+    count: int
+
+
+class CountsOut(BaseModel):
+    by_product: List[ProductCountOut]
+    by_project: List[ProjectCountOut]
+    by_date: List[DateCountOut] = []

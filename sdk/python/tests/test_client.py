@@ -85,7 +85,7 @@ def test_health(live_server):
 def test_journeys_list_and_get(live_server):
     client = OdysseySDK(live_server)
     listed = client.journeys.list()
-    assert [j.journey_id for j in listed] == [JID]
+    assert [j.journey_id for j in listed.items] == [JID]
 
     detail = client.journeys.get(JID)
     assert detail.complete is True
@@ -102,9 +102,9 @@ def test_empty_registries_return_empty_lists(live_server):
     client = OdysseySDK(live_server)
     assert client.datasets.list() == []
     assert client.models.list() == []
-    assert client.runs.list() == []
-    assert client.exports.list() == []
-    assert client.metrics.list() == []
+    assert client.runs.list().items == []
+    assert client.exports.list().items == []
+    assert client.metrics.list().items == []
 
 
 @pytest.fixture
@@ -174,4 +174,4 @@ def test_wrong_api_key_raises_401(live_server_with_api_key):
 def test_correct_api_key_succeeds(live_server_with_api_key):
     client = OdysseySDK(live_server_with_api_key, api_key="sk-test")
     listed = client.journeys.list()
-    assert [j.journey_id for j in listed] == [JID]
+    assert [j.journey_id for j in listed.items] == [JID]

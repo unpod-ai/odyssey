@@ -2,13 +2,22 @@
 // services/api/openapi.json. Do not edit by hand — see codegen.ts.
 
 import type { Transport } from "../client.js";
-import type { MetricsSnapshotOut } from "../types.generated.js";
+import type { CountsOut, MetricsPageOut } from "../types.generated.js";
 
-/** Generated from `/metrics`. */
+/** Generated from `/metrics`, `/metrics/counts`. */
 export class MetricsResource {
   constructor(private readonly transport: Transport) {}
 
-  async list(): Promise<MetricsSnapshotOut[]> {
-    return this.transport.get<MetricsSnapshotOut[]>("/metrics");
+  async list(options: { product?: string; cursor?: string; limit?: number } = {}): Promise<MetricsPageOut> {
+    const params = new URLSearchParams();
+    if (options.product != null) params.set("product", String(options.product));
+    if (options.cursor != null) params.set("cursor", String(options.cursor));
+    if (options.limit != null) params.set("limit", String(options.limit));
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return this.transport.get<MetricsPageOut>(`/metrics${query}`);
+  }
+
+  async counts(): Promise<CountsOut> {
+    return this.transport.get<CountsOut>("/metrics/counts");
   }
 }
