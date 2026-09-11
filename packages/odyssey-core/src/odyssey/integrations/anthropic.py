@@ -27,8 +27,19 @@ from typing import Any, Callable, Dict, Optional
 
 from odyssey.capture import journey
 from odyssey.client import require_client
-from odyssey.integrations._base import capture_request, capture_response
-from odyssey.integrations._reentry import outermost
+from odyssey.integrations._base import (
+    PROVIDER,
+    MessageAccumulator,
+    capture_request,
+    capture_response,
+    record_stream,
+)
+from odyssey.integrations._call import (
+    Capture,
+    capture_async,
+    capture_sync,
+    provider_from_base_url,
+)
 from odyssey.integrations._timing import Timer
 
 # Set by instrument(); cleared by uninstrument(). Module-level because patching
@@ -46,32 +57,14 @@ def _safe(label: str, fn: Callable[[], None]) -> None:
             client.note_error(label, exc)
 
 
-def _record_call(kwargs: Dict[str, Any], call: Callable[[], Any]) -> Any:
-    """Capture request, run the provider call, capture response. Order matters.
-
-    The request is recorded *before* the call so a provider timeout still leaves
-    the prompt in the corpus — a journey that shows what was asked and then
-    terminates with an error is useful; one that shows nothing is not.
-    """
-    with outermost() as mine:
-        if not mine:
-            # An outer wrapper is already recording this call -- the drop-in
-            # client with the in-place patch underneath it. See `_reentry`.
-            return call()
-        with journey():
-            _safe("anthropic.request", lambda: capture_request(kwargs))
-            timer = Timer()
-            result = call()
-            # Read before the capture step, so the number is the provider's
-            # latency and not odyssey's own parsing of the response.
-            elapsed = timer.latency_ms
-            _safe(
-                "anthropic.response",
-                lambda: capture_response(
-                    result, model=kwargs.get("model"), latency_ms=elapsed
-                ),
-            )
-            return result
+CAPTURE = Capture(
+    label="anthropic",
+    request=capture_request,
+    response=capture_response,
+    streamed=record_stream,
+    accumulator=MessageAccumulator,
+    provider=provider_from_base_url(PROVIDER),
+)
 
 
 class _MessagesProxy:
@@ -81,7 +74,9 @@ class _MessagesProxy:
         self._inner = inner
 
     def create(self, *args: Any, **kwargs: Any) -> Any:
-        return _record_call(kwargs, lambda: self._inner.create(*args, **kwargs))
+        return capture_sync(
+            CAPTURE, self._inner, kwargs, lambda: self._inner.create(*args, **kwargs)
+        )
 
     def stream(self, *args: Any, **kwargs: Any) -> Any:
         """Capture the assembled final message, not individual chunks.
@@ -223,23 +218,9 @@ class _AsyncMessagesProxy:
         self._inner = inner
 
     async def create(self, *args: Any, **kwargs: Any) -> Any:
-        with outermost() as mine:
-            if not mine:
-                return await self._inner.create(*args, **kwargs)
-            with journey():
-                _safe("anthropic.request", lambda: capture_request(kwargs))
-                timer = Timer()
-                result = await self._inner.create(*args, **kwargs)
-                # Read before the capture step, so the number is the provider's
-                # latency and not odyssey's own parsing of the response.
-                elapsed = timer.latency_ms
-                _safe(
-                    "anthropic.response",
-                    lambda: capture_response(
-                        result, model=kwargs.get("model"), latency_ms=elapsed
-                    ),
-                )
-                return result
+        return await capture_async(
+            CAPTURE, self._inner, kwargs, lambda: self._inner.create(*args, **kwargs)
+        )
 
     def stream(self, *args: Any, **kwargs: Any) -> Any:
         """Async counterpart to :meth:`_MessagesProxy.stream` — same deferred
@@ -334,41 +315,82 @@ class _AsyncStreamBody:
 # ---------------------------------------------------------------------------
 
 
-def instrument(target: Optional[Any] = None) -> None:
-    """Patch ``anthropic`` in place so existing clients record.
+def instrument(
+    target: Optional[Any] = None, *, beta_target: Optional[Any] = None
+) -> None:
+    """Patch ``anthropic`` in place so every existing client records.
 
-    Idempotent. ``target`` overrides the module to patch, which is what makes
-    this testable without the real SDK installed.
+    Patches ``Messages.create`` and ``AsyncMessages.create`` on
+    ``anthropic.resources.messages`` and, when importable, on
+    ``anthropic.resources.beta.messages`` — Pipecat's Anthropic service calls the
+    beta one, streamed. Idempotent. ``target``/``beta_target`` override the
+    modules, which is what makes this testable without the real SDK; an explicit
+    ``target`` patches only what it is given.
     """
     if _patched:
         return
+    explicit = target is not None
     if target is None:
         import anthropic.resources.messages as target  # type: ignore[no-redef]
 
-    cls = getattr(target, "Messages", None)
-    if cls is None or not hasattr(cls, "create"):
+    if getattr(target, "Messages", None) is None or not hasattr(
+        target.Messages, "create"
+    ):
         raise AttributeError(
             "anthropic.resources.messages.Messages.create not found; "
             "this anthropic version is not supported by instrument()"
         )
 
-    original = cls.create
+    modules = [target]
+    if beta_target is not None:
+        modules.append(beta_target)
+    elif not explicit:
+        try:
+            import anthropic.resources.beta.messages as beta_module  # type: ignore
+
+            modules.append(beta_module)
+        except ImportError:
+            pass
+
+    patches = []
+    for module in modules:
+        for name in ("Messages", "AsyncMessages"):
+            cls = getattr(module, name, None)
+            if cls is not None and hasattr(cls, "create"):
+                patches.append((cls, cls.create))
+                cls.create = _patched_create(
+                    cls.create, is_async=name.startswith("Async")
+                )
+    _patched["patches"] = patches
+
+
+def _patched_create(original: Any, *, is_async: bool) -> Any:
+    # Sync or async by class, not by inspecting `original`: the SDK wraps its
+    # async methods in a plain function, so they do not look like coroutines.
+    if is_async:
+
+        async def patched_async(self: Any, *args: Any, **kwargs: Any) -> Any:
+            return await capture_async(
+                CAPTURE, self, kwargs, lambda: original(self, *args, **kwargs)
+            )
+
+        patched_async.__wrapped__ = original  # type: ignore[attr-defined]
+        return patched_async
 
     def patched(self: Any, *args: Any, **kwargs: Any) -> Any:
-        return _record_call(kwargs, lambda: original(self, *args, **kwargs))
+        return capture_sync(
+            CAPTURE, self, kwargs, lambda: original(self, *args, **kwargs)
+        )
 
     patched.__wrapped__ = original  # type: ignore[attr-defined]
-    cls.create = patched
-    _patched["cls"] = cls
-    _patched["create"] = original
+    return patched
 
 
 def uninstrument() -> None:
     """Undo :func:`instrument`. Safe to call when nothing was patched."""
-    cls = _patched.pop("cls", None)
-    original = _patched.pop("create", None)
-    if cls is not None and original is not None:
+    for cls, original in _patched.pop("patches", []):
         cls.create = original
+    _patched.clear()
 
 
 def is_instrumented() -> bool:

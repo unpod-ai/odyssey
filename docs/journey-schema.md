@@ -119,6 +119,15 @@ event and a later change rides on exactly the events after it
 handoff on the `system` message it produced (`agent`,
 `instructions_origin: "handoff"`).
 
+### Linked provider-call journeys
+
+A LiveKit or Pipecat `attach()` also opens `<journey_id>.llm` for the raw
+provider calls made during that call — exact requests, tools, parameters,
+latency, usage — recorded by `instrument="auto"`. It is an ordinary journey:
+the call's `journey_metadata` plus `parent_journey_id`, so the two are joined
+by that tag. The call journey keeps what was *said*; the `.llm` journey keeps
+what each model was *asked and answered*. Neither duplicates the other.
+
 ## The read-time projection: `fold()`
 
 `fold()` turns an append-only, possibly out-of-order, possibly duplicated

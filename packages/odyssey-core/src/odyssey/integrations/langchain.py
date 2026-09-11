@@ -58,6 +58,8 @@ from typing import Any, Callable, Dict, Optional, Set
 from odyssey.capture import JourneyHandle, _jsonable
 from odyssey.client import require_client
 from odyssey.context import JourneyContext, SeqAllocator, bind, current
+from odyssey.integrations._linked import linked_journey
+from odyssey.integrations._reentry import enter_framework_call, exit_framework_call
 from odyssey.primitives import Message, Role, TerminationReason, ToolCall, ToolResponse
 
 __all__ = ["OdysseyCallbackHandler"]
@@ -130,6 +132,10 @@ class _Recorder:
         # does the run id become the journey, which is the standalone case
         # this integration was written for and is unchanged.
         ambient = current()
+        if ambient is None or ambient.terminated:
+            # A graph run inside an attached voice call: the call's `.llm`
+            # journey, where the rest of its provider calls go.
+            ambient = linked_journey()
         if ambient is not None:
             self._journeys[root] = ambient
             self._borrowed.add(root)
@@ -356,17 +362,53 @@ def OdysseyCallbackHandler(
     recorder = _Recorder(data_source=data_source, metadata=metadata)
 
     class _Handler(BaseCallbackHandler):
+        # Called in the caller's own context rather than handed to an executor.
+        # That is what lets a model run's start mark the call for the provider
+        # patch underneath it (`_reentry.enter_framework_call`), so `ChatOpenAI`
+        # is recorded once, here, and not again by the `openai` patch. A handler
+        # run in an executor would set the mark in a copy nobody reads.
+        run_inline = True
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._marks: Dict[str, Any] = {}
+
+        def is_running(self, run_id: str) -> bool:
+            return run_id in self._marks
+
+        def _mark(self, kwargs: Dict[str, Any]) -> None:
+            rid = _rid(kwargs.get("run_id"))
+            if rid in self._marks:
+                return
+            try:
+                self._marks[rid] = enter_framework_call(self, rid)
+            except Exception:  # noqa: BLE001 - never break the chain over a mark
+                pass
+
+        def _unmark(self, kwargs: Dict[str, Any]) -> None:
+            token = self._marks.pop(_rid(kwargs.get("run_id")), None)
+            if token is not None:
+                exit_framework_call(token)
+
         def on_llm_start(self, *args: Any, **kwargs: Any) -> None:
+            self._mark(kwargs)
             recorder.on_llm_start(*args, **kwargs)
 
         def on_chat_model_start(self, *args: Any, **kwargs: Any) -> None:
+            self._mark(kwargs)
             recorder.on_chat_model_start(*args, **kwargs)
 
         def on_llm_end(self, *args: Any, **kwargs: Any) -> None:
-            recorder.on_llm_end(*args, **kwargs)
+            try:
+                recorder.on_llm_end(*args, **kwargs)
+            finally:
+                self._unmark(kwargs)
 
         def on_llm_error(self, *args: Any, **kwargs: Any) -> None:
-            recorder.on_llm_error(*args, **kwargs)
+            try:
+                recorder.on_llm_error(*args, **kwargs)
+            finally:
+                self._unmark(kwargs)
 
         def on_tool_start(self, *args: Any, **kwargs: Any) -> None:
             recorder.on_tool_start(*args, **kwargs)

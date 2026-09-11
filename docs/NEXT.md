@@ -33,6 +33,11 @@ with `main`'s SQLite index / product-management work below. `odyssey-core`:
   `init(instrument_metadata=...)` tags the journeys `langchain`/`otel` open;
   `framework` set for `langchain`/`otel`. Agent identity was moved back out
   of the schema into `journey_metadata`.
+- Auto-capture across providers: async and streamed calls on every
+  OpenAI-compatible host, Gemini and Anthropic streams, provider named from
+  `base_url` (`integrations/providers.py`, with `register_provider`/`adapt`),
+  LangChain calls left to the handler, and a voice call's provider calls in a
+  linked `<journey_id>.llm` journey.
 - A background drain that failed every tick was silent; `IntervalDrainer` now
   reports each tick through `on_result` and `Client` counts a `DrainFailed`,
   so `health()` shows a sink that is rejecting everything.

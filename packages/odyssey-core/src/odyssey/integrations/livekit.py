@@ -124,6 +124,7 @@ from odyssey.capture import JourneyHandle, _jsonable
 from odyssey.client import require_client
 from odyssey.context import JourneyContext, bind
 from odyssey.fold import INTERRUPTED_FLAG
+from odyssey.integrations._linked import LinkedLLMJourney
 from odyssey.primitives import (
     Message,
     Role,
@@ -380,6 +381,8 @@ class LiveKitRecorder:
         # older generation's number, and `None` if the ordering does not hold —
         # the `voice` event below is the authoritative record either way.
         self._pending_ttft: Optional[float] = None
+        # `<journey_id>.llm`, opened by `attach(record_provider_calls=True)`.
+        self._llm: Optional[LinkedLLMJourney] = None
 
         client = require_client()
         self._enabled = client is not None and client.config.enabled
@@ -498,6 +501,15 @@ class LiveKitRecorder:
                 handle.voice("stt_transcript", text=turn.content, confidence=confidence)
             if turn.interrupted:
                 handle.voice("barge_in", text=turn.content)
+
+    def _link_provider_calls(self) -> None:
+        """Make ``<journey_id>.llm`` ambient for the attaching task.
+
+        See ``integrations/_linked``. Must run in the task that goes on to start
+        the session, which is where ``attach`` is called.
+        """
+        if self._enabled and self._llm is None:
+            self._llm = LinkedLLMJourney(self._ctx)
 
     def detach(self) -> None:
         """Stop recording this session. Does not close the journey."""
@@ -915,6 +927,11 @@ class LiveKitRecorder:
                 detail = f"{type(err).__name__}: {err}"
         with bind(self._ctx):
             self._handle().close(reason=resolved or "NONE", error=detail)
+        if self._llm is not None:
+            self._guard(
+                "close.llm",
+                lambda: self._llm.close(reason=resolved or "NONE", error=detail),
+            )
         self.detach()
 
     # -- signals, for the app to call ------------------------------------
@@ -945,6 +962,7 @@ def attach(
     journey_id: str,
     instructions: Optional[str | Callable[[], Optional[str]]] = None,
     record_instructions: bool = True,
+    record_provider_calls: bool = True,
     **metadata: Any,
 ) -> LiveKitRecorder:
     """Record an ``AgentSession`` into ``journey_id``. The one line to add.
@@ -991,6 +1009,12 @@ def attach(
     exported artifact. The conversation, the tool calls and the greeting are
     recorded exactly as before; only the ``system`` message is skipped.
 
+    ``record_provider_calls`` (on by default) opens ``<journey_id>.llm`` and makes
+    it the ambient journey for this task, so every provider call the session's
+    tasks make — captured by ``instrument="auto"`` — lands there, tagged with
+    ``parent_journey_id``, instead of scattering into one journey per call. It
+    only works when ``attach`` runs before ``session.start()``.
+
     Requires :func:`odyssey.init` to have run. Without it, recording is a no-op
     and one warning is emitted; the session is unaffected either way.
     """
@@ -1002,6 +1026,8 @@ def attach(
         metadata=metadata,
     )
     recorder._register()
+    if record_provider_calls:
+        recorder._link_provider_calls()
     return recorder
 
 

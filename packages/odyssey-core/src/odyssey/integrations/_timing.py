@@ -1,7 +1,7 @@
 """How long a provider call took, and who made it — shared by every wrapper.
 
-Timing is measured around the provider call in each integration's
-``_record_call`` and stamped onto the response turn here, so the three
+Timing is measured around the provider call by the shared call capture
+(``_call.py``) and stamped onto the response turn here, so the three
 provider bases (``_base``, ``_openai_base``, ``_gemini_base``) agree on what a
 duration means without importing one another.
 

@@ -314,6 +314,60 @@ class JourneyHandle:
         return seq
 
 
+def _open_context(
+    id: Optional[str],
+    *,
+    data_source: Optional[str],
+    trace_id: Optional[str],
+    metadata: Dict[str, Any],
+) -> JourneyContext:
+    """Build and count a fresh journey context, with sampling decided here.
+
+    Shared by :func:`journey` and by provider captures that must hold a journey
+    open past the call that started it — a stream — and so cannot use the
+    context manager, which would leave its context set in the caller's code.
+    """
+    client = require_client()
+
+    # The configured `project` is seeded by `JourneyContext._tags()` when the
+    # header is built, so it lands on journeys the integrations open too and
+    # not only on the ones opened here. A per-journey `project=` kwarg still
+    # wins over the process-wide default from `odyssey.init()`.
+    tagged_metadata = dict(metadata)
+
+    client_for_journey = client
+    ctx = JourneyContext(
+        journey_id=id or uuid4().hex,
+        allocator=(
+            client_for_journey.allocator
+            if client_for_journey is not None
+            # Disabled/uninitialised: a throwaway allocator keeps the API total,
+            # and _emit() drops before it ever reaches the spool.
+            else _NULL_ALLOCATOR
+        ),
+        # Sanitized here, at the door, rather than on the way out. These tags
+        # are now snapshotted into the shard header, and `header_line` json-dumps
+        # it directly — so a caller passing an enum or any other non-serializable
+        # value (`modality=Modality.TEXT_AUDIO` is a real one) would raise inside
+        # `_open_shard`, leave a zero-byte shard behind, and drop every event of
+        # the journey. `_jsonable` degrades to `repr()` instead of losing data.
+        metadata=_jsonable(tagged_metadata),
+        data_source=data_source,
+        trace_id=trace_id,
+    )
+    if client is not None:
+        client.count_journey()
+
+    # Decided once, here, at open — never per event. `_emit` reads this off
+    # `ctx.state` for every event including the terminal, so a sampled-out
+    # journey is either fully recorded or fully dropped, never partial.
+    sampled = client is None or random.random() < client.config.sample_rate
+    if client is not None and not sampled:
+        client.count_journey_sampled_out()
+    ctx.state["_sampled"] = sampled
+    return ctx
+
+
 @contextmanager
 def journey(
     id: Optional[str] = None,
@@ -362,44 +416,9 @@ def journey(
             existing.depth -= 1
         return
 
-    client = require_client()
-
-    # The configured `project` is seeded by `JourneyContext._tags()` when the
-    # header is built, so it lands on journeys the integrations open too and
-    # not only on the ones opened here. A per-journey `project=` kwarg still
-    # wins over the process-wide default from `odyssey.init()`.
-    tagged_metadata = dict(metadata)
-
-    client_for_journey = client
-    ctx = JourneyContext(
-        journey_id=id or uuid4().hex,
-        allocator=(
-            client_for_journey.allocator
-            if client_for_journey is not None
-            # Disabled/uninitialised: a throwaway allocator keeps the API total,
-            # and _emit() drops before it ever reaches the spool.
-            else _NULL_ALLOCATOR
-        ),
-        # Sanitized here, at the door, rather than on the way out. These tags
-        # are now snapshotted into the shard header, and `header_line` json-dumps
-        # it directly — so a caller passing an enum or any other non-serializable
-        # value (`modality=Modality.TEXT_AUDIO` is a real one) would raise inside
-        # `_open_shard`, leave a zero-byte shard behind, and drop every event of
-        # the journey. `_jsonable` degrades to `repr()` instead of losing data.
-        metadata=_jsonable(tagged_metadata),
-        data_source=data_source,
-        trace_id=trace_id,
+    ctx = _open_context(
+        id, data_source=data_source, trace_id=trace_id, metadata=metadata
     )
-    if client is not None:
-        client.count_journey()
-
-    # Decided once, here, at open — never per event. `_emit` reads this off
-    # `ctx.state` for every event including the terminal, so a sampled-out
-    # journey is either fully recorded or fully dropped, never partial.
-    sampled = client is None or random.random() < client.config.sample_rate
-    if client is not None and not sampled:
-        client.count_journey_sampled_out()
-    ctx.state["_sampled"] = sampled
 
     handle = JourneyHandle(ctx)
     token = set_current(ctx)

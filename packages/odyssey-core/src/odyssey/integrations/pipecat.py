@@ -79,6 +79,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from odyssey.capture import JourneyHandle, _jsonable
 from odyssey.client import require_client
 from odyssey.context import JourneyContext, SeqAllocator, bind
+from odyssey.integrations._linked import LinkedLLMJourney
 from odyssey.primitives import (
     Message,
     Role,
@@ -171,6 +172,8 @@ class PipecatRecorder:
         # consume, so a turn never inherits an older generation's number.
         self._pending_ttft: Optional[float] = None
         self._usage: Optional[Dict[str, int]] = None
+        # `<journey_id>.llm`; see `integrations/_linked`.
+        self._llm: Optional[LinkedLLMJourney] = None
 
         client = require_client()
         self._enabled = client is not None and client.config.enabled
@@ -485,9 +488,19 @@ class PipecatRecorder:
         self._guard("close.flush", self.flush)
         with bind(self._ctx):
             self._handle().close(reason=reason or "NONE", error=error)
+        if self._llm is not None:
+            llm = self._llm
+            self._guard(
+                "close.llm", lambda: llm.close(reason=reason or "NONE", error=error)
+            )
         client = require_client()
         if client is not None:
             client.unregister_journey(self)
+
+    def _link_provider_calls(self) -> None:
+        """Make ``<journey_id>.llm`` ambient for the task building the pipeline."""
+        if self._enabled and self._llm is None:
+            self._llm = LinkedLLMJourney(self._ctx)
 
     # -- signals, for the app to call --------------------------------------
 
@@ -512,6 +525,7 @@ class PipecatRecorder:
 def observer(
     *,
     journey_id: str,
+    record_provider_calls: bool = True,
     **metadata: Any,
 ) -> Any:
     """A Pipecat observer that records into ``journey_id``.
@@ -547,6 +561,10 @@ def observer(
                 # are dataclass-shaped. Neither is a reason to fail to record.
                 pass
             self.recorder = PipecatRecorder(journey_id=journey_id, metadata=metadata)
+            if record_provider_calls:
+                # Here, in the caller's task, so the pipeline tasks it goes on
+                # to start inherit `<journey_id>.llm`. See `_linked`.
+                self.recorder._link_provider_calls()
 
         async def on_push_frame(self, *args: Any, **kwargs: Any) -> None:
             """Both observer signatures, old and new.
@@ -569,6 +587,7 @@ def attach(
     task: Any,
     *,
     journey_id: str,
+    record_provider_calls: bool = True,
     **metadata: Any,
 ) -> PipecatRecorder:
     """Record a ``PipelineTask`` into ``journey_id``. The one line to add.
@@ -582,13 +601,19 @@ def attach(
     ``journey_metadata`` like any other keyword, under whatever meaning the
     deployment gives it.
 
+    ``record_provider_calls`` (on by default) opens ``<journey_id>.llm`` as the
+    ambient journey, so provider calls captured by ``instrument="auto"`` land
+    there tagged with ``parent_journey_id``. Attach before the pipeline runs.
+
     Returns the recorder so the app can add what pipeline frames cannot supply —
     :meth:`PipecatRecorder.signal` and :meth:`PipecatRecorder.reward`.
 
     Requires :func:`odyssey.init` to have run. Without it, recording is a no-op
     and one warning is emitted; the pipeline is unaffected either way.
     """
-    obs = observer(journey_id=journey_id, **metadata)
+    obs = observer(
+        journey_id=journey_id, record_provider_calls=record_provider_calls, **metadata
+    )
     task.add_observer(obs)
     recorder: PipecatRecorder = obs.recorder
     client = require_client()

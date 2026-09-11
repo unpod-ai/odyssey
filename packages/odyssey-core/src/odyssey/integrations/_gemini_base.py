@@ -27,6 +27,7 @@ from odyssey.capture import _emit, _jsonable
 from odyssey.client import require_client
 from odyssey.context import current
 from odyssey.integrations._timing import stamp
+from odyssey.integrations.providers import Adapter, apply_adapter
 from odyssey.primitives import Message, ToolDefinition
 
 # The SDK behind these calls. Lands on `Message.provider`.
@@ -47,6 +48,11 @@ _PARAM_KEYS = (
 _STATE_CONSUMED = "_gemini_consumed"
 _STATE_SYSTEM = "_gemini_system"
 _STATE_TOOLS = "_gemini_tools"
+
+
+def _state_key(base: str, key: str) -> str:
+    """Per-client bookkeeping inside one journey; see `_openai_base._state_key`."""
+    return base if key == "default" else f"{base}:{key}"
 
 
 def _normalize_contents(contents: Any) -> List[Dict[str, Any]]:
@@ -162,14 +168,17 @@ def _params(config: Dict[str, Any]) -> Dict[str, Any]:
     return {k: _jsonable(config[k]) for k in _PARAM_KEYS if config.get(k) is not None}
 
 
-def capture_request(kwargs: Dict[str, Any]) -> None:
+def capture_request(kwargs: Dict[str, Any], *, key: str = "default") -> None:
     """Record the parts of a request that have not been recorded yet."""
     ctx = current()
     if ctx is None:
         return
+    consumed_key = _state_key(_STATE_CONSUMED, key)
+    system_state_key = _state_key(_STATE_SYSTEM, key)
+    tools_state_key = _state_key(_STATE_TOOLS, key)
 
     entries = _normalize_contents(kwargs.get("contents"))
-    consumed = int(ctx.state.get(_STATE_CONSUMED, 0))
+    consumed = int(ctx.state.get(consumed_key, 0))
 
     if len(entries) < consumed:
         # The caller rebuilt or truncated its contents list, so our offset is
@@ -183,7 +192,7 @@ def capture_request(kwargs: Dict[str, Any]) -> None:
                     "resyncing without re-recording"
                 ),
             )
-        ctx.state[_STATE_CONSUMED] = len(entries)
+        ctx.state[consumed_key] = len(entries)
         return
 
     new_entries = entries[consumed:]
@@ -197,15 +206,15 @@ def capture_request(kwargs: Dict[str, Any]) -> None:
     # Anthropic's `system`/`tools` kwargs, just nested under `config` here.
     system_instruction = config.get("system_instruction")
     system_key = repr(system_instruction) if system_instruction is not None else None
-    if system_instruction is not None and ctx.state.get(_STATE_SYSTEM) != system_key:
-        ctx.state[_STATE_SYSTEM] = system_key
+    if system_instruction is not None and ctx.state.get(system_state_key) != system_key:
+        ctx.state[system_state_key] = system_key
         messages = _system_messages(system_instruction) + messages
 
     tools = _tool_definitions(config.get("tools"))
     tools_key = repr([(t.name, t.parameters) for t in tools]) if tools else None
-    tools_changed = tools is not None and ctx.state.get(_STATE_TOOLS) != tools_key
+    tools_changed = tools is not None and ctx.state.get(tools_state_key) != tools_key
     if tools_changed:
-        ctx.state[_STATE_TOOLS] = tools_key
+        ctx.state[tools_state_key] = tools_key
 
     meta: Dict[str, Any] = {"direction": "request"}
     params = _params(config)
@@ -225,7 +234,7 @@ def capture_request(kwargs: Dict[str, Any]) -> None:
             metadata=meta,
         )
 
-    ctx.state[_STATE_CONSUMED] = len(entries)
+    ctx.state[consumed_key] = len(entries)
 
 
 def capture_response(
@@ -235,6 +244,9 @@ def capture_response(
     latency_ms: Optional[float] = None,
     ttft_ms: Optional[float] = None,
     provider: Optional[str] = None,
+    adapt: Optional[Adapter] = None,
+    key: str = "default",
+    extra_meta: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Record the assistant turn a provider returned.
 
@@ -263,6 +275,10 @@ def capture_response(
 
     entry = dict(content)
     entry.setdefault("role", "model")
+    if adapt is not None:
+        entry = apply_adapter(
+            adapt, entry, response, label=f"provider.adapt:{provider}"
+        )
 
     messages, unknown = _safe_gemini_messages([entry])
 
@@ -279,6 +295,8 @@ def capture_response(
         meta["provider_message_id"] = payload["response_id"]
     if unknown:
         meta["unknown_parts"] = sorted(set(unknown))
+    if extra_meta:
+        meta.update(extra_meta)
 
     model_id = str(payload.get("model_version") or model or "") or None
 
@@ -304,4 +322,111 @@ def capture_response(
     # The caller will append this turn to its own contents list before the
     # next call. Account for it now so the next delta starts at the new turn.
     if messages:
-        ctx.state[_STATE_CONSUMED] = int(ctx.state.get(_STATE_CONSUMED, 0)) + 1
+        name = _state_key(_STATE_CONSUMED, key)
+        ctx.state[name] = int(ctx.state.get(name, 0)) + 1
+
+
+class ResponseAccumulator:
+    """Folds a ``generate_content_stream`` back into the one response it streamed.
+
+    Consecutive text parts are merged (a thought and an answer are kept apart);
+    any other part — a function call — is kept as it arrived. Finish reason,
+    usage and model come from whichever chunk carried them last.
+    """
+
+    __slots__ = ("parts", "finish_reason", "usage", "model", "id")
+
+    def __init__(self) -> None:
+        self.parts: List[Dict[str, Any]] = []
+        self.finish_reason: Optional[str] = None
+        self.usage: Optional[Dict[str, Any]] = None
+        self.model: Optional[str] = None
+        self.id: Optional[str] = None
+
+    @property
+    def finished(self) -> bool:
+        return self.finish_reason is not None
+
+    def add(self, chunk: Any) -> bool:
+        """Fold one chunk in. True when it carried model output."""
+        d = _jsonable(chunk)
+        if not isinstance(d, dict):
+            return False
+        if d.get("response_id") and self.id is None:
+            self.id = str(d["response_id"])
+        if d.get("model_version"):
+            self.model = str(d["model_version"])
+        if isinstance(d.get("usage_metadata"), dict):
+            self.usage = d["usage_metadata"]
+        candidates = d.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            return False
+        candidate = candidates[0]
+        if not isinstance(candidate, dict):
+            return False
+        if candidate.get("finish_reason"):
+            self.finish_reason = str(candidate["finish_reason"])
+        content = candidate.get("content")
+        parts = content.get("parts") if isinstance(content, dict) else None
+        carried = False
+        for part in parts or []:
+            if isinstance(part, dict):
+                self._add_part({k: v for k, v in part.items() if v is not None})
+                carried = True
+        return carried
+
+    def _add_part(self, part: Dict[str, Any]) -> None:
+        last = self.parts[-1] if self.parts else None
+        if (
+            last is not None
+            and _is_text(part)
+            and _is_text(last)
+            and bool(last.get("thought")) == bool(part.get("thought"))
+        ):
+            last["text"] = str(last.get("text", "")) + str(part["text"])
+        else:
+            self.parts.append(part)
+
+    def payload(self) -> Optional[Dict[str, Any]]:
+        if not self.parts:
+            return None
+        candidate: Dict[str, Any] = {"content": {"role": "model", "parts": self.parts}}
+        if self.finish_reason is not None:
+            candidate["finish_reason"] = self.finish_reason
+        return {
+            "candidates": [candidate],
+            "usage_metadata": self.usage,
+            "model_version": self.model,
+            "response_id": self.id,
+        }
+
+
+def _is_text(part: Dict[str, Any]) -> bool:
+    return isinstance(part.get("text"), str) and set(part) <= {"text", "thought"}
+
+
+def record_stream(
+    acc: ResponseAccumulator,
+    *,
+    model: Optional[str] = None,
+    latency_ms: Optional[float] = None,
+    ttft_ms: Optional[float] = None,
+    provider: Optional[str] = None,
+    adapt: Optional[Adapter] = None,
+    key: str = "default",
+    extra_meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Record the response a drained stream assembled."""
+    payload = acc.payload()
+    if payload is None:
+        return
+    capture_response(
+        payload,
+        model=model,
+        latency_ms=latency_ms,
+        ttft_ms=ttft_ms,
+        provider=provider,
+        adapt=adapt,
+        key=key,
+        extra_meta=extra_meta,
+    )

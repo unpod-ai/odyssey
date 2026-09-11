@@ -1,107 +1,75 @@
-"""OpenAI capture — a drop-in client, plus an opt-in in-place patch.
+"""OpenAI capture — and every provider reached through the ``openai`` SDK.
 
-Two ways to attach, one implementation of what gets captured (``_openai_base``).
+**In place (the default).** ``odyssey.init()``'s ``instrument="auto"`` patches
+the SDK, so every existing client records — sync and async, streamed and not,
+including ``with_raw_response`` (LangChain's path). Groq, xAI, Cerebras,
+OpenRouter, DeepInfra, Sarvam, Azure, Ollama and any other OpenAI-compatible
+host are the same SDK pointed at another ``base_url``, so they are captured by
+the same code; :mod:`odyssey.integrations.providers` names each one from that
+URL and is where per-provider logic is registered.
 
-**Drop-in (the default path).** Change the import, nothing else::
+**Drop-in.** The explicit wrapper still works and still reads better in a
+traceback::
 
     from odyssey.integrations.openai import OpenAI
-    client = OpenAI()                          # same args as the real one
-    client.chat.completions.create(...)        # recorded
-
-**OpenAI-compatible providers work the same way — no extra code.** Groq,
-Together, local vLLM/Ollama servers, DeepSeek and others speak the identical
-Chat Completions JSON; this wrapper forwards every constructor argument to
-the real ``openai.OpenAI``/``openai.AsyncOpenAI``, so pointing it at a
-different host is the whole change::
-
     client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key="...")
 
-**Patch (opt-in).** For when the call sites cannot be edited::
+A streamed call is recorded once the caller has drained it: chunks are folded
+back into one assistant turn, time-to-first-token included. A stream cut off
+early — a voice barge-in cancels it — still records what arrived, marked
+``incomplete``.
 
-    odyssey.init(instrument=["openai"])        # existing clients now record
-
-The drop-in is the default because a patched call stack is harder to read in a
-traceback and harder to reason about when two libraries patch the same method.
-Patching is the escape hatch, not the recommendation.
-
-Both paths never change what the caller sees: the provider's return value is
-passed through untouched, and a provider exception propagates unchanged.
-Capture failures are swallowed and counted — see ``odyssey.health()``.
-
-Streaming is not wrapped yet — ``create(stream=True)`` is passed through
-untouched and unrecorded, same open item as Anthropic's async streaming path
-(``docs/WORKING.md`` 0'.5).
+Calls a framework integration is already recording (LangChain's handler) are
+left to it. The provider's return value is always passed through untouched
+(wrapped only to observe a stream), and a provider exception propagates
+unchanged; capture failures are counted in ``odyssey.health()``.
 """
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
-from odyssey.capture import journey
-from odyssey.client import require_client
-from odyssey.integrations._openai_base import capture_request, capture_response
-from odyssey.integrations._reentry import outermost
-from odyssey.integrations._timing import Timer
+from odyssey.integrations._call import (
+    Capture,
+    capture_async,
+    capture_sync,
+    provider_from_base_url,
+)
+from odyssey.integrations._openai_base import (
+    PROVIDER,
+    ChunkAccumulator,
+    capture_request,
+    capture_response,
+    record_stream,
+)
 
 # Set by instrument(); cleared by uninstrument(). Module-level because patching
 # is a process-wide act and must be reversible exactly once.
 _patched: Dict[str, Any] = {}
 
+CAPTURE = Capture(
+    label="openai",
+    request=capture_request,
+    response=capture_response,
+    streamed=record_stream,
+    accumulator=ChunkAccumulator,
+    provider=provider_from_base_url(PROVIDER),
+)
 
-def _safe(label: str, fn: Callable[[], None]) -> None:
-    """Run a capture step. A failure here must never reach the caller."""
-    try:
-        fn()
-    except Exception as exc:  # noqa: BLE001 - capture is best-effort by contract
-        client = require_client()
-        if client is not None:
-            client.note_error(label, exc)
 
-
-def _record_call(kwargs: Dict[str, Any], call: Callable[[], Any]) -> Any:
-    """Capture request, run the provider call, capture response. Order matters.
-
-    The request is recorded *before* the call so a provider timeout still
-    leaves the prompt in the corpus — a journey that shows what was asked and
-    then terminates with an error is useful; one that shows nothing is not.
-    """
-    with outermost() as mine:
-        if not mine:
-            # An outer wrapper is already recording this call -- the drop-in
-            # client with the in-place patch underneath it. See `_reentry`.
-            return call()
-        with journey():
-            _safe("openai.request", lambda: capture_request(kwargs))
-            timer = Timer()
-            result = call()
-            # Read before the capture step, so the number is the provider's
-            # latency and not odyssey's own parsing of the response.
-            elapsed = timer.latency_ms
-            _safe(
-                "openai.response",
-                lambda: capture_response(
-                    result, model=kwargs.get("model"), latency_ms=elapsed
-                ),
-            )
-            return result
+# ---------------------------------------------------------------------------
+# The drop-in client
+# ---------------------------------------------------------------------------
 
 
 class _CompletionsProxy:
-    """Wraps ``client.chat.completions``, capturing ``create``.
-
-    ``stream=True`` is passed straight through unrecorded rather than
-    partially captured — per-chunk events would flood the spool with
-    fragments that are not the turn the model produced, the same reasoning
-    Anthropic's ``.stream()`` wrapper uses, just not yet built out here.
-    """
-
     def __init__(self, inner: Any) -> None:
         self._inner = inner
 
     def create(self, *args: Any, **kwargs: Any) -> Any:
-        if kwargs.get("stream"):
-            return self._inner.create(*args, **kwargs)
-        return _record_call(kwargs, lambda: self._inner.create(*args, **kwargs))
+        return capture_sync(
+            CAPTURE, self._inner, kwargs, lambda: self._inner.create(*args, **kwargs)
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -127,8 +95,6 @@ class OpenAI:
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         # pyrefly: ignore[missing-import]  — optional extra, `odyssey[openai]`.
-        # Absent by design in a default install; that is what keeps core's
-        # `dependencies = []` true, so the checker cannot resolve it here.
         from openai import OpenAI as _Real
 
         self._inner = _Real(*args, **kwargs)
@@ -175,72 +141,73 @@ class _AsyncCompletionsProxy:
         self._inner = inner
 
     async def create(self, *args: Any, **kwargs: Any) -> Any:
-        if kwargs.get("stream"):
-            return await self._inner.create(*args, **kwargs)
-        with outermost() as mine:
-            if not mine:
-                return await self._inner.create(*args, **kwargs)
-            with journey():
-                _safe("openai.request", lambda: capture_request(kwargs))
-                timer = Timer()
-                result = await self._inner.create(*args, **kwargs)
-                # Read before the capture step, so the number is the provider's
-                # latency and not odyssey's own parsing of the response.
-                elapsed = timer.latency_ms
-                _safe(
-                    "openai.response",
-                    lambda: capture_response(
-                        result, model=kwargs.get("model"), latency_ms=elapsed
-                    ),
-                )
-                return result
+        return await capture_async(
+            CAPTURE, self._inner, kwargs, lambda: self._inner.create(*args, **kwargs)
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
 
 
 # ---------------------------------------------------------------------------
-# Opt-in patching
+# In-place patching
 # ---------------------------------------------------------------------------
 
 
 def instrument(target: Optional[Any] = None) -> None:
-    """Patch ``openai`` in place so existing clients record.
+    """Patch ``openai`` in place so every existing client records.
 
-    Idempotent. ``target`` overrides the module to patch, which is what makes
-    this testable without the real SDK installed.
+    Patches ``Completions.create`` and, when present, ``AsyncCompletions.create``
+    — every OpenAI-compatible provider, LiveKit's and Pipecat's LLM services
+    included, goes through one of the two. Idempotent. ``target`` overrides the
+    module to patch, which is what makes this testable without the real SDK.
     """
     if _patched:
         return
     if target is None:
         import openai.resources.chat.completions as target  # type: ignore[no-redef]
 
-    cls = getattr(target, "Completions", None)
-    if cls is None or not hasattr(cls, "create"):
+    sync_cls = getattr(target, "Completions", None)
+    if sync_cls is None or not hasattr(sync_cls, "create"):
         raise AttributeError(
             "openai.resources.chat.completions.Completions.create not found; "
             "this openai version is not supported by instrument()"
         )
 
-    original = cls.create
+    original = sync_cls.create
 
     def patched(self: Any, *args: Any, **kwargs: Any) -> Any:
-        if kwargs.get("stream"):
-            return original(self, *args, **kwargs)
-        return _record_call(kwargs, lambda: original(self, *args, **kwargs))
+        return capture_sync(
+            CAPTURE, self, kwargs, lambda: original(self, *args, **kwargs)
+        )
 
     patched.__wrapped__ = original  # type: ignore[attr-defined]
-    cls.create = patched
-    _patched["cls"] = cls
+    sync_cls.create = patched
+    _patched["cls"] = sync_cls
     _patched["create"] = original
+
+    async_cls = getattr(target, "AsyncCompletions", None)
+    if async_cls is not None and hasattr(async_cls, "create"):
+        original_async = async_cls.create
+
+        async def patched_async(self: Any, *args: Any, **kwargs: Any) -> Any:
+            return await capture_async(
+                CAPTURE, self, kwargs, lambda: original_async(self, *args, **kwargs)
+            )
+
+        patched_async.__wrapped__ = original_async  # type: ignore[attr-defined]
+        async_cls.create = patched_async
+        _patched["async_cls"] = async_cls
+        _patched["create_async"] = original_async
 
 
 def uninstrument() -> None:
     """Undo :func:`instrument`. Safe to call when nothing was patched."""
-    cls = _patched.pop("cls", None)
-    original = _patched.pop("create", None)
-    if cls is not None and original is not None:
-        cls.create = original
+    for cls_key, fn_key in (("cls", "create"), ("async_cls", "create_async")):
+        cls = _patched.pop(cls_key, None)
+        original = _patched.pop(fn_key, None)
+        if cls is not None and original is not None:
+            cls.create = original
 
 
 def is_instrumented() -> bool:

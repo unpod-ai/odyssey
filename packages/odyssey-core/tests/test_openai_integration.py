@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import types
+from typing import Any, Dict, List
 
 import pytest
 
@@ -454,20 +455,44 @@ def test_a_malformed_response_entry_is_captured_not_lost(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# Streaming is passed through, not captured
+# Streaming is recorded once the caller drains it
 # --------------------------------------------------------------------------
 
 
-def test_stream_true_is_not_captured(tmp_path):
+def _chunks(*texts):
+    out: List[Dict[str, Any]] = [
+        {"id": "c1", "model": "m", "choices": [{"index": 0, "delta": {"content": t}}]}
+        for t in texts
+    ]
+    out.append(
+        {
+            "id": "c1",
+            "model": "m",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+    )
+    return out
+
+
+def test_a_streamed_call_is_recorded_once_drained(tmp_path):
     start(tmp_path)
     from odyssey.integrations.openai import OpenAI
 
-    client = OpenAI()
+    client = OpenAI(scripted=[iter(_chunks("Hel", "lo"))])
     with odyssey.journey(id="j"):
-        client.chat.completions.create(
+        stream = client.chat.completions.create(
             model="m", messages=[{"role": "user", "content": "q"}], stream=True
         )
-    assert [e for e in events("j") if e.kind == "message"] == []
+        assert roles("j") == ["user"], "nothing to record until it is drained"
+        assert [c["choices"][0]["delta"].get("content") for c in stream] == [
+            "Hel",
+            "lo",
+            None,
+        ]
+    assert roles("j") == ["user", "assistant"]
+    reply = [e for e in events("j") if e.kind == "message"][-1]
+    assert reply.message is not None and reply.message.content == "Hello"
+    assert reply.metadata is not None and reply.metadata["streamed"] is True
 
 
 # --------------------------------------------------------------------------
@@ -524,20 +549,33 @@ def test_the_async_client_records_too(tmp_path):
     assert roles("j") == ["user", "assistant"]
 
 
-def test_the_async_client_does_not_capture_streamed_calls(tmp_path):
+def test_the_async_client_records_streamed_calls(tmp_path):
     start(tmp_path)
     from odyssey.integrations.openai import AsyncOpenAI
 
-    client = AsyncOpenAI()
+    class Chunks:
+        def __init__(self, items):
+            self._items = items
+
+        async def _gen(self):
+            for item in self._items:
+                yield item
+
+        def __aiter__(self):
+            return self._gen()
+
+    client = AsyncOpenAI(scripted=[Chunks(_chunks("a", "b"))])
 
     async def main():
         with odyssey.journey(id="j"):
-            await client.chat.completions.create(
+            stream = await client.chat.completions.create(
                 model="m", messages=[{"role": "user", "content": "q"}], stream=True
             )
+            async for _ in stream:
+                pass
 
     asyncio.run(main())
-    assert [e for e in events("j") if e.kind == "message"] == []
+    assert roles("j") == ["user", "assistant"]
 
 
 # --------------------------------------------------------------------------

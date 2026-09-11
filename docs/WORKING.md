@@ -227,6 +227,7 @@ actually run.
 | `test_dpo.py` | 15 | DPO pair extraction — (prompt, chosen, rejected) out of a folded journey |
 | `test_pii.py` | 14 | Content-level PII scan/redact (regex, not NER — including the Luhn check on card numbers) |
 | `test_timing_fields.py` | 12 | `stamp()` never overwriting timing an integration already set, and agent identity staying a caller tag in `journey_metadata` rather than a schema field |
+| `test_auto_capture.py` | 35 | Auto-capture as a voice deployment exercises it: async and streamed calls on OpenAI-compatible hosts (tool-call deltas, cancelled streams, chunks rewritten after reading), Gemini and Anthropic streams, provider naming from `base_url` with registry/env/`adapt`, raw responses, LangChain-recorded calls left alone, per-client history, and the linked `<journey_id>.llm` journey for LiveKit/Pipecat |
 | `test_sft.py` | 13 | SFT export — one JSON line per trainable turn |
 | `test_project.py` | 11 | `resolve_project()`'s auto-detect chain: env → git `origin` → cwd dirname, and every malformed-git fallback |
 | `builders/test_langsmith_roundtrip.py` | 4 | A LangSmith-shaped trace surviving the round trip |

@@ -8,6 +8,42 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Added
 
+- **Auto-capture covers streamed and async calls on every OpenAI-compatible
+  provider.** `instrument="auto"` patched only the sync, non-streamed
+  `Completions.create`, so a LiveKit or Pipecat voice agent — every LLM call
+  `await AsyncOpenAI.chat.completions.create(stream=True)` — recorded nothing.
+  The OpenAI patch now covers `Completions` and `AsyncCompletions`, sync and
+  async streams, and `with_raw_response` (LangChain's `ChatOpenAI` path, whose
+  response was never parsed). A stream is folded back into one assistant turn
+  once the caller drains it, with time-to-first-token; each chunk is
+  snapshotted as it passes, so a consumer rewriting chunks in place (LiveKit
+  strips `<think>` tags) does not change what is recorded; a stream cut off
+  early — a barge-in cancels it — records what arrived, marked `incomplete`.
+  Gemini's `generate_content_stream` (sync and async, LiveKit's Google plugin)
+  and Anthropic's `AsyncMessages.create`, `beta.messages` and `stream=True`
+  (Pipecat's Anthropic service) are captured the same way, through one shared
+  implementation (`integrations/_call.py`, `_streams.py`, `_scope.py`).
+- **Provider named from the client's `base_url`, with per-provider logic**
+  (`integrations/providers.py`). Groq, xAI, Cerebras, OpenRouter, Sarvam,
+  DeepInfra, Azure, Ollama, DeepSeek, Modal and others are all the `openai`
+  SDK, so `Message.provider` said `openai` for every one. Resolution order:
+  `register_provider(name, hosts=/match=, adapt=)`, then
+  `ODYSSEY_PROVIDER_HOSTS=host=name,...`, then a built-in host table, then the
+  bare hostname. An `adapt` hook rewrites the assembled assistant message for
+  one provider's quirks; one that raises is counted and the unadapted turn is
+  recorded. `reasoning_content`/object-shaped `reasoning` are normalized for
+  every provider. Gemini reports `vertex` for a Vertex AI client.
+- **A voice call's provider calls land in one linked journey.** LiveKit's and
+  Pipecat's `attach()` open `<journey_id>.llm` — the call's tags plus
+  `parent_journey_id` — for the provider calls the session's tasks make
+  (the main LLM, a filler model, a LangGraph node), instead of one unlinked
+  journey per LLM call or a second copy of the conversation inside the call
+  journey. Linked, not ambient: `odyssey.current()` and `journey()` are
+  unchanged, an explicit `journey()` still wins, and a provider call made after
+  the call ended opens its own journey. `attach` must run before
+  `session.start()`; `record_provider_calls=False` turns it off. History
+  offsets are kept per SDK client, so several conversations sharing the journey
+  do not resync each other into silence.
 - **`odyssey.init()` is now the *only* line an application adds** —
   `instrument` defaults to `"auto"` (it was `()`, i.e. nothing; see
   "Changed" below for the behavior change that implies). `"auto"` patches
@@ -167,6 +203,13 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Fixed
 
+- **A LangChain run and the provider patch under it recorded the same turn
+  twice.** `ChatOpenAI` calls the `openai` SDK, so with `auto` both the handler
+  and the patch captured it, into different journeys. The handler now runs
+  inline and marks each model run; every provider patch skips a call made while
+  such a run is in progress. A mark names its handler and run and counts only
+  while that run is still going, so one left in a context that never saw the
+  run end cannot silence capture for the rest of the task.
 - **`init(project=...)` now reaches every journey, not only hand-opened
   ones.** The tag was seeded inside `capture.journey()`, and every
   integration — `livekit`, `langchain`, `otel`, `pipecat` — builds its own
