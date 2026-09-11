@@ -1,6 +1,6 @@
 # odyssey — session handoff
 
-## One integration point + schema 2.1 (timing, agent attribution) + Pipecat — built, tested, **uncommitted**
+## One integration point + schema 2.1 (timing, provenance) + Pipecat — built, tested, **uncommitted**
 
 Working tree on `main` carries this; nothing is committed yet. `801 passed,
 1 skipped`, `task lint` and `task types` clean, golden fixture current
@@ -20,21 +20,20 @@ Working tree on `main` carries this; nothing is committed yet. `801 passed,
 - `init()`'s default sink now follows `ODYSSEY_ENDPOINT` (set → `HttpSink`,
   unset → `FileSink`, malformed → `FileSink` + a counted error, never a raise).
 - `SCHEMA_VERSION` `2.0` → `2.1`, additive: `Message.latency_ms`/`ttft_ms`/
-  `agent_id`/`provider`, `JourneyHeader.agent_id`/`agent_name`/`framework`.
-  Header-plus-delta attribution — only a turn that changed hands carries
-  `agent_id`. Timing from the shared `integrations/_timing.py`.
+  `provider`, `JourneyHeader.framework`. Agent identity stays a caller tag in
+  `journey_metadata`, not a schema field. Timing from the shared
+  `integrations/_timing.py`.
 - `integrations/pipecat.py` — `attach(task, journey_id=...)`, a `BaseObserver`
   so it is agnostic to which LLM service the pipeline runs; frames
   deduplicated on `frame.id` because `on_push_frame` fires once per hop.
-- LiveKit gained agent identity through handoffs and `metrics_collected` →
-  `voice` latency events.
+- LiveKit gained `metrics_collected` → `voice` latency events.
 - A background drain that failed every tick was silent; `IntervalDrainer` now
   reports each tick through `on_result` and `Client` counts a `DrainFailed`,
   so `health()` shows a sink that is rejecting everything.
 
 **Next, and not started: push the 2.1 fields downstream.** `packages/odyssey-schemas`
 DTOs, `services/api`, both SDKs and `apps/web` know nothing about `latency_ms`,
-`ttft_ms`, `provider`, `agent_id` or the header's agent identity — the corpus
+`ttft_ms`, `provider` or the header's `framework` — the corpus
 carries them and no read path exposes them. The `GET /metrics` work below is
 the precedent to copy: DTO in `odyssey-schemas` → repository/domain/router in
 `services/api` → regenerate `openapi.json` + both SDK resources (remembering

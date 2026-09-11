@@ -223,6 +223,9 @@ class _Recorder:
             metadata=_jsonable(dict(self._metadata)),
             data_source=self._data_source,
             trace_id=trace_id,
+            # What recorded this shard, as distinct from where the
+            # conversation came from (`data_source`).
+            framework="otel",
         )
         self._journeys[trace_id] = ctx
         if client is not None:
@@ -367,8 +370,15 @@ def OdysseySpanProcessor(
 _PROCESSOR: Any = None
 
 
-def instrument() -> None:
+def instrument(
+    *, data_source: str = "otel", metadata: Optional[Dict[str, Any]] = None
+) -> None:
     """Attach :class:`OdysseySpanProcessor` to the global ``TracerProvider``.
+
+    ``data_source`` and ``metadata`` tag every journey this attachment opens.
+    They matter here because a process-wide bridge records spans nobody opted
+    into individually, so without them a shard arrives carrying nothing that
+    says which service produced it.
 
     This is the catch-all capture path: any library already instrumented for
     OpenTelemetry — OpenInference, OpenLLMetry/Traceloop, a framework's own
@@ -402,7 +412,7 @@ def instrument() -> None:
     if not hasattr(provider, "add_span_processor"):
         provider = TracerProvider()
         trace.set_tracer_provider(provider)
-    processor = OdysseySpanProcessor()
+    processor = OdysseySpanProcessor(data_source=data_source, metadata=metadata)
     provider.add_span_processor(processor)
     _PROCESSOR = processor
 

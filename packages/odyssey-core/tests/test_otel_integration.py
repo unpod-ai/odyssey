@@ -403,7 +403,7 @@ def test_metadata_is_passed_through_to_the_journey_header(tmp_path):
 
     header = client_obj.spool.header(TRACE)
     assert header is not None
-    assert header.journey_metadata == {"tenant": "acme"}
+    assert (header.journey_metadata or {})["tenant"] == "acme"
     assert header.data_source == "otel"
 
 
@@ -620,3 +620,74 @@ def test_init_does_not_attach_it_under_auto(tmp_path, provider_api):
     start(tmp_path, instrument="auto")
 
     assert not is_instrumented()
+
+
+# --------------------------------------------------------------------------
+# Attribution: framework, project, and what `instrument()` tags
+# --------------------------------------------------------------------------
+
+
+def test_the_header_names_otel_as_the_framework(tmp_path):
+    """`framework` promised "otel" as a value and no code path produced it."""
+    start(tmp_path)
+    recorder = _Recorder(data_source="otel", metadata=None)
+
+    recorder.on_start(TRACE)
+    recorder.on_end(
+        trace_id=TRACE,
+        is_root=True,
+        attributes={},
+        events=[],
+        ok=True,
+        description=None,
+    )
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(TRACE)
+    assert header is not None
+    assert header.framework == "otel"
+
+
+def test_the_configured_project_tags_a_journey_this_recorder_built(tmp_path):
+    start(tmp_path, project="super-task")
+    recorder = _Recorder(data_source="otel", metadata=None)
+
+    recorder.on_start(TRACE)
+    recorder.on_end(
+        trace_id=TRACE,
+        is_root=True,
+        attributes={},
+        events=[],
+        ok=True,
+        description=None,
+    )
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(TRACE)
+    assert header is not None
+    assert (header.journey_metadata or {})["project"] == "super-task"
+
+
+def test_instrument_tags_the_journeys_it_creates(tmp_path, provider_api):
+    """Attached process-wide with no arguments, every span it recorded landed
+    in a journey carrying nothing that says where it came from."""
+    from odyssey.integrations.otel import instrument
+
+    start(tmp_path, instrument="none")
+    instrument(data_source="voice-worker", metadata={"service": "superkik"})
+
+    processor = provider_api["provider"].processors[0]
+    span = FakeSpan(
+        trace_id=0xABCDEF, parent=None, status=FakeStatus(FakeStatusCode.OK)
+    )
+    processor.on_start(span)
+    processor.on_end(span)
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(format(0xABCDEF, "032x"))
+    assert header is not None
+    assert header.data_source == "voice-worker"
+    assert (header.journey_metadata or {})["service"] == "superkik"

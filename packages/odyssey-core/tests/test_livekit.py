@@ -291,7 +291,10 @@ def test_caller_metadata_is_stated_once_in_the_header(tmp_path):
     attach(session, journey_id=JID, tenant="acme", sip_trunk="tw-1")
     say(session, "user", "hi")
 
-    assert header().journey_metadata == {"tenant": "acme", "sip_trunk": "tw-1"}
+    # `project` is seeded onto every journey now; what this test is about is
+    # that the caller's tags are stated in the header and not on each event.
+    tags = header().journey_metadata or {}
+    assert tags["tenant"] == "acme" and tags["sip_trunk"] == "tw-1"
     meta = events()[0].metadata or {}
     assert "tenant" not in meta and "sip_trunk" not in meta
 
@@ -334,7 +337,7 @@ def test_an_unserializable_tag_cannot_kill_the_journey(tmp_path):
     attach(session, journey_id=JID, modality=Modality.TEXT_AUDIO)
     say(session, "user", "hi")
 
-    assert header().journey_metadata == {"modality": "text_audio"}
+    assert (header().journey_metadata or {})["modality"] == "text_audio"
     assert len(events()) == 1
     assert client.stats.events_dropped == 0
 
@@ -2032,11 +2035,11 @@ def test_a_session_too_old_to_know_the_event_still_records(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# Agent identity in the header
+# Framework and agent tags
 # --------------------------------------------------------------------------
 
 
-def test_the_header_names_the_agent_and_the_framework(tmp_path):
+def test_the_header_names_the_framework(tmp_path):
     start(tmp_path)
     session = FakeSession()
     session.current_agent = FakeAgent("You book appointments.")
@@ -2046,13 +2049,12 @@ def test_the_header_names_the_agent_and_the_framework(tmp_path):
     head = header()
     assert head is not None
     assert head.framework == "livekit"
-    assert head.agent_name == "FakeAgent"
-    assert head.agent_id == "FakeAgent"
 
 
-def test_a_caller_supplied_agent_id_survives_a_handoff(tmp_path):
-    """Their id names their own agent concept; replacing it with a Python class
-    name would lose exactly what they asked to be able to query on."""
+def test_a_caller_agent_id_is_an_ordinary_tag_and_survives_a_handoff(tmp_path):
+    """What an agent id means is the deployment's business -- a config row, a
+    version tag -- so it rides in `journey_metadata` like any other keyword,
+    and a handoff never rewrites it."""
     start(tmp_path)
     session = FakeSession()
     session.current_agent = FakeAgent("greeter")
@@ -2068,11 +2070,11 @@ def test_a_caller_supplied_agent_id_survives_a_handoff(tmp_path):
 
     head = header()
     assert head is not None
-    assert head.agent_id == "agent_row_7"
-    assert [m.agent_id for m in messages()] == [None] * len(messages())
+    assert (head.journey_metadata or {})["agent_id"] == "agent_row_7"
+    assert all("agent_id" not in (e.metadata or {}) for e in events())
 
 
-def test_a_handoff_retags_the_turns_after_it(tmp_path):
+def test_a_handoff_is_named_on_the_system_message_it_produced(tmp_path):
     start(tmp_path)
     session = FakeSession()
     session.current_agent = FakeAgent("greeter")
@@ -2086,9 +2088,28 @@ def test_a_handoff_retags_the_turns_after_it(tmp_path):
     session.current_agent = Specialist("booking specialist")
     say(session, "user", "book me")
 
+    prompts = [m.metadata or {} for m in messages() if m.role == "system"]
+    assert [(p.get("instructions_origin"), p.get("agent")) for p in prompts] == [
+        ("initial", "FakeAgent"),
+        ("handoff", "Specialist"),
+    ]
+
+
+def test_the_configured_project_tags_the_journey(tmp_path):
+    """`init(project=...)` reached only journeys opened through `journey()`.
+
+    Every integration builds its own `JourneyContext`, so the process-wide tag
+    silently missed the whole voice corpus — and a reader grouping journeys by
+    project saw nothing rather than seeing them mislabelled.
+    """
+    start(tmp_path, project="super-task")
+    session = FakeSession()
+    attach(session, journey_id=JID, handler="LiteV2Handler")
+    say(session, "user", "hello")
+
     head = header()
     assert head is not None
-    assert head.agent_id == "FakeAgent"
-    tagged = [(m.role, m.agent_id) for m in messages()]
-    assert ("user", "Specialist") in tagged
-    assert ("user", None) in tagged
+    assert (head.journey_metadata or {}) == {
+        "handler": "LiteV2Handler",
+        "project": "super-task",
+    }

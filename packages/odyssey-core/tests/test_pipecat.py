@@ -651,8 +651,8 @@ def test_the_header_names_the_framework_and_the_agent(tmp_path):
     assert head is not None
     assert head.framework == "pipecat"
     assert head.data_source == "pipecat"
-    assert head.agent_id == "agent_7"
-    assert head.journey_metadata == {"tenant": "acme"}
+    assert (head.journey_metadata or {})["agent_id"] == "agent_7"
+    assert (head.journey_metadata or {})["tenant"] == "acme"
 
 
 def test_a_broken_frame_never_reaches_the_pipeline(tmp_path):

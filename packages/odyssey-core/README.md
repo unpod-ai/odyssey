@@ -40,7 +40,7 @@ behind an optional extra, so `dependencies = []` still holds.
 | Module | LOC | Responsibility |
 |---|---|---|
 | `client.py` / `config.py` | 691 / 194 | `init()`, the singleton, `ODYSSEY_*` resolution, `health()` |
-| `context.py` | 259 | ambient journey `ContextVar`, `SeqAllocator`, agent identity + `agent_delta()` |
+| `context.py` | 259 | ambient journey `ContextVar`, `SeqAllocator`, header tag seeding (`project`) |
 | `capture.py` | 608 | `journey()`, `@observe`, `_emit()` — the never-raise boundary |
 | `diagnostics.py` | 292 | `scan()`, `render_journey()`, the `health`/`show` formatters |
 | `metrics.py` / `project.py` | 150 / 82 | opt-in host telemetry; which repo a capturing process belongs to |

@@ -357,18 +357,11 @@ class LiveKitRecorder:
         journey_id: str,
         instructions: Optional[str | Callable[[], Optional[str]]] = None,
         record_instructions: bool = True,
-        agent_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._session = session
         self.journey_id = journey_id
         self._closed = False
-        # Whether the caller owns the agent identity. When they do, a handoff
-        # does not rewrite it: their id names their own agent concept, and
-        # replacing it with a Python class name would lose the thing they asked
-        # to be able to query on. The handoff is still visible either way, on
-        # the system message's `instructions_origin`/`agent` metadata.
-        self._agent_id_is_callers = agent_id is not None
         self._handlers: List[Tuple[str, Callable[..., None]]] = []
         # The last system prompt written to the spool. `None` means none yet, so
         # the first recorded item emits one; after that only a *change* does.
@@ -410,10 +403,6 @@ class LiveKitRecorder:
             # two stop being the same answer as soon as a second integration
             # can also feed a voice journey.
             framework="livekit",
-            # May be None here and filled by the first `_sync_instructions`
-            # from the agent LiveKit actually started with -- `current_agent`
-            # raises before `session.start()`, so there is nothing to read yet.
-            agent_id=agent_id,
         )
         if client is not None:
             client.count_journey()
@@ -620,12 +609,6 @@ class LiveKitRecorder:
         name = _agent_name(self._session)
         if name:
             turn["agent"] = name
-            # Header on the first prompt, per-turn delta on every handoff after
-            # it -- `JourneyContext.agent_delta` decides which, so a
-            # single-agent call still says the name exactly once.
-            self._ctx.agent_name = name
-            if not self._agent_id_is_callers:
-                self._ctx.agent_id = name
         with bind(self._ctx):
             self._handle().message(
                 Message(role="system", content=text, metadata=turn),
@@ -962,7 +945,6 @@ def attach(
     journey_id: str,
     instructions: Optional[str | Callable[[], Optional[str]]] = None,
     record_instructions: bool = True,
-    agent_id: Optional[str] = None,
     **metadata: Any,
 ) -> LiveKitRecorder:
     """Record an ``AgentSession`` into ``journey_id``. The one line to add.
@@ -997,12 +979,11 @@ def attach(
     training example: the same user turn under two different prompts is
     indistinguishable.
 
-    ``agent_id`` names which agent this journey ran, and lands in the shard
-    header rather than on every event. Leave it unset and the agent's own class
-    name is used, updated on each handoff so a turn after one carries the new
-    id and a single-agent call carries none at all. Pass it when the deployment
-    has its own identity for the agent -- a row id, a version tag -- in which
-    case a handoff does not overwrite it.
+    Agent identity is an ordinary tag: ``attach(session, journey_id=...,
+    agent_id=row.id)`` lands in the header's ``journey_metadata`` like any other
+    keyword, under whatever name and meaning the deployment gives it. A handoff
+    is recorded on the ``system`` message it produced (``agent`` and
+    ``instructions_origin`` in its metadata), never by rewriting that tag.
 
     ``record_instructions=False`` keeps the system prompt out of the journey
     entirely. Some prompts are thousands of tokens of business rules that dwarf
@@ -1018,7 +999,6 @@ def attach(
         journey_id=journey_id,
         instructions=instructions,
         record_instructions=record_instructions,
-        agent_id=agent_id,
         metadata=metadata,
     )
     recorder._register()

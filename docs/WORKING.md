@@ -127,7 +127,7 @@ catch that on its own.
 So every event carries a `writer_id` in `JourneyEvent.metadata`
 (`WRITER_META_KEY`) — **not a new schema field**, which is what kept this
 out of a `SCHEMA_VERSION` bump of its own (the version is `2.1` today, for
-unrelated reasons: voice events, then timing/agent attribution). `fold()` reports `writers`, exposes
+unrelated reasons: voice events, then timing/provenance). `fold()` reports `writers`, exposes
 `writer_conflict`, and sets `complete=False` when there is more than one. The
 CLI exits `3` on it.
 
@@ -226,7 +226,7 @@ actually run.
 | `test_metrics.py` | 16 | Opt-in host telemetry: the snapshot's stdlib-sourced fields, the reporter's interval, and that a transport failure never raises |
 | `test_dpo.py` | 15 | DPO pair extraction — (prompt, chosen, rejected) out of a folded journey |
 | `test_pii.py` | 14 | Content-level PII scan/redact (regex, not NER — including the Luhn check on card numbers) |
-| `test_agent_identity.py` | 14 | The header-plus-delta rule for `agent_id`, and `stamp()` never overwriting timing an integration already set |
+| `test_timing_fields.py` | 12 | `stamp()` never overwriting timing an integration already set, and agent identity staying a caller tag in `journey_metadata` rather than a schema field |
 | `test_sft.py` | 13 | SFT export — one JSON line per trainable turn |
 | `test_project.py` | 11 | `resolve_project()`'s auto-detect chain: env → git `origin` → cwd dirname, and every malformed-git fallback |
 | `builders/test_langsmith_roundtrip.py` | 4 | A LangSmith-shaped trace surviving the round trip |
@@ -373,7 +373,7 @@ Legend: ✅ done & tested · 🟡 partly there · ❌ not started
 | 0′.4 | **Voice events** | ✅ | Real breaking change: `SCHEMA_VERSION` bumped `1.1` → `2.0`, a new `"voice"` `EventKind`, `VoiceEvent` (`voice_kind: stt_transcript\|tts_output\|barge_in\|latency`, `text`, `confidence`, `latency_ms`), `JourneyEvent.voice`. `fold()` accumulates them into `FoldResult.voice_events`, kept separate from `Journey.messages`/`Step[]` — a voice event has no `trainable` notion. `integrations/livekit.py` now emits `stt_transcript` (turn-level weighted transcript confidence) and `barge_in` (the existing `INTERRUPTED_FLAG`) events. Golden fixture regenerated at 2.0 with a `voice` event. **No migration tool**: a 1.x shard on disk no longer parses under this reader — one-way major bump, documented in CHANGELOG.md |
 | 0′.5 | Streaming coverage | ✅ | Both `messages.stream()` (sync `MessageStreamManager`) and the async counterpart (`AsyncAnthropic.messages.stream()`) are wrapped — `_AsyncStreamProxy`/`_AsyncStreamBody` mirror the sync `_StreamProxy`/`_StreamBody` shape exactly, capturing the assembled final message on `get_final_message()`, never per-chunk |
 | 0′.6 | Sampling | ✅ | `ODYSSEY_SAMPLE_RATE` / `Config.sample_rate` (default `1.0`, clamped `[0,1]`). The coin-flip happens once per journey at `journey()` open, stored on `JourneyContext.state["_sampled"]` so a nested join inherits the parent's decision rather than re-rolling; `_emit()` drops before touching the spool. `client.count_journey_sampled_out()` surfaced in `health()` |
-| 0′.7 | **Timing + agent attribution** | ✅ | `SCHEMA_VERSION` `2.0` → `2.1`, additive both directions. `Message` gained `latency_ms`, `ttft_ms`, `agent_id`, `provider`; `JourneyHeader` gained `agent_id`, `agent_name`, `framework`. Timing comes from the shared `integrations/_timing.py` — a `perf_counter` `Timer` measured *around* the provider call (never `time.time`, which can go backwards mid-call) and a `stamp()` that never overwrites what a wrapper that measured its own TTFT already set — wired through all three provider bases and both streaming wrappers. Attribution follows the header-plus-delta rule (`JourneyContext.agent_delta()`): the header names the agent once, and only a turn that changed hands carries `agent_id`, so a single-agent journey repeats nothing. `jsonl.py` decodes timing through `_opt_float`, so a string or null from a third-party object costs that one field, not the turn. Golden fixture regenerated at `2.1`; see [`journey-schema.md`](journey-schema.md#timing-and-agent-attribution-21) |
+| 0′.7 | **Timing + provenance** | ✅ | `SCHEMA_VERSION` `2.0` → `2.1`, additive both directions. `Message` gained `latency_ms`, `ttft_ms`, `provider`; `JourneyHeader` gained `framework`. Timing comes from the shared `integrations/_timing.py` — a `perf_counter` `Timer` measured *around* the provider call (never `time.time`, which can go backwards mid-call) and a `stamp()` that never overwrites what a wrapper that measured its own TTFT already set — wired through all three provider bases and both streaming wrappers. Agent identity is deliberately not a field — its meaning is per-deployment, so it stays a caller tag in `journey_metadata`. `jsonl.py` decodes timing through `_opt_float`, so a string or null from a third-party object costs that one field, not the turn. Golden fixture regenerated at `2.1`; see [`journey-schema.md`](journey-schema.md#timing-and-provenance-21) |
 
 ---
 
@@ -852,10 +852,10 @@ nothing imports is a phantom dep, and the change that needs one adds it.
 | Module | LOC | Responsibility |
 |---|---|---|
 | `__init__.py` | 208 | Public API. 70 exports; the one place a user imports from |
-| `context.py` | 259 | `ContextVar` journey stack, `SeqAllocator`, `bind()`, and the mutable `agent_id` plus `agent_delta()`. **No I/O at all** |
+| `context.py` | 259 | `ContextVar` journey stack, `SeqAllocator`, `bind()`, and header tag seeding (`project`). **No I/O at all** |
 | `config.py` | 194 | `ODYSSEY_*` env → `Config` (including `ODYSSEY_INSTRUMENT`). Explicit args win; a bad env value falls back rather than failing startup |
 | `client.py` | 691 | The singleton: spool, allocator, drainer, `atexit`, opt-in SIGTERM, counters, `health()`. Also `_resolve_instrument` (what `"auto"`/`"all"`/`"none"`/a list expands to), `_installed` (`find_spec`, never an import), `_default_sink` (`ODYSSEY_ENDPOINT` → `HttpSink`), and `_note_drain_result` (a failed background drain becomes a counted error). `init(sink=...)` still accepts any destination |
-| `capture.py` | 608 | `journey()`, `JourneyHandle`, `observe()`, `_emit()` — which also stamps `Message.agent_id` after a handoff, never over a value the caller set. The never-raise boundary |
+| `capture.py` | 608 | `journey()`, `JourneyHandle`, `observe()`, `_emit()`. The never-raise boundary |
 | `diagnostics.py` | 292 | `scan()` a spool, `render_journey()` for `show`, formatters |
 | `integrations/_base.py` | 300 | Request+response → events: prefix dedup, unknown-block handling, timing/`provider` stamping (Anthropic) |
 | `integrations/anthropic.py` | 375 | Drop-in sync/async client, opt-in patch, sync + async streaming. Provider imported **inside** `__init__` |
@@ -1694,7 +1694,7 @@ or schedule a rewrite of `primitives.py`.
   bump (0′.7) adds nothing to this: it is additive in both directions, so a 2.0
   shard reads under 2.1 and a 2.0 reader ignores 2.1's new optional keys.
 - **Nothing downstream reads the 2.1 fields yet.** `latency_ms`, `ttft_ms`,
-  `provider`, `agent_id` and the header's agent identity are captured, encoded
+  `provider` and the header's `framework` are captured, encoded
   and folded, but `packages/odyssey-schemas`' DTOs, `services/api`, both SDKs
   and `apps/web` know nothing about them — a corpus can be filtered on them by
   hand, not through the read API or the dashboard.

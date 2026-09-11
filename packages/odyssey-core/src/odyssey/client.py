@@ -385,6 +385,7 @@ def init(
     drain_interval: Optional[float] = 30.0,
     drain_batch_size: Optional[int] = None,
     instrument: Any = UNSET,
+    instrument_metadata: Optional[Dict[str, Any]] = None,
     enabled: Optional[bool] = None,
     flush_on_exit: bool = True,
     handle_sigterm: bool = False,
@@ -462,6 +463,13 @@ def init(
     ``init`` has no way to reach. Naming one says so rather than failing as an
     unknown target.
 
+    ``instrument_metadata`` tags the journeys the process-wide integrations
+    (``langchain``, ``otel``) open for themselves. Those are the only journeys
+    nobody chose one at a time -- a patched provider client records into
+    whatever journey the caller already scoped, but a LangChain run that starts
+    outside one opens its own, and without this it carried nothing saying which
+    service produced it. ``project`` rides along already, from ``project=``.
+
     The explicit drop-in (``from odyssey.integrations.anthropic import
     Anthropic``) remains available and is still the clearer thing to read in a
     traceback; it is no longer the thing a deployment has to remember.
@@ -506,7 +514,7 @@ def init(
     if config.flush_on_exit:
         atexit.register(_atexit_flush, client)
     for name in _resolve_instrument(instrument):
-        _instrument(name, client)
+        _instrument(name, client, instrument_metadata)
     return client
 
 
@@ -597,7 +605,12 @@ def _atexit_flush(client: Client) -> None:
         pass
 
 
-def _instrument(name: str, client: Client) -> None:
+def _instrument(
+    name: str, client: Client, metadata: Optional[Dict[str, Any]] = None
+) -> None:
+    """Attach one integration. ``metadata`` tags the journeys the process-wide
+    ones open; the provider patches take none, because a patched client records
+    into whatever journey the caller already scoped."""
     key = name.strip().lower()
     try:
         if key == "anthropic":
@@ -615,11 +628,11 @@ def _instrument(name: str, client: Client) -> None:
         elif key == "langchain":
             from odyssey.integrations.langchain import instrument as instrument_lc
 
-            instrument_lc()
+            instrument_lc(metadata=metadata)
         elif key == "otel":
             from odyssey.integrations.otel import instrument as instrument_otel
 
-            instrument_otel()
+            instrument_otel(metadata=metadata)
         elif key in _ATTACH_ONLY:
             raise ValueError(
                 f"{key!r} attaches to an object the application owns, not to "

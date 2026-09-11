@@ -165,8 +165,6 @@ def decode_header(d: Dict[str, Any]) -> JourneyHeader:
         trace_id=d.get("trace_id"),
         started_at=d.get("started_at"),
         journey_metadata=meta if isinstance(meta, dict) else None,
-        agent_id=d.get("agent_id"),
-        agent_name=d.get("agent_name"),
         framework=d.get("framework"),
     )
 
@@ -298,7 +296,6 @@ def _message(d: Dict[str, Any]) -> Message:
         trainable_status=d.get("trainable_status", "not_trainable"),
         latency_ms=_opt_float(d.get("latency_ms")),
         ttft_ms=_opt_float(d.get("ttft_ms")),
-        agent_id=d.get("agent_id"),
         provider=d.get("provider"),
     )
 

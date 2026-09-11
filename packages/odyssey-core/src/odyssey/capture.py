@@ -22,7 +22,6 @@ training-relevant because tool use is behaviour we want the model to reproduce.
 
 from __future__ import annotations
 
-import dataclasses
 import functools
 import inspect
 import random
@@ -158,14 +157,6 @@ def _emit(
             meta.update(_jsonable(delta))
         if metadata:
             meta.update(_jsonable(metadata))
-
-        # Attribution after a handoff. Only set when the journey's agent has
-        # moved off whatever the header froze (see `JourneyContext.agent_delta`),
-        # and never over a value the caller supplied itself.
-        if message is not None and message.agent_id is None:
-            handed_to = ctx.agent_delta()
-            if handed_to is not None:
-                message = dataclasses.replace(message, agent_id=handed_to)
 
         seq = ctx.next_seq()
         client.spool.record(
@@ -373,16 +364,11 @@ def journey(
 
     client = require_client()
 
-    # Seed the configured project onto every journey unless the caller
-    # already tagged this one explicitly -- a per-journey `project=` kwarg
-    # always wins over the process-wide default from `odyssey.init()`.
+    # The configured `project` is seeded by `JourneyContext._tags()` when the
+    # header is built, so it lands on journeys the integrations open too and
+    # not only on the ones opened here. A per-journey `project=` kwarg still
+    # wins over the process-wide default from `odyssey.init()`.
     tagged_metadata = dict(metadata)
-    if (
-        client is not None
-        and client.config.project is not None
-        and "project" not in tagged_metadata
-    ):
-        tagged_metadata["project"] = client.config.project
 
     client_for_journey = client
     ctx = JourneyContext(

@@ -154,7 +154,6 @@ class PipecatRecorder:
         self,
         *,
         journey_id: str,
-        agent_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.journey_id = journey_id
@@ -187,7 +186,6 @@ class PipecatRecorder:
             metadata=_jsonable(dict(metadata or {})),
             data_source="pipecat",
             framework="pipecat",
-            agent_id=agent_id,
         )
         if client is not None:
             client.count_journey()
@@ -514,7 +512,6 @@ class PipecatRecorder:
 def observer(
     *,
     journey_id: str,
-    agent_id: Optional[str] = None,
     **metadata: Any,
 ) -> Any:
     """A Pipecat observer that records into ``journey_id``.
@@ -549,9 +546,7 @@ def observer(
                 # `object.__init__` takes no arguments and some base classes
                 # are dataclass-shaped. Neither is a reason to fail to record.
                 pass
-            self.recorder = PipecatRecorder(
-                journey_id=journey_id, agent_id=agent_id, metadata=metadata
-            )
+            self.recorder = PipecatRecorder(journey_id=journey_id, metadata=metadata)
 
         async def on_push_frame(self, *args: Any, **kwargs: Any) -> None:
             """Both observer signatures, old and new.
@@ -574,7 +569,6 @@ def attach(
     task: Any,
     *,
     journey_id: str,
-    agent_id: Optional[str] = None,
     **metadata: Any,
 ) -> PipecatRecorder:
     """Record a ``PipelineTask`` into ``journey_id``. The one line to add.
@@ -584,8 +578,9 @@ def attach(
     domain knowledge; for a voice call the platform's own call id is usually
     right, and using it also makes recording idempotent across a worker restart.
 
-    ``agent_id`` names which agent this journey ran, and lands in the shard
-    header rather than on every event.
+    Agent identity is an ordinary tag: ``agent_id=...`` lands in the header's
+    ``journey_metadata`` like any other keyword, under whatever meaning the
+    deployment gives it.
 
     Returns the recorder so the app can add what pipeline frames cannot supply —
     :meth:`PipecatRecorder.signal` and :meth:`PipecatRecorder.reward`.
@@ -593,7 +588,7 @@ def attach(
     Requires :func:`odyssey.init` to have run. Without it, recording is a no-op
     and one warning is emitted; the pipeline is unaffected either way.
     """
-    obs = observer(journey_id=journey_id, agent_id=agent_id, **metadata)
+    obs = observer(journey_id=journey_id, **metadata)
     task.add_observer(obs)
     recorder: PipecatRecorder = obs.recorder
     client = require_client()

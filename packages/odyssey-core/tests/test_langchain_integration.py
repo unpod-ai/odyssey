@@ -16,6 +16,7 @@ import uuid
 import pytest
 
 import odyssey
+from odyssey.primitives import Message
 
 
 class FakeMessage:
@@ -233,7 +234,9 @@ def test_metadata_is_passed_through_to_the_journey_header(tmp_path):
 
     header = client.spool.header(str(run_id))
     assert header is not None
-    assert header.journey_metadata == {"tenant": "acme"}
+    # `project` rides along now too (auto-detected when `init` is not told
+    # one) -- what this test is about is that the caller's tag survives.
+    assert (header.journey_metadata or {})["tenant"] == "acme"
     assert header.data_source == "langchain"
 
 
@@ -469,3 +472,151 @@ def test_one_handler_serves_concurrent_runs(tmp_path, fake_tracers):
     for jid in client.spool.journey_ids():
         contents = [e.message.content for e in client.spool.read(jid) if e.message]
         assert contents in (["from a", "a done"], ["from b", "b done"])
+
+
+# --------------------------------------------------------------------------
+# Attribution: joining an ambient journey, and tagging the ones it creates
+# --------------------------------------------------------------------------
+
+
+def test_a_run_inside_an_ambient_journey_joins_it(tmp_path):
+    """A LangGraph node called during a voice call belongs to that call.
+
+    Keying every top-level run on LangChain's own run id is right when nothing
+    else is recording, and wrong the moment something is: a voice deployment
+    that attaches a recorder to the session and *also* runs a graph inside the
+    call got two journeys with no way to associate them, the graph's under a
+    uuid that appears nowhere else.
+    """
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    with odyssey.journey("call_1"):
+        handler.on_llm_start({}, ["book me a slot"], run_id=run_id)
+        handler.on_llm_end(
+            FakeLLMResult([[FakeGeneration(text="sure, when?")]]), run_id=run_id
+        )
+
+    assert events(str(run_id)) == []
+    kinds = [e.kind for e in events("call_1")]
+    assert kinds == ["message", "message", "terminal"]
+
+
+def test_joining_an_ambient_journey_does_not_close_it(tmp_path):
+    """The borrower never terminates what it did not open.
+
+    `on_llm_end` closes a journey it created, which is right for a standalone
+    run. Doing it to a borrowed context would end the call at the first graph
+    node and strand every turn after it.
+    """
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+
+    with odyssey.journey("call_1") as j:
+        run_id = rid()
+        handler.on_llm_start({}, ["hi"], run_id=run_id)
+        handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="yo")]]), run_id=run_id)
+        # Still open: a turn recorded after the graph finished must still land.
+        j.message(Message(role="assistant", content="anything else?"))
+
+    kinds = [e.kind for e in events("call_1")]
+    assert kinds == ["message", "message", "message", "terminal"]
+    assert kinds.count("terminal") == 1
+
+
+def test_without_an_ambient_journey_the_run_id_still_names_the_journey(tmp_path):
+    """The standalone case is unchanged — this is additive, not a replacement."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="yo")]]), run_id=run_id)
+
+    assert [e.kind for e in events(str(run_id))] == ["message", "message", "terminal"]
+
+
+def test_the_header_names_langchain_as_the_framework(tmp_path):
+    """`framework` says what recorded the shard. The field promised "langchain"
+    as a value and no code path ever produced it."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="yo")]]), run_id=run_id)
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(str(run_id))
+    assert header is not None
+    assert header.framework == "langchain"
+
+
+def test_the_configured_project_tags_a_journey_this_handler_built(tmp_path):
+    """`init(project=...)` is a process-wide tag, and it reached exactly the
+    journeys opened through `journey()` — every integration builds its own
+    `JourneyContext` and so got none, which is most of the corpus."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path, project="super-task")
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="yo")]]), run_id=run_id)
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(str(run_id))
+    assert header is not None
+    assert (header.journey_metadata or {})["project"] == "super-task"
+
+
+def test_a_caller_supplied_project_beats_the_configured_one(tmp_path):
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path, project="super-task")
+    handler = OdysseyCallbackHandler(metadata={"project": "explicit"})
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="yo")]]), run_id=run_id)
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(str(run_id))
+    assert header is not None
+    assert (header.journey_metadata or {})["project"] == "explicit"
+
+
+def test_instrument_tags_the_journeys_it_creates(tmp_path, fake_tracers):
+    """`instrument()` built the handler with no arguments, so a process-wide
+    attachment produced journeys with no tags at all — the one capture path
+    that cannot be told apart afterwards."""
+    from odyssey.integrations.langchain import instrument
+
+    start(tmp_path, instrument="none")
+    instrument(data_source="voice-worker", metadata={"service": "superkik"})
+
+    var, _inheritable = fake_tracers[0]
+    handler = var.get()
+    run_id = rid()
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="yo")]]), run_id=run_id)
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(str(run_id))
+    assert header is not None
+    assert header.data_source == "voice-worker"
+    assert (header.journey_metadata or {})["service"] == "superkik"

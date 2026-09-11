@@ -71,7 +71,7 @@ project has not yet made a versioned release, so entries accumulate under
   otherwise a six-processor pipeline would multiply the corpus by its own
   length. New `odyssey[pipecat]` extra (`pipecat-ai>=0.0.60`); the base class
   is imported lazily and falls back to a plain object when absent.
-- **`SCHEMA_VERSION` `2.0` → `2.1` — timing and agent attribution on the
+- **`SCHEMA_VERSION` `2.0` → `2.1` — timing and provenance on the
   wire** (additive MINOR, both directions safe: every field is optional and
   defaults to `None`, so a 2.0 shard decodes under 2.1 unchanged and a 2.0
   reader ignores the new keys the way a 1.0 reader ignored 1.1's). `Message`
@@ -79,18 +79,17 @@ project has not yet made a versioned release, so entries accumulate under
   only — a request has no duration, and putting the pair's latency on both
   halves double-counts for anything summing the column), `ttft_ms` (streamed
   completions and voice, `None` for a non-streamed call where it would be
-  indistinguishable from `latency_ms`), `agent_id`, and `provider` (the SDK
+  indistinguishable from `latency_ms`), and `provider` (the SDK
   behind the call, distinct from the event's `model_id` — one provider serves
   many models, and an OpenAI-compatible gateway serves models that are not
-  OpenAI's). `JourneyHeader` gained `agent_id`, `agent_name`, and `framework`
+  OpenAI's). `JourneyHeader` gained `framework`
   (`"livekit"`, `"pipecat"`, `"langchain"`, `"otel"`, or `None` for a directly
   wrapped provider client — "which integration is actually feeding the corpus",
-  otherwise only inferable from the shape of what arrived). Attribution
-  follows the same snapshot-plus-delta rule `journey_metadata` already uses:
-  the header names the agent once, and `JourneyContext.agent_delta()` stamps
-  `Message.agent_id` **only** on turns after a handoff, so a single-agent
-  journey (nearly all of them) repeats nothing and a reader takes the header
-  value and overrides it wherever a message names one. Timing is measured in
+  otherwise only inferable from the shape of what arrived). Agent identity is
+  deliberately **not** a schema field: what an agent id means differs per
+  deployment, so it stays a caller tag in `journey_metadata` (`attach(...,
+  agent_id=...)` lands there like any other keyword), where a handoff that
+  retags it already rides as a per-event delta. Timing is measured in
   the shared `integrations/_timing.py` (`Timer`, `perf_counter`-based so a
   wall-clock adjustment mid-call cannot produce a negative duration; `stamp()`
   never overwrites a value an integration that knew better already set) and
@@ -98,14 +97,10 @@ project has not yet made a versioned release, so entries accumulate under
   streaming wrappers. `jsonl.py` decodes the timing fields through an
   `_opt_float` helper — a string or null from a third-party object degrades
   that one field to `None` rather than taking the whole turn down. Golden
-  fixture regenerated at `2.1` with header agent identity, a stamped
+  fixture regenerated at `2.1` with `framework` in the header, a stamped
   assistant turn, and a latency-carrying `voice` event.
-- **LiveKit agent identity and latency events** — `attach()` gained
-  `agent_id`; the header now carries `framework="livekit"` plus the agent
-  LiveKit actually started with, and `session.current_agent` handoffs update
-  `JourneyContext.agent_id`/`agent_name` so subsequent turns carry the new
-  agent (a caller-supplied `agent_id` is never rewritten — it names the
-  deployment's own agent concept). `metrics_collected` readings are recorded
+- **LiveKit framework tag and latency events** — the header now carries
+  `framework="livekit"`. `metrics_collected` readings are recorded
   as `voice` latency events (LLM TTFT, TTS TTFB, EOU delay, STT/processing
   duration, with the stage named in metadata), and an LLM TTFT reading is also
   pipelined onto the next assistant turn's `ttft_ms`.
@@ -134,6 +129,26 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Fixed
 
+- **`init(project=...)` now reaches every journey, not only hand-opened
+  ones.** The tag was seeded inside `capture.journey()`, and every
+  integration — `livekit`, `langchain`, `otel`, `pipecat` — builds its own
+  `JourneyContext`, so the integration-recorded corpus carried no `project`
+  and indexed with a NULL project column. Seeded now by
+  `JourneyContext._tags()` when the header is built; a caller-supplied
+  `project` still wins.
+- **A LangChain run inside an ambient journey joins it.** The handler keyed
+  every top-level run on LangChain's own run id and never consulted
+  `current()`, so a graph invoked during a voice call landed in a second
+  journey under a uuid appearing nowhere else. It now borrows the bound
+  context and never terminates one it borrowed. Standalone runs are unchanged.
+- **Process-wide `langchain`/`otel` attachment can tag what it opens.**
+  `instrument()` built its handler/processor with no arguments, so those
+  journeys carried nothing saying which service produced them. Both now take
+  `data_source=`/`metadata=`, and `init(instrument_metadata=...)` passes
+  metadata through — needed because `instrument()` is idempotent and `init()`'s
+  `auto` attaches first.
+- **`framework` is set for `langchain` and `otel`.** The field documented both
+  values and no code path produced them.
 - **A background drain that failed every tick was completely silent.**
   `IntervalDrainer._loop` kept each tick's `DrainResult` in `last_result` and
   did nothing else, so a sink rejecting every batch — a collector answering

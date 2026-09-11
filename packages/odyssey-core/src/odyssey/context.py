@@ -125,17 +125,11 @@ class JourneyContext:
     trace_id: Optional[str] = None
     started_at: str = field(default_factory=_utc_now_iso)
 
-    # Who is answering, and what recorded it. `framework` and `agent_name` are
-    # fixed for the journey and live only in the header.
-    #
-    # `agent_id` is the exception: it is *mutable*, because a handoff (LiveKit
-    # `session.current_agent`, a LangGraph node, a Pipecat flow node) changes
-    # who is answering mid-journey. The header freezes whoever started, and
-    # :meth:`agent_delta` reports the difference so only the turns that actually
-    # changed hands carry the field -- the same snapshot-plus-delta rule
-    # ``metadata``/:meth:`event_metadata` already follow.
-    agent_id: Optional[str] = None
-    agent_name: Optional[str] = None
+    # What recorded this journey -- odyssey's own capture path, fixed for the
+    # journey and header-only. Agent identity is deliberately not a field: it
+    # means something different to every deployment, so it is a caller tag in
+    # ``metadata``, and a handoff that retags it already rides on the events
+    # through :meth:`event_metadata`.
     framework: Optional[str] = None
     # SDK bookkeeping — integration state, seen-system-prompt, and so on.
     # Deliberately separate from ``metadata``: that one is emitted, this one is
@@ -182,27 +176,35 @@ class JourneyContext:
                 data_source=self.data_source,
                 trace_id=self.trace_id,
                 started_at=self.started_at,
-                journey_metadata=dict(self.metadata) or None,
-                agent_id=self.agent_id,
-                agent_name=self.agent_name,
+                journey_metadata=self._tags(),
                 framework=self.framework,
             )
         return self._header
 
-    def agent_delta(self) -> Optional[str]:
-        """The agent id this event must carry, or ``None`` when the header says it.
+    def _tags(self) -> Optional[Dict[str, Any]]:
+        """Caller tags, plus the process-wide ``project`` when none was given.
 
-        ``None`` for the whole of a single-agent journey, which is nearly all of
-        them: the header already named the agent, and stamping the same string
-        onto every turn is the per-event repetition the header exists to end.
-        After a handoff it returns the new id, and every turn from there carries
-        it until the next change -- so a reader taking the header value and
-        overriding it wherever a message names one gets the right attribution at
-        every seq without tracking handoff events of its own.
+        Seeded here rather than at each construction site because every
+        integration builds its own context -- ``integrations/livekit``,
+        ``langchain``, ``otel``, ``pipecat`` -- and only ``capture.journey()``
+        remembered to apply the tag. ``init(project=...)`` therefore reached
+        the journeys a caller opened by hand and missed the ones the
+        integrations opened, which is most of a real corpus, and a reader
+        grouping by project saw nothing rather than something mislabelled.
+
+        A caller-supplied ``project`` always wins: a per-journey tag is more
+        specific than a process-wide default.
         """
-        if self.agent_id is None:
-            return None
-        return self.agent_id if self.agent_id != self.header().agent_id else None
+        tags = dict(self.metadata)
+        if "project" not in tags:
+            # Local import: `client` imports this module for `SeqAllocator`, so
+            # the dependency can only run one way at module scope.
+            from odyssey.client import require_client
+
+            client = require_client()
+            if client is not None and client.config.project is not None:
+                tags["project"] = client.config.project
+        return tags or None
 
     def event_metadata(self) -> Dict[str, Any]:
         """Caller tags this event must carry because the header does not.

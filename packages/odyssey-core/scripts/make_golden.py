@@ -133,7 +133,7 @@ def golden_events() -> list[JourneyEvent]:
             ),
         ),
         # The accepted answer, thumbs-upped — the `chosen` half. Also the one
-        # turn carrying v2.1's timing and attribution, so the fixture exercises
+        # turn carrying v2.1's timing and provenance, so the fixture exercises
         # them on decode rather than only declaring them in the dataclass.
         _msg(
             8,
@@ -142,7 +142,6 @@ def golden_events() -> list[JourneyEvent]:
                 content="You're all set for Tuesday at 3pm.",
                 latency_ms=812.5,
                 ttft_ms=214.0,
-                agent_id="agent_booking_v3",
                 provider="openai",
             ),
             model_id=MODEL,
@@ -215,12 +214,16 @@ def golden_header() -> JourneyHeader:
         data_source=SOURCE,
         trace_id=TRACE,
         started_at=_ts(0),
-        journey_metadata={"tenant": "acme", "channel": "voice"},
-        # v2.1: who ran the journey and which capture path recorded it. In the
-        # fixture because a field no artifact carries is a field no consumer is
-        # forced to handle -- which is how a schema addition rots.
-        agent_id="agent_booking_v3",
-        agent_name="BookingAgent",
+        # `agent_id` is a caller tag like `tenant`: what it means is the
+        # deployment's business, so it lives here and not in a schema field.
+        journey_metadata={
+            "tenant": "acme",
+            "channel": "voice",
+            "agent_id": "agent_booking_v3",
+        },
+        # v2.1: which capture path recorded it. In the fixture because a field
+        # no artifact carries is a field no consumer is forced to handle --
+        # which is how a schema addition rots.
         framework="livekit",
     )
 

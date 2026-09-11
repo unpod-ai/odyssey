@@ -53,11 +53,11 @@ optional dependency was actually imported.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Set
 
 from odyssey.capture import JourneyHandle, _jsonable
 from odyssey.client import require_client
-from odyssey.context import JourneyContext, SeqAllocator, bind
+from odyssey.context import JourneyContext, SeqAllocator, bind, current
 from odyssey.primitives import Message, Role, TerminationReason, ToolCall, ToolResponse
 
 __all__ = ["OdysseyCallbackHandler"]
@@ -90,6 +90,10 @@ class _Recorder:
         self._journeys: Dict[str, JourneyContext] = {}
         # run_id -> the top-level run_id it belongs to.
         self._roots: Dict[str, str] = {}
+        # Roots whose context was borrowed from an ambient journey rather than
+        # opened here. Tracked so `_end` never terminates someone else's
+        # journey -- see `_ctx_for`.
+        self._borrowed: Set[str] = set()
 
     def _guard(self, label: str, fn: Callable[[], Any]) -> None:
         """Run a capture step from inside a LangChain callback. Never raises
@@ -117,6 +121,20 @@ class _Recorder:
         ctx = self._journeys.get(root)
         if ctx is not None:
             return ctx
+
+        # An ambient journey wins over this run's own id. A graph invoked
+        # during a voice call is part of that call, and keying it on
+        # LangChain's run id instead produced a second journey under a uuid
+        # that appears nowhere else -- two halves of one conversation with
+        # nothing to associate them by. Only when nothing else is recording
+        # does the run id become the journey, which is the standalone case
+        # this integration was written for and is unchanged.
+        ambient = current()
+        if ambient is not None:
+            self._journeys[root] = ambient
+            self._borrowed.add(root)
+            return ambient
+
         client = require_client()
         ctx = JourneyContext(
             journey_id=root,
@@ -125,6 +143,9 @@ class _Recorder:
             ),
             metadata=_jsonable(dict(self._metadata)),
             data_source=self._data_source,
+            # What recorded this shard, as distinct from where the
+            # conversation came from (`data_source`).
+            framework="langchain",
         )
         self._journeys[root] = ctx
         if client is not None:
@@ -143,7 +164,12 @@ class _Recorder:
     ) -> None:
         ctx = self._journeys.pop(root, None)
         self._roots = {k: v for k, v in self._roots.items() if v != root}
-        if ctx is None or ctx.terminated:
+        # A borrowed context belongs to whoever bound it, and they close it.
+        # Terminating it here would end a voice call at its first graph node
+        # and strand every turn after it.
+        borrowed = root in self._borrowed
+        self._borrowed.discard(root)
+        if ctx is None or ctx.terminated or borrowed:
             return
         with bind(ctx):
             JourneyHandle(ctx).close(reason=reason, error=error)
@@ -369,8 +395,16 @@ def OdysseyCallbackHandler(
 _HOOK: Any = None
 
 
-def instrument() -> None:
+def instrument(
+    *, data_source: str = "langchain", metadata: Optional[Dict[str, Any]] = None
+) -> None:
     """Attach the handler to every LangChain run in this process.
+
+    ``data_source`` and ``metadata`` are the same tags
+    :func:`OdysseyCallbackHandler` takes, and they matter more here than on
+    the per-call form: a process-wide attachment is the one capture path whose
+    journeys nobody chose individually, so without them a shard arrives
+    carrying nothing that says which service produced it.
 
     The alternative is the per-call form — ``config={"callbacks": [...]}`` on
     every ``invoke()`` — which is one edit per call site and silently records
@@ -402,7 +436,7 @@ def instrument() -> None:
     # pyrefly: ignore[missing-import]  — optional extra, `odyssey[langchain]`.
     from langchain_core.tracers.context import register_configure_hook
 
-    handler = OdysseyCallbackHandler()
+    handler = OdysseyCallbackHandler(data_source=data_source, metadata=metadata)
     var: ContextVar = ContextVar("odyssey_langchain_handler", default=None)
     # `inheritable=True`: a run started in a child context — a thread from
     # LangChain's own executor, an asyncio task — inherits the handler. Without
