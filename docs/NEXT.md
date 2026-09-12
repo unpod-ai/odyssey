@@ -1,6 +1,6 @@
 # odyssey — session handoff
 
-## Open work — decided 2026-09-12; items 1-3 done, item 4 open
+## Open work — decided 2026-09-12; items 1-4 done, PR #1 next
 
 Everything below lands on `main_v2`, which is PR #1 (`unpod-ai/odyssey#1`).
 PR #1 is **not** to be merged until this work is done: it is the last step, not
@@ -61,15 +61,20 @@ included, already consumed) whichever service fills the LLM slot — both
 recorders are provider-agnostic by construction. Tests:
 `tests/test_realtime.py`.
 
-### 4. Read path for the 2.1 fields
+### 4. Read path for the 2.1 fields — **done**
 
-`framework`, `latency_ms`, `ttft_ms`, `provider` and the `<journey_id>.llm`
-link (`journey_metadata.parent_journey_id`) are written but nothing reads them.
-End to end: index columns in `services/api` (`index/journeys_indexer.py`) →
-DTOs in `packages/odyssey-schemas` → regenerate `services/api/openapi.json` and
-**both** SDKs (codegen does not wire the top-level client; see the `GET /metrics`
-precedent) → `apps/web`. This is the first item here to trigger `ci-sdk`,
-`ci-schemas`, `ci-web` and `codegen-drift`, which PR #1 has not exercised.
+End to end: `odyssey-store` gained `framework`/`parent_journey_id`/`providers`/
+`avg_latency_ms`/`avg_ttft_ms` on `journeys` plus an idempotent `ADD COLUMN`
+pass for a database that predates them; `journeys_indexer` writes them;
+`domain/provenance.py` is the single place that folds per-event values into
+per-journey ones, so the index-backed listing and the shard-backed detail
+cannot disagree; `JourneyProvenanceOut` rides on the summary and detail DTOs
+and `StepOut` carries per-turn `provider`/`latency_ms`/`ttft_ms`;
+`openapi.json`, `sdk/python` (no drift — it re-exports the DTOs) and
+`sdk/javascript`'s `types.generated.ts` regenerated; `apps/web` shows the
+columns, the stat cards, per-step timing and a link from a `.llm` journey back
+to its call. Verified locally: `pytest` for api/store/schemas, `next build`,
+`vitest`, `eslint`, and all three codegen `--check`s.
 
 ### Release checklist — after the above, then merge PR #1
 
@@ -86,10 +91,9 @@ precedent) → `apps/web`. This is the first item here to trigger `ci-sdk`,
 
 ### Where things stand
 
-`main_v2` = the three small fixes above on top of `222c04a`, CI green, no
-conflicts with `main`. Known gaps that are tracked but unscheduled: nothing
-beyond items 2 and 3. Watch the size — PR #1 is already ~2,750 added lines and
-items 2-4 roughly double it.
+All four items are on `main_v2`. What is left is the release checklist above,
+starting with PR #1 — which is now ~6k added lines, so review it by commit
+rather than as one diff. Nothing else is tracked and unscheduled.
 
 ## One integration point + schema 2.1 (timing, provenance) + Pipecat — built, tested, on `main_v2`
 

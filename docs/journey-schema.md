@@ -103,6 +103,21 @@ bookkeeping, and a wall-clock adjustment mid-call cannot yield a negative
 duration), and a `stamp()` that never overwrites a value an integration
 that knew better — a streaming wrapper with its own TTFT — already set.
 
+### Reading them back
+
+`services/api` indexes the per-journey shape of all four at fold time
+(`domain/provenance.py`, one place so the listing and the detail endpoint
+cannot disagree): `framework`, `parent_journey_id`, the distinct `providers`
+that served the journey, and `avg_latency_ms`/`avg_ttft_ms` — averages, because
+a journey's turns are a conversation and the number a deployment tunes against
+is what *one* reply costs. They ride on `JourneySummaryOut`/`JourneyDetailOut`
+as `provenance`, and `StepOut` carries the `provider`/`latency_ms`/`ttft_ms` of
+the turn that step produced. The dashboard shows both, and the
+`parent_journey_id` on a `.llm` journey is a link back to the call it belongs
+to. A journey recorded before 2.1 reports every one of them as `null` rather
+than omitting them: a reader must not have to tell "not recorded" apart from
+"this build does not know about it".
+
 ### Agent identity is a caller tag
 
 There is deliberately no `agent_id` field. What an agent id *is* differs

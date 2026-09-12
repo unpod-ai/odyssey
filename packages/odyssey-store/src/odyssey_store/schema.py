@@ -44,6 +44,11 @@ SCHEMA_STATEMENTS: list[str] = [
         num_tool_calls    INTEGER,
         num_tool_failures INTEGER,
         tool_error_rate   REAL,
+        framework         TEXT,
+        parent_journey_id TEXT,
+        providers         TEXT,
+        avg_latency_ms    REAL,
+        avg_ttft_ms       REAL,
         source_path       TEXT NOT NULL,
         source_mtime_ns   INTEGER NOT NULL,
         indexed_at        TEXT NOT NULL
@@ -81,4 +86,20 @@ SCHEMA_STATEMENTS: list[str] = [
         indexed_at  TEXT NOT NULL
     )
     """,
+]
+
+
+# Columns added to a table that already shipped without them. The index tables
+# are rebuildable, but a deployment holding one must not have to know that --
+# and `products` in the same file is not rebuildable at all, so "delete it and
+# start again" is never the answer here. SQLite has no
+# `ADD COLUMN IF NOT EXISTS`, so each is applied only when `PRAGMA table_info`
+# says it is missing; see `db.connect`.
+ADDED_COLUMNS: list[tuple[str, str, str]] = [
+    # Schema 2.1's provenance and timing, as `services/api` indexes them.
+    ("journeys", "framework", "TEXT"),
+    ("journeys", "parent_journey_id", "TEXT"),
+    ("journeys", "providers", "TEXT"),
+    ("journeys", "avg_latency_ms", "REAL"),
+    ("journeys", "avg_ttft_ms", "REAL"),
 ]

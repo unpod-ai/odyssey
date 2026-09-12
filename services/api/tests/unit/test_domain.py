@@ -46,7 +46,7 @@ def test_get_journey_not_found_raises(tmp_path):
 
 def test_get_journey_real_shard(tmp_path):
     _write_journey(tmp_path / "2026-08-28")
-    result = journeys.get_journey(tmp_path, JID)
+    result, _marks = journeys.get_journey(tmp_path, JID)
     assert result.journey_id == JID
     assert result.complete is True
 
@@ -65,7 +65,7 @@ def test_list_journeys_with_status_product_scoped(tmp_path):
     out = journeys.list_journeys_with_status(tmp_path)
     assert out == [(JID, "2026-08-28", True)]
 
-    result = journeys.get_journey(tmp_path, JID)
+    result, _marks = journeys.get_journey(tmp_path, JID)
     assert result.journey_id == JID
     assert result.complete is True
 

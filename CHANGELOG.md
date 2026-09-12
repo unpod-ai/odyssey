@@ -23,6 +23,21 @@ project has not yet made a versioned release, so entries accumulate under
   and Anthropic's `AsyncMessages.create`, `beta.messages` and `stream=True`
   (Pipecat's Anthropic service) are captured the same way, through one shared
   implementation (`integrations/_call.py`, `_streams.py`, `_scope.py`).
+- **The 2.1 fields have a read path.** `framework`, `latency_ms`, `ttft_ms`,
+  `provider` and the `<journey_id>.llm` link were written and nothing read
+  them. `services/api` now indexes the per-journey shape of all of them at fold
+  time — `framework`, `parent_journey_id`, the distinct `providers`, and
+  `avg_latency_ms`/`avg_ttft_ms` — in one shared place
+  (`domain/provenance.py`), so a listing answered from the SQLite index and a
+  detail answered from the shard cannot disagree. New `provenance` object on
+  `JourneySummaryOut`/`JourneyDetailOut`, and `provider`/`latency_ms`/`ttft_ms`
+  on `StepOut`; `openapi.json` and both SDKs regenerated. The dashboard's
+  journeys table gains provider and average latency/TTFT columns, the detail
+  page gains the same as stat cards plus per-step timing, and a `.llm`
+  journey's `parent_journey_id` is a link back to the call it came from.
+  `odyssey-store` gained the columns plus an idempotent `ADD COLUMN` pass, so a
+  database that predates them is migrated rather than rebuilt — the `products`
+  table in the same file is not rebuildable.
 - **Realtime/Live capture** (`integrations/realtime.py`) for an app that owns a
   speech-to-speech websocket itself: OpenAI Realtime, Azure Realtime (the same
   protocol) and Gemini Live. There is no `chat.completions.create` to patch —

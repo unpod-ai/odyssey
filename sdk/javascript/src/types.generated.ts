@@ -60,6 +60,7 @@ export interface JourneyDetailOut {
   incomplete_reason?: string | null;
   journey_id: string;
   metrics: JourneyMetricsOut;
+  provenance?: JourneyProvenanceOut;
   steps: StepOut[];
 }
 
@@ -78,10 +79,19 @@ export interface JourneyPageOut {
   total: number;
 }
 
+export interface JourneyProvenanceOut {
+  avg_latency_ms?: number | null;
+  avg_ttft_ms?: number | null;
+  framework?: string | null;
+  parent_journey_id?: string | null;
+  providers?: string[];
+}
+
 export interface JourneySummaryOut {
   complete: boolean;
   date: string;
   journey_id: string;
+  provenance?: JourneyProvenanceOut;
 }
 
 export interface MetricsPageOut {
@@ -135,6 +145,9 @@ export interface ProjectCountOut {
 
 export interface StepOut {
   index: number;
+  latency_ms?: number | null;
   message_count: number;
+  provider?: string | null;
   trainable_status: string;
+  ttft_ms?: number | null;
 }

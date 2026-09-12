@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from odyssey_store.schema import SCHEMA_STATEMENTS
+from odyssey_store.schema import ADDED_COLUMNS, SCHEMA_STATEMENTS
 
 _PREFIX = "sqlite:///"
 
@@ -51,6 +51,7 @@ def connect(uri: str) -> sqlite3.Connection:
         conn.execute("PRAGMA busy_timeout=5000")
         for statement in SCHEMA_STATEMENTS:
             conn.execute(statement)
+        _add_missing_columns(conn)
         conn.commit()
     except sqlite3.DatabaseError as exc:
         conn.close()
@@ -60,3 +61,17 @@ def connect(uri: str) -> sqlite3.Connection:
             f"backup rather than deleting it."
         ) from exc
     return conn
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    """Apply `schema.ADDED_COLUMNS` to a file that predates them.
+
+    Idempotent like the rest of schema application: a fresh database already
+    has every column from its `CREATE TABLE`, so this does nothing, and an
+    older one gains them without being rebuilt.
+    """
+    for table, column, decl in ADDED_COLUMNS:
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing or column in existing:
+            continue
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
