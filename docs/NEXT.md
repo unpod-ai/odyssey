@@ -1,6 +1,6 @@
 # odyssey — session handoff
 
-## Open work — decided 2026-09-12; items 1-2 done, items 3-4 open
+## Open work — decided 2026-09-12; items 1-3 done, item 4 open
 
 Everything below lands on `main_v2`, which is PR #1 (`unpod-ai/odyssey#1`).
 PR #1 is **not** to be merged until this work is done: it is the last step, not
@@ -43,13 +43,23 @@ and four operations: `Converse`, `ConverseStream`, `InvokeModel`,
 stream under a key, which is how boto3 returns one. `auto` attaches it when
 `botocore` is installed. Tests: `tests/test_bedrock.py` against a fake botocore.
 
-### 3. Realtime/Live capture
+### 3. Realtime/Live capture — **done**
 
-OpenAI Realtime, Azure Realtime (`AzureRealtimeLLMService`), Gemini Live
-(`GeminiLiveLLMService`, `GeminiMultimodalLiveLLMService`,
-`GeminiLiveVertexLLMService`). Speech-to-speech over a websocket: there is no
-chat-completions call to patch, so capture has to come from session events.
-Record turns + latency only (settled above).
+`integrations/realtime.py`: `attach(journey_id=...)` for an app driving its own
+event loop, `observe(conn, journey_id=...)` for one that should not change. One
+recorder reads both vendors — OpenAI/Azure events carry a `type`, Gemini Live
+messages carry `server_content`, and every field is read by attribute *or* key.
+Turns, tool calls (plus `tool_result()` for the half that travels up the
+socket), barge-in, `ttft_ms`/`latency_ms`, and the session `instructions` as the
+system message. Registered for STALE closure like the other recorders, and named
+in `_ATTACH_ONLY` so `instrument=["realtime"]` answers with the `attach` call.
+
+**Inside LiveKit or Pipecat there was nothing to do.** `AgentSession` emits
+`conversation_item_added` whether its LLM is `openai.realtime.RealtimeModel` or
+a chat model, and a Pipecat pipeline pushes the same frames (`TTSTextFrame`
+included, already consumed) whichever service fills the LLM slot — both
+recorders are provider-agnostic by construction. Tests:
+`tests/test_realtime.py`.
 
 ### 4. Read path for the 2.1 fields
 

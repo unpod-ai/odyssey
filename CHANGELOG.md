@@ -23,6 +23,25 @@ project has not yet made a versioned release, so entries accumulate under
   and Anthropic's `AsyncMessages.create`, `beta.messages` and `stream=True`
   (Pipecat's Anthropic service) are captured the same way, through one shared
   implementation (`integrations/_call.py`, `_streams.py`, `_scope.py`).
+- **Realtime/Live capture** (`integrations/realtime.py`) for an app that owns a
+  speech-to-speech websocket itself: OpenAI Realtime, Azure Realtime (the same
+  protocol) and Gemini Live. There is no `chat.completions.create` to patch —
+  audio goes up, audio comes down — so the conversation is read from the server
+  events, and it produces the corpus shape the LiveKit and Pipecat recorders
+  already produce: user and assistant turns (committed transcripts, never the
+  partials), tool calls plus the results the app sends back
+  (`RealtimeRecorder.tool_result`, the one half the server never reports),
+  barge-in as an `interrupted` turn and a `barge_in` voice event, `ttft_ms`
+  measured from the caller falling silent to the first word back, `latency_ms`
+  to the end of the reply, and the session's `instructions` as the system
+  message, re-recorded whenever it changes. `attach(journey_id=...)` returns the
+  recorder for an existing event loop; `observe(conn, journey_id=...)` wraps the
+  stream for a loop that should not change. Both vendors are read by one
+  recorder — OpenAI's events carry a `type`, Gemini's carry `server_content`, so
+  the shape selects the reader — and every field is read by attribute *or* key,
+  because the same session is a pydantic object through an SDK and a dict
+  through a bare websocket. Inside LiveKit or Pipecat nothing changes: both
+  recorders are provider-agnostic and already capture a realtime model.
 - **AWS Bedrock capture** (`integrations/bedrock.py`), the provider behind
   LiveKit's `aws.LLM` and Pipecat's `AWSBedrockLLMService`. Neither touches a
   provider SDK odyssey could wrap: boto3 builds a client's methods at runtime,

@@ -76,7 +76,7 @@ odyssey/
 - **Architectural Highlights**:
   - `primitives.py`: Formal definition of the unified `JourneyEvent` schema.
   - `spool.py`: Crash-resilient local disk spooler that automatically redacts sensitive credentials at record time.
-  - `integrations/`: Drop-in capture wrappers for OpenAI, Anthropic, Gemini, Bedrock, Langchain, and LiveKit.
+  - `integrations/`: Drop-in capture wrappers for OpenAI, Anthropic, Gemini, Bedrock, Realtime/Live, Langchain, and LiveKit.
 - **Verification**: `cd packages/odyssey-core && uv sync --extra dev && bash scripts/run_tests.sh all`
 </details>
 

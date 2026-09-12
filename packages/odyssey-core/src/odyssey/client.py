@@ -72,6 +72,7 @@ _ALL = _AUTO + ("otel",)
 _ATTACH_ONLY = {
     "livekit": "odyssey.integrations.livekit.attach(session, journey_id=...)",
     "pipecat": "odyssey.integrations.pipecat.attach(task, journey_id=...)",
+    "realtime": "odyssey.integrations.realtime.attach(journey_id=...)",
 }
 
 # What a journey that was never closed is stamped with at process exit. `STALE`
