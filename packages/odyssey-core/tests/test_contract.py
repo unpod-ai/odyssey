@@ -190,7 +190,14 @@ def test_the_fixture_header_carries_journey_identity():
     assert h.data_source == "golden"
     assert h.trace_id == "trace_golden_0001"
     assert h.started_at == "2026-01-01T09:00:00+00:00"
-    assert h.journey_metadata == {"tenant": "acme", "channel": "voice"}
+    # `agent_id` is a caller tag like `tenant`, not a schema field: what it
+    # means is the producer's business.
+    assert h.journey_metadata == {
+        "tenant": "acme",
+        "channel": "voice",
+        "agent_id": "agent_booking_v3",
+    }
+    assert h.framework == "livekit"
 
 
 def test_the_header_is_what_labels_the_folded_journey():

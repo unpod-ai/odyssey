@@ -120,6 +120,12 @@ def fake_sdk(monkeypatch):
 
 
 def start(tmp_path, **kw):
+    # `instrument="none"`: this file is about the drop-in client, and its fake
+    # SDK is a bare module with no `resources` package for the patcher to reach.
+    # Left at the default, `init()` would find the fake in `sys.modules`, try to
+    # patch it, and count a failure that says nothing about the wrapper under
+    # test. `test_one_integration_point.py` covers auto-instrumentation.
+    kw.setdefault("instrument", "none")
     return odyssey.init(
         spool_dir=tmp_path / "spool",
         out_dir=tmp_path / "out",
@@ -576,3 +582,26 @@ def test_init_never_dies_because_instrumentation_failed(tmp_path, monkeypatch):
         instrument=["gemini-typo"],
     )
     assert client.stats.capture_errors == 1
+
+
+# --------------------------------------------------------------------------
+# v2.1: how long the call took, and which SDK made it
+# --------------------------------------------------------------------------
+
+
+def test_the_response_turn_carries_latency_and_provider(tmp_path):
+    start(tmp_path)
+    from odyssey.integrations.gemini import Client
+
+    client = Client()
+    with odyssey.journey("j_lat"):
+        client.models.generate_content(model="gemini-2.0-flash", contents="hello")
+
+    answers = [
+        e.message
+        for e in events("j_lat")
+        if e.kind == "message" and e.message and e.message.role == "assistant"
+    ]
+    assert answers, "the model turn must be recorded"
+    assert answers[0].latency_ms is not None
+    assert answers[0].provider == "gemini"

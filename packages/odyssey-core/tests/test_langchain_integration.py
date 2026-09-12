@@ -16,6 +16,7 @@ import uuid
 import pytest
 
 import odyssey
+from odyssey.primitives import Message
 
 
 class FakeMessage:
@@ -70,6 +71,10 @@ def events(jid):
 
 def rid():
     return uuid.uuid4()
+
+
+def messages(jid):
+    return [e.message for e in events(jid) if e.kind == "message" and e.message]
 
 
 def test_importing_odyssey_does_not_import_langchain(monkeypatch):
@@ -233,7 +238,9 @@ def test_metadata_is_passed_through_to_the_journey_header(tmp_path):
 
     header = client.spool.header(str(run_id))
     assert header is not None
-    assert header.journey_metadata == {"tenant": "acme"}
+    # `project` rides along now too (auto-detected when `init` is not told
+    # one) -- what this test is about is that the caller's tag survives.
+    assert (header.journey_metadata or {})["tenant"] == "acme"
     assert header.data_source == "langchain"
 
 
@@ -246,6 +253,114 @@ def test_a_capture_failure_never_raises(tmp_path):
     run_id = rid()
     # `generations=None` would break naive iteration; must be swallowed, not raised.
     handler.on_llm_end(FakeLLMResult(None), run_id=run_id)  # no prior on_llm_start
+
+
+# --------------------------------------------------------------------------
+# What the provider patch underneath measured
+# --------------------------------------------------------------------------
+
+
+def _report(**measured):
+    """What the patched provider SDK does at the end of a call it is not
+    recording (`integrations/_call.py`), driven by hand here so this file
+    still needs no provider SDK."""
+    from odyssey.integrations._reentry import framework_call, report_framework_call
+
+    framework = framework_call()
+    assert framework is not None, "the handler did not mark its run"
+    report_framework_call(framework, **measured)
+
+
+def test_a_turn_carries_the_provider_and_timing_measured_below_it(tmp_path):
+    """The handler records the turn and the patch underneath stays out of it —
+    but the patch is the only layer that sees who served the call."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_chat_model_start({}, [[FakeMessage("human", "hi")]], run_id=run_id)
+    _report(provider="groq", latency_ms=120.5, ttft_ms=40.25)
+    handler.on_llm_end(
+        FakeLLMResult([[FakeGeneration(message=FakeMessage("ai", "hello!"))]]),
+        run_id=run_id,
+    )
+
+    answer = messages(str(run_id))[-1]
+    assert answer.role == "assistant"
+    assert (answer.provider, answer.latency_ms, answer.ttft_ms) == (
+        "groq",
+        120.5,
+        40.25,
+    )
+
+
+def test_the_request_turn_is_not_stamped_with_the_calls_latency(tmp_path):
+    """A request has no duration of its own; stamping both halves would double
+    the call for anything summing the column."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    _report(provider="openai", latency_ms=10.0)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="hey")]]), run_id=run_id)
+
+    asked = messages(str(run_id))[0]
+    assert asked.role == "user"
+    assert (asked.latency_ms, asked.provider) == (None, None)
+
+
+def test_the_last_attempt_under_one_run_is_the_one_stamped(tmp_path):
+    """A retry answers from wherever it ended up, not from where it failed."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    _report(provider="openai", latency_ms=9.0)
+    _report(provider="together", latency_ms=11.0)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="hey")]]), run_id=run_id)
+
+    answer = messages(str(run_id))[-1]
+    assert (answer.provider, answer.latency_ms) == ("together", 11.0)
+
+
+def test_a_measurement_for_a_finished_run_is_dropped(tmp_path):
+    """A stream drained after its run ended has no turn left to stamp, and
+    must not leave an entry nothing ever pops."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="hey")]]), run_id=run_id)
+    handler.observed(str(run_id), provider="openai", latency_ms=10.0)
+
+    answer = messages(str(run_id))[-1]
+    assert answer.provider is None
+
+
+def test_an_errored_run_leaves_no_measurement_behind(tmp_path):
+    """A run that never reaches `on_llm_end` still has to let its measurement go."""
+    from odyssey.integrations.langchain import _Recorder
+
+    start(tmp_path)
+    recorder = _Recorder(data_source="langchain", metadata=None)
+    run_id = rid()
+
+    recorder.on_llm_start({}, ["hi"], run_id=run_id)
+    recorder.note_provider_call(str(run_id), provider="openai", latency_ms=10.0)
+    recorder.on_llm_error(RuntimeError("provider down"), run_id=run_id)
+
+    assert recorder._measured == {}
 
 
 # --------------------------------------------------------------------------
@@ -359,3 +474,261 @@ def test_a_toolnode_inside_a_langgraph_run_records_the_tool_call(tmp_path):
     assert tool_responses[0].tool_response is not None
     assert tool_responses[0].tool_response.response == "booked mon"
     assert recorded[-1].kind == "terminal"
+
+
+# --------------------------------------------------------------------------
+# Process-wide attachment
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_tracers(monkeypatch):
+    """A stand-in for ``langchain_core.tracers.context``.
+
+    Records what was registered, which is the only observable effect: LangChain
+    reads the registered ``ContextVar`` when it assembles a run's callbacks, and
+    there is nothing to invoke from the outside.
+    """
+    context_mod = types.ModuleType("langchain_core.tracers.context")
+    registered: list = []
+
+    def register_configure_hook(var, inheritable, handle_class=None, env_var=None):
+        registered.append((var, inheritable))
+
+    context_mod.register_configure_hook = register_configure_hook  # type: ignore[attr-defined]
+    tracers_mod = types.ModuleType("langchain_core.tracers")
+    tracers_mod.context = context_mod  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "langchain_core.tracers", tracers_mod)
+    monkeypatch.setitem(sys.modules, "langchain_core.tracers.context", context_mod)
+    sys.modules["langchain_core"].tracers = tracers_mod  # type: ignore[attr-defined]
+    from odyssey.integrations.langchain import uninstrument
+
+    uninstrument()
+    yield registered
+    uninstrument()
+
+
+def test_the_handler_attaches_process_wide(tmp_path, fake_tracers):
+    """The per-call form is one edit per call site, and records nothing at the
+    site somebody forgot. This is what makes `init()` the single line."""
+    from odyssey.integrations.langchain import instrument, is_instrumented
+
+    start(tmp_path)
+    instrument()
+
+    assert is_instrumented()
+    var, inheritable = fake_tracers[0]
+    assert var.get() is not None
+
+
+def test_the_hook_is_inheritable(tmp_path, fake_tracers):
+    """A run started in a child context — LangChain's own executor thread, an
+    asyncio task — is exactly the fan-out case that most needs tracing."""
+    from odyssey.integrations.langchain import instrument
+
+    start(tmp_path)
+    instrument()
+
+    assert fake_tracers[0][1] is True
+
+
+def test_attaching_twice_registers_one_hook(tmp_path, fake_tracers):
+    from odyssey.integrations.langchain import instrument
+
+    start(tmp_path)
+    instrument()
+    instrument()
+
+    assert len(fake_tracers) == 1
+
+
+def test_detaching_clears_the_handler(tmp_path, fake_tracers):
+    from odyssey.integrations.langchain import (
+        instrument,
+        is_instrumented,
+        uninstrument,
+    )
+
+    start(tmp_path)
+    instrument()
+    var = fake_tracers[0][0]
+    uninstrument()
+
+    assert not is_instrumented()
+    assert var.get() is None
+
+
+def test_detaching_when_nothing_was_attached_is_safe():
+    from odyssey.integrations.langchain import uninstrument
+
+    uninstrument()
+
+
+def test_one_handler_serves_concurrent_runs(tmp_path, fake_tracers):
+    """Safe because every journey is keyed on the run tree's root id, not on
+    instance state — two interleaved runs never see each other's turns."""
+    from odyssey.integrations.langchain import instrument
+
+    start(tmp_path)
+    instrument()
+    handler = fake_tracers[0][0].get()
+
+    a, b = uuid.uuid4(), uuid.uuid4()
+    handler.on_llm_start({}, ["from a"], run_id=a, parent_run_id=None)
+    handler.on_llm_start({}, ["from b"], run_id=b, parent_run_id=None)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="a done")]]), run_id=a)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="b done")]]), run_id=b)
+
+    client = odyssey.get_client()
+    assert client is not None
+    for jid in client.spool.journey_ids():
+        contents = [e.message.content for e in client.spool.read(jid) if e.message]
+        assert contents in (["from a", "a done"], ["from b", "b done"])
+
+
+# --------------------------------------------------------------------------
+# Attribution: joining an ambient journey, and tagging the ones it creates
+# --------------------------------------------------------------------------
+
+
+def test_a_run_inside_an_ambient_journey_joins_it(tmp_path):
+    """A LangGraph node called during a voice call belongs to that call.
+
+    Keying every top-level run on LangChain's own run id is right when nothing
+    else is recording, and wrong the moment something is: a voice deployment
+    that attaches a recorder to the session and *also* runs a graph inside the
+    call got two journeys with no way to associate them, the graph's under a
+    uuid that appears nowhere else.
+    """
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    with odyssey.journey("call_1"):
+        handler.on_llm_start({}, ["book me a slot"], run_id=run_id)
+        handler.on_llm_end(
+            FakeLLMResult([[FakeGeneration(text="sure, when?")]]), run_id=run_id
+        )
+
+    assert events(str(run_id)) == []
+    kinds = [e.kind for e in events("call_1")]
+    assert kinds == ["message", "message", "terminal"]
+
+
+def test_joining_an_ambient_journey_does_not_close_it(tmp_path):
+    """The borrower never terminates what it did not open.
+
+    `on_llm_end` closes a journey it created, which is right for a standalone
+    run. Doing it to a borrowed context would end the call at the first graph
+    node and strand every turn after it.
+    """
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+
+    with odyssey.journey("call_1") as j:
+        run_id = rid()
+        handler.on_llm_start({}, ["hi"], run_id=run_id)
+        handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="yo")]]), run_id=run_id)
+        # Still open: a turn recorded after the graph finished must still land.
+        j.message(Message(role="assistant", content="anything else?"))
+
+    kinds = [e.kind for e in events("call_1")]
+    assert kinds == ["message", "message", "message", "terminal"]
+    assert kinds.count("terminal") == 1
+
+
+def test_without_an_ambient_journey_the_run_id_still_names_the_journey(tmp_path):
+    """The standalone case is unchanged — this is additive, not a replacement."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="yo")]]), run_id=run_id)
+
+    assert [e.kind for e in events(str(run_id))] == ["message", "message", "terminal"]
+
+
+def test_the_header_names_langchain_as_the_framework(tmp_path):
+    """`framework` says what recorded the shard. The field promised "langchain"
+    as a value and no code path ever produced it."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="yo")]]), run_id=run_id)
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(str(run_id))
+    assert header is not None
+    assert header.framework == "langchain"
+
+
+def test_the_configured_project_tags_a_journey_this_handler_built(tmp_path):
+    """`init(project=...)` is a process-wide tag, and it reached exactly the
+    journeys opened through `journey()` — every integration builds its own
+    `JourneyContext` and so got none, which is most of the corpus."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path, project="super-task")
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="yo")]]), run_id=run_id)
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(str(run_id))
+    assert header is not None
+    assert (header.journey_metadata or {})["project"] == "super-task"
+
+
+def test_a_caller_supplied_project_beats_the_configured_one(tmp_path):
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path, project="super-task")
+    handler = OdysseyCallbackHandler(metadata={"project": "explicit"})
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="yo")]]), run_id=run_id)
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(str(run_id))
+    assert header is not None
+    assert (header.journey_metadata or {})["project"] == "explicit"
+
+
+def test_instrument_tags_the_journeys_it_creates(tmp_path, fake_tracers):
+    """`instrument()` built the handler with no arguments, so a process-wide
+    attachment produced journeys with no tags at all — the one capture path
+    that cannot be told apart afterwards."""
+    from odyssey.integrations.langchain import instrument
+
+    start(tmp_path, instrument="none")
+    instrument(data_source="voice-worker", metadata={"service": "superkik"})
+
+    var, _inheritable = fake_tracers[0]
+    handler = var.get()
+    run_id = rid()
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="yo")]]), run_id=run_id)
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(str(run_id))
+    assert header is not None
+    assert header.data_source == "voice-worker"
+    assert (header.journey_metadata or {})["service"] == "superkik"

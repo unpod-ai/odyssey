@@ -1,7 +1,7 @@
 """odyssey — agent traces in, training corpora out.
 
-One integration point. Call :func:`init` once at process start; everything after
-that is ambient::
+One integration point, and it means one. Call :func:`init` once at process
+start; everything after that is ambient::
 
     import odyssey
     odyssey.init()
@@ -10,10 +10,26 @@ that is ambient::
         ...                      # journey_id and seq come from context
         j.signal("thumbs_up")    # the raw material for preference training
 
-Automatic provider capture is an import swap and nothing else::
+That call is all a provider-calling app needs. ``init`` defaults to
+``instrument="auto"``: every provider SDK actually installed (``anthropic``,
+``openai``, ``google-genai`` — and every OpenAI-compatible gateway through the
+same client) is patched in place, and LangChain's handler is registered
+process-wide, so there is no import to swap and no callback to thread through
+each ``invoke()``. Set ``ODYSSEY_INSTRUMENT`` or pass ``instrument=`` to narrow
+it; ``"all"`` adds the OpenTelemetry bridge, which ``auto`` leaves out because
+it would double-record anything a patched client already captured.
+
+The explicit drop-in still works and is still the clearer thing to read in a
+traceback — it is just no longer something a deployment has to remember::
 
     from odyssey.integrations.anthropic import Anthropic
     client = Anthropic()         # every messages.create() is recorded
+
+Voice frameworks attach to an object the app owns rather than to the process,
+so they take one line each and no more::
+
+    odyssey.integrations.livekit.attach(session, journey_id=ctx.room.name)
+    odyssey.integrations.pipecat.attach(task, journey_id=call_id)
 
 Recording is local and synchronous: an event is appended to an on-disk spool and
 the call returns. A background drainer ships batches out of band, so the

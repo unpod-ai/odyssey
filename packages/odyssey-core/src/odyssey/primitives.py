@@ -60,6 +60,29 @@ class Message:
     metadata: Optional[Dict[str, Any]] = None
     reasoning: Optional[str] = None
     trainable_status: TrainableStatus = "not_trainable"
+    # --- v2.1 timing and provenance --------------------------------------
+    # All optional and all defaulted, so a v2.0 shard decodes unchanged and a
+    # v2.0 reader ignores them. Added because a corpus that cannot say how long
+    # a turn took, or which SDK produced it, cannot be filtered on either.
+    #
+    # Deliberately no agent identity here. What an "agent id" is differs per
+    # deployment -- a config row id, a version tag, a class name -- so it is a
+    # caller tag in `journey_metadata`, where a handoff that retags it already
+    # rides as a per-event delta (`JourneyContext.event_metadata`).
+    #
+    # Wall time of the provider call that produced this turn, request sent to
+    # response returned. Recorded on the response turn only -- a request turn
+    # has no duration of its own.
+    latency_ms: Optional[float] = None
+    # Time to first token. Meaningful for a streamed completion and for voice,
+    # where LiveKit/Pipecat report it directly; None for a non-streamed call,
+    # where it would be indistinguishable from `latency_ms`.
+    ttft_ms: Optional[float] = None
+    # The SDK behind the call -- "openai", "anthropic", "gemini", or whatever a
+    # voice framework names its plugin. Distinct from `model_id`, which is on
+    # the event: one provider serves many models, and an OpenAI-compatible
+    # gateway serves models that are not OpenAI's at all.
+    provider: Optional[str] = None
 
     def is_empty(self) -> bool:
         return (
@@ -233,7 +256,14 @@ class PiiPolicy:
 # and why the reader in jsonl.py refuses to parse a 1.x shard's major version
 # against a 2.x reader (or vice versa) instead of guessing. No migration tool
 # ships with this bump; a 1.x shard on disk simply stops parsing.
-SCHEMA_VERSION = "2.0"
+#
+# 2.1 — additive: `Message` gained timing and provenance (`latency_ms`,
+# `ttft_ms`, `provider`) and the header gained `framework`. Every one is
+# optional and defaults to None, so a 2.0 reader ignores the extra keys exactly
+# the way a 1.0 reader ignored 1.1's, and a 2.0 shard decodes under 2.1
+# unchanged.
+# Additive both directions — hence MINOR.
+SCHEMA_VERSION = "2.1"
 
 EventKind = Literal["message", "signal", "reward", "terminal", "voice"]
 SignalKind = Literal["thumbs_up", "thumbs_down", "regenerated", "user_edit"]
@@ -282,6 +312,12 @@ class JourneyHeader:
     data_source: Optional[str] = None
     trace_id: Optional[str] = None
     started_at: Optional[str] = None
+    # --- v2.1 ------------------------------------------------------------
+    # Which capture path produced this shard -- "livekit", "pipecat",
+    # "langchain", "otel", or None for a directly-wrapped provider client.
+    # Answers "which integration is actually feeding the corpus", which is
+    # otherwise only inferable from the shape of what arrived.
+    framework: Optional[str] = None
     # Snapshot of the journey-level tags as of the first recorded event. Held as
     # one nested object rather than spread across the header so a reader can tell
     # caller-supplied keys from schema-defined ones.

@@ -27,7 +27,20 @@ from typing import Any, Callable, Dict, Optional
 
 from odyssey.capture import journey
 from odyssey.client import require_client
-from odyssey.integrations._base import capture_request, capture_response
+from odyssey.integrations._base import (
+    PROVIDER,
+    MessageAccumulator,
+    capture_request,
+    capture_response,
+    record_stream,
+)
+from odyssey.integrations._call import (
+    Capture,
+    capture_async,
+    capture_sync,
+    provider_from_base_url,
+)
+from odyssey.integrations._timing import Timer
 
 # Set by instrument(); cleared by uninstrument(). Module-level because patching
 # is a process-wide act and must be reversible exactly once.
@@ -44,21 +57,14 @@ def _safe(label: str, fn: Callable[[], None]) -> None:
             client.note_error(label, exc)
 
 
-def _record_call(kwargs: Dict[str, Any], call: Callable[[], Any]) -> Any:
-    """Capture request, run the provider call, capture response. Order matters.
-
-    The request is recorded *before* the call so a provider timeout still leaves
-    the prompt in the corpus — a journey that shows what was asked and then
-    terminates with an error is useful; one that shows nothing is not.
-    """
-    with journey():
-        _safe("anthropic.request", lambda: capture_request(kwargs))
-        result = call()
-        _safe(
-            "anthropic.response",
-            lambda: capture_response(result, model=kwargs.get("model")),
-        )
-        return result
+CAPTURE = Capture(
+    label="anthropic",
+    request=capture_request,
+    response=capture_response,
+    streamed=record_stream,
+    accumulator=MessageAccumulator,
+    provider=provider_from_base_url(PROVIDER),
+)
 
 
 class _MessagesProxy:
@@ -68,7 +74,9 @@ class _MessagesProxy:
         self._inner = inner
 
     def create(self, *args: Any, **kwargs: Any) -> Any:
-        return _record_call(kwargs, lambda: self._inner.create(*args, **kwargs))
+        return capture_sync(
+            CAPTURE, self._inner, kwargs, lambda: self._inner.create(*args, **kwargs)
+        )
 
     def stream(self, *args: Any, **kwargs: Any) -> Any:
         """Capture the assembled final message, not individual chunks.
@@ -95,7 +103,10 @@ class _StreamProxy:
         self._journey = journey()
         self._handle = self._journey.__enter__()
         _safe("anthropic.request", lambda: capture_request(self._kwargs))
-        return _StreamBody(self._inner.__enter__(), self._kwargs)
+        # Started after the request capture and carried into the body, because
+        # a stream's latency is measured from the call to the final message,
+        # which arrives in a different object than the one that opened it.
+        return _StreamBody(self._inner.__enter__(), self._kwargs, Timer())
 
     def __exit__(self, *exc: Any) -> Any:
         try:
@@ -111,10 +122,13 @@ class _StreamProxy:
 class _StreamBody:
     """The object a ``with client.messages.stream(...)`` block receives."""
 
-    def __init__(self, inner: Any, kwargs: Dict[str, Any]) -> None:
+    def __init__(
+        self, inner: Any, kwargs: Dict[str, Any], timer: Optional[Timer] = None
+    ) -> None:
         self._inner = inner
         self._kwargs = kwargs
         self._captured = False
+        self._timer = timer
 
     def get_final_message(self) -> Any:
         message = self._inner.get_final_message()
@@ -125,17 +139,31 @@ class _StreamBody:
         if self._captured:
             return
         self._captured = True
+        timer = self._timer
+        latency = timer.latency_ms if timer is not None else None
+        ttft = timer.ttft_ms if timer is not None else None
         _safe(
             "anthropic.response",
-            lambda: capture_response(message, model=self._kwargs.get("model")),
+            lambda: capture_response(
+                message,
+                model=self._kwargs.get("model"),
+                latency_ms=latency,
+                ttft_ms=ttft,
+            ),
         )
+
+    def _tick(self, chunk: Any) -> Any:
+        """Mark time-to-first-token. Idempotent, so it can run per chunk."""
+        if self._timer is not None:
+            self._timer.first_token()
+        return chunk
 
     @property
     def text_stream(self) -> Any:
-        return self._inner.text_stream
+        return (self._tick(chunk) for chunk in self._inner.text_stream)
 
     def __iter__(self) -> Any:
-        return iter(self._inner)
+        return (self._tick(event) for event in self._inner)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -190,14 +218,9 @@ class _AsyncMessagesProxy:
         self._inner = inner
 
     async def create(self, *args: Any, **kwargs: Any) -> Any:
-        with journey():
-            _safe("anthropic.request", lambda: capture_request(kwargs))
-            result = await self._inner.create(*args, **kwargs)
-            _safe(
-                "anthropic.response",
-                lambda: capture_response(result, model=kwargs.get("model")),
-            )
-            return result
+        return await capture_async(
+            CAPTURE, self._inner, kwargs, lambda: self._inner.create(*args, **kwargs)
+        )
 
     def stream(self, *args: Any, **kwargs: Any) -> Any:
         """Async counterpart to :meth:`_MessagesProxy.stream` — same deferred
@@ -221,7 +244,7 @@ class _AsyncStreamProxy:
         self._journey = journey()
         self._handle = self._journey.__enter__()
         _safe("anthropic.request", lambda: capture_request(self._kwargs))
-        return _AsyncStreamBody(await self._inner.__aenter__(), self._kwargs)
+        return _AsyncStreamBody(await self._inner.__aenter__(), self._kwargs, Timer())
 
     async def __aexit__(self, *exc: Any) -> Any:
         try:
@@ -237,10 +260,13 @@ class _AsyncStreamProxy:
 class _AsyncStreamBody:
     """Async counterpart to :class:`_StreamBody`."""
 
-    def __init__(self, inner: Any, kwargs: Dict[str, Any]) -> None:
+    def __init__(
+        self, inner: Any, kwargs: Dict[str, Any], timer: Optional[Timer] = None
+    ) -> None:
         self._inner = inner
         self._kwargs = kwargs
         self._captured = False
+        self._timer = timer
 
     async def get_final_message(self) -> Any:
         message = await self._inner.get_final_message()
@@ -251,17 +277,34 @@ class _AsyncStreamBody:
         if self._captured:
             return
         self._captured = True
+        timer = self._timer
+        latency = timer.latency_ms if timer is not None else None
+        ttft = timer.ttft_ms if timer is not None else None
         _safe(
             "anthropic.response",
-            lambda: capture_response(message, model=self._kwargs.get("model")),
+            lambda: capture_response(
+                message,
+                model=self._kwargs.get("model"),
+                latency_ms=latency,
+                ttft_ms=ttft,
+            ),
         )
+
+    def _tick(self, chunk: Any) -> Any:
+        if self._timer is not None:
+            self._timer.first_token()
+        return chunk
+
+    async def _ticked(self, source: Any) -> Any:
+        async for chunk in source:
+            yield self._tick(chunk)
 
     @property
     def text_stream(self) -> Any:
-        return self._inner.text_stream
+        return self._ticked(self._inner.text_stream)
 
     def __aiter__(self) -> Any:
-        return self._inner.__aiter__()
+        return self._ticked(self._inner)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -272,41 +315,82 @@ class _AsyncStreamBody:
 # ---------------------------------------------------------------------------
 
 
-def instrument(target: Optional[Any] = None) -> None:
-    """Patch ``anthropic`` in place so existing clients record.
+def instrument(
+    target: Optional[Any] = None, *, beta_target: Optional[Any] = None
+) -> None:
+    """Patch ``anthropic`` in place so every existing client records.
 
-    Idempotent. ``target`` overrides the module to patch, which is what makes
-    this testable without the real SDK installed.
+    Patches ``Messages.create`` and ``AsyncMessages.create`` on
+    ``anthropic.resources.messages`` and, when importable, on
+    ``anthropic.resources.beta.messages`` — Pipecat's Anthropic service calls the
+    beta one, streamed. Idempotent. ``target``/``beta_target`` override the
+    modules, which is what makes this testable without the real SDK; an explicit
+    ``target`` patches only what it is given.
     """
     if _patched:
         return
+    explicit = target is not None
     if target is None:
         import anthropic.resources.messages as target  # type: ignore[no-redef]
 
-    cls = getattr(target, "Messages", None)
-    if cls is None or not hasattr(cls, "create"):
+    if getattr(target, "Messages", None) is None or not hasattr(
+        target.Messages, "create"
+    ):
         raise AttributeError(
             "anthropic.resources.messages.Messages.create not found; "
             "this anthropic version is not supported by instrument()"
         )
 
-    original = cls.create
+    modules = [target]
+    if beta_target is not None:
+        modules.append(beta_target)
+    elif not explicit:
+        try:
+            import anthropic.resources.beta.messages as beta_module  # type: ignore
+
+            modules.append(beta_module)
+        except ImportError:
+            pass
+
+    patches = []
+    for module in modules:
+        for name in ("Messages", "AsyncMessages"):
+            cls = getattr(module, name, None)
+            if cls is not None and hasattr(cls, "create"):
+                patches.append((cls, cls.create))
+                cls.create = _patched_create(
+                    cls.create, is_async=name.startswith("Async")
+                )
+    _patched["patches"] = patches
+
+
+def _patched_create(original: Any, *, is_async: bool) -> Any:
+    # Sync or async by class, not by inspecting `original`: the SDK wraps its
+    # async methods in a plain function, so they do not look like coroutines.
+    if is_async:
+
+        async def patched_async(self: Any, *args: Any, **kwargs: Any) -> Any:
+            return await capture_async(
+                CAPTURE, self, kwargs, lambda: original(self, *args, **kwargs)
+            )
+
+        patched_async.__wrapped__ = original  # type: ignore[attr-defined]
+        return patched_async
 
     def patched(self: Any, *args: Any, **kwargs: Any) -> Any:
-        return _record_call(kwargs, lambda: original(self, *args, **kwargs))
+        return capture_sync(
+            CAPTURE, self, kwargs, lambda: original(self, *args, **kwargs)
+        )
 
     patched.__wrapped__ = original  # type: ignore[attr-defined]
-    cls.create = patched
-    _patched["cls"] = cls
-    _patched["create"] = original
+    return patched
 
 
 def uninstrument() -> None:
     """Undo :func:`instrument`. Safe to call when nothing was patched."""
-    cls = _patched.pop("cls", None)
-    original = _patched.pop("create", None)
-    if cls is not None and original is not None:
+    for cls, original in _patched.pop("patches", []):
         cls.create = original
+    _patched.clear()
 
 
 def is_instrumented() -> bool:

@@ -76,7 +76,7 @@ odyssey/
 - **Architectural Highlights**:
   - `primitives.py`: Formal definition of the unified `JourneyEvent` schema.
   - `spool.py`: Crash-resilient local disk spooler that automatically redacts sensitive credentials at record time.
-  - `integrations/`: Drop-in capture wrappers for OpenAI, Anthropic, Gemini, Langchain, and LiveKit.
+  - `integrations/`: Drop-in capture wrappers for OpenAI, Anthropic, Gemini, Bedrock, Realtime/Live, Langchain, and LiveKit.
 - **Verification**: `cd packages/odyssey-core && uv sync --extra dev && bash scripts/run_tests.sh all`
 </details>
 
@@ -195,11 +195,19 @@ Launches the high-throughput standard-library gateway to accept events from edge
 cd services/collector
 uv run odyssey-collector --data-dir ./collector-data
 ```
-In your production application, configure the Odyssey SDK to spool traces to this gateway:
+In your production application, one call is the whole integration — `init()` reads `ODYSSEY_ENDPOINT` for the gateway and defaults to `instrument="auto"`, which patches every provider SDK you actually have installed (`anthropic`, `openai` and any OpenAI-compatible gateway, `google-genai`, and `boto3` for Bedrock) and registers LangChain's handler process-wide:
+```bash
+export ODYSSEY_ENDPOINT=http://127.0.0.1:8787
+```
 ```python
 import odyssey
-odyssey.init(sink=odyssey.HttpSink("http://127.0.0.1:8787"))
+odyssey.init()          # that's it — no import to swap, no per-call callback
+
+# voice frameworks attach to an object your app owns, one line each:
+# odyssey.integrations.livekit.attach(session, journey_id=ctx.room.name)
+# odyssey.integrations.pipecat.attach(task, journey_id=call_id)
 ```
+Naming the destination in code still works (`odyssey.init(sink=odyssey.HttpSink("http://127.0.0.1:8787"))`), and `instrument="none"` turns auto-instrumentation off.
 
 ### 2️⃣ Initialize the FastAPI Metadata Catalog (:8000)
 Exposes read-only catalog endpoints over partitioned spools and model logs:

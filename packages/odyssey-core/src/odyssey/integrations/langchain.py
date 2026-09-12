@@ -53,11 +53,14 @@ optional dependency was actually imported.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Set
 
 from odyssey.capture import JourneyHandle, _jsonable
 from odyssey.client import require_client
-from odyssey.context import JourneyContext, SeqAllocator, bind
+from odyssey.context import JourneyContext, SeqAllocator, bind, current
+from odyssey.integrations._linked import linked_journey
+from odyssey.integrations._reentry import enter_framework_call, exit_framework_call
+from odyssey.integrations._timing import stamp
 from odyssey.primitives import Message, Role, TerminationReason, ToolCall, ToolResponse
 
 __all__ = ["OdysseyCallbackHandler"]
@@ -90,6 +93,13 @@ class _Recorder:
         self._journeys: Dict[str, JourneyContext] = {}
         # run_id -> the top-level run_id it belongs to.
         self._roots: Dict[str, str] = {}
+        # Roots whose context was borrowed from an ambient journey rather than
+        # opened here. Tracked so `_end` never terminates someone else's
+        # journey -- see `_ctx_for`.
+        self._borrowed: Set[str] = set()
+        # run_id -> what the provider patch underneath measured for that model
+        # run. Written by `note_provider_call`, read once by `on_llm_end`.
+        self._measured: Dict[str, Dict[str, Any]] = {}
 
     def _guard(self, label: str, fn: Callable[[], Any]) -> None:
         """Run a capture step from inside a LangChain callback. Never raises
@@ -117,6 +127,24 @@ class _Recorder:
         ctx = self._journeys.get(root)
         if ctx is not None:
             return ctx
+
+        # An ambient journey wins over this run's own id. A graph invoked
+        # during a voice call is part of that call, and keying it on
+        # LangChain's run id instead produced a second journey under a uuid
+        # that appears nowhere else -- two halves of one conversation with
+        # nothing to associate them by. Only when nothing else is recording
+        # does the run id become the journey, which is the standalone case
+        # this integration was written for and is unchanged.
+        ambient = current()
+        if ambient is None or ambient.terminated:
+            # A graph run inside an attached voice call: the call's `.llm`
+            # journey, where the rest of its provider calls go.
+            ambient = linked_journey()
+        if ambient is not None:
+            self._journeys[root] = ambient
+            self._borrowed.add(root)
+            return ambient
+
         client = require_client()
         ctx = JourneyContext(
             journey_id=root,
@@ -125,6 +153,9 @@ class _Recorder:
             ),
             metadata=_jsonable(dict(self._metadata)),
             data_source=self._data_source,
+            # What recorded this shard, as distinct from where the
+            # conversation came from (`data_source`).
+            framework="langchain",
         )
         self._journeys[root] = ctx
         if client is not None:
@@ -143,7 +174,12 @@ class _Recorder:
     ) -> None:
         ctx = self._journeys.pop(root, None)
         self._roots = {k: v for k, v in self._roots.items() if v != root}
-        if ctx is None or ctx.terminated:
+        # A borrowed context belongs to whoever bound it, and they close it.
+        # Terminating it here would end a voice call at its first graph node
+        # and strand every turn after it.
+        borrowed = root in self._borrowed
+        self._borrowed.discard(root)
+        if ctx is None or ctx.terminated or borrowed:
             return
         with bind(ctx):
             JourneyHandle(ctx).close(reason=reason, error=error)
@@ -153,6 +189,34 @@ class _Recorder:
         return self._roots.get(rid) == rid
 
     # -- LLM ----------------------------------------------------------
+
+    def note_provider_call(
+        self,
+        run_id: str,
+        *,
+        provider: Optional[str] = None,
+        latency_ms: Optional[float] = None,
+        ttft_ms: Optional[float] = None,
+    ) -> None:
+        """Timing and provenance for a model run, from the SDK patch below.
+
+        The handler owns the turn -- the patch stays out of a call LangChain is
+        already recording -- but only the patch sees which host served it and
+        how long it took, so it hands both here and `on_llm_end` stamps them
+        onto the turn it writes.
+
+        Last write wins, per field: a run that retried has the answer of its
+        final attempt, and a provider that failed over answered from somewhere
+        else than the attempt before it.
+        """
+        measured = self._measured.setdefault(run_id, {})
+        for name, value in (
+            ("provider", provider),
+            ("latency_ms", latency_ms),
+            ("ttft_ms", ttft_ms),
+        ):
+            if value is not None:
+                measured[name] = value
 
     def on_llm_start(
         self,
@@ -200,6 +264,9 @@ class _Recorder:
         self, response: Any, *, run_id: Any, parent_run_id: Any = None, **_: Any
     ) -> None:
         root = self._root_for(run_id, parent_run_id)
+        # Popped outside `go` so the run leaves nothing behind even if
+        # recording it fails.
+        measured = self._measured.pop(_rid(run_id), {})
 
         def go() -> None:
             with bind(self._ctx_for(root)):
@@ -212,7 +279,9 @@ class _Recorder:
                             else getattr(gen, "text", "")
                         )
                         self._handle(root).message(
-                            Message(role="assistant", content=str(text))
+                            stamp(
+                                Message(role="assistant", content=str(text)), **measured
+                            )
                         )
             if self._is_root(run_id):
                 self._end(root)
@@ -223,6 +292,7 @@ class _Recorder:
         self, error: BaseException, *, run_id: Any, parent_run_id: Any = None, **_: Any
     ) -> None:
         root = self._root_for(run_id, parent_run_id)
+        self._measured.pop(_rid(run_id), None)
         if self._is_root(run_id):
             self._end(root, reason="ERROR", error=f"{type(error).__name__}: {error}")
 
@@ -330,17 +400,63 @@ def OdysseyCallbackHandler(
     recorder = _Recorder(data_source=data_source, metadata=metadata)
 
     class _Handler(BaseCallbackHandler):
+        # Called in the caller's own context rather than handed to an executor.
+        # That is what lets a model run's start mark the call for the provider
+        # patch underneath it (`_reentry.enter_framework_call`), so `ChatOpenAI`
+        # is recorded once, here, and not again by the `openai` patch. A handler
+        # run in an executor would set the mark in a copy nobody reads.
+        run_inline = True
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._marks: Dict[str, Any] = {}
+
+        def is_running(self, run_id: str) -> bool:
+            return run_id in self._marks
+
+        def _mark(self, kwargs: Dict[str, Any]) -> None:
+            rid = _rid(kwargs.get("run_id"))
+            if rid in self._marks:
+                return
+            try:
+                self._marks[rid] = enter_framework_call(self, rid)
+            except Exception:  # noqa: BLE001 - never break the chain over a mark
+                pass
+
+        def observed(self, run_id: str, **measured: Any) -> None:
+            """What the provider patch measured for one of this handler's runs.
+
+            Only while the run is still marked: a report arriving after the run
+            ended belongs to no turn this handler will write, and keeping it
+            would be a dict entry nothing ever pops.
+            """
+            if self.is_running(run_id):
+                recorder.note_provider_call(run_id, **measured)
+
+        def _unmark(self, kwargs: Dict[str, Any]) -> None:
+            token = self._marks.pop(_rid(kwargs.get("run_id")), None)
+            if token is not None:
+                exit_framework_call(token)
+
         def on_llm_start(self, *args: Any, **kwargs: Any) -> None:
+            self._mark(kwargs)
             recorder.on_llm_start(*args, **kwargs)
 
         def on_chat_model_start(self, *args: Any, **kwargs: Any) -> None:
+            self._mark(kwargs)
             recorder.on_chat_model_start(*args, **kwargs)
 
         def on_llm_end(self, *args: Any, **kwargs: Any) -> None:
-            recorder.on_llm_end(*args, **kwargs)
+            try:
+                recorder.on_llm_end(*args, **kwargs)
+            finally:
+                self._unmark(kwargs)
 
         def on_llm_error(self, *args: Any, **kwargs: Any) -> None:
-            recorder.on_llm_error(*args, **kwargs)
+            try:
+                recorder.on_llm_error(*args, **kwargs)
+            finally:
+                self._unmark(kwargs)
 
         def on_tool_start(self, *args: Any, **kwargs: Any) -> None:
             recorder.on_tool_start(*args, **kwargs)
@@ -358,3 +474,86 @@ def OdysseyCallbackHandler(
             recorder.on_chain_error(*args, **kwargs)
 
     return _Handler()
+
+
+# ---------------------------------------------------------------------------
+# Process-wide attachment
+# ---------------------------------------------------------------------------
+
+# The registered hook, kept so `uninstrument()` can clear it. Module-level
+# because registering is a process-wide act.
+_HOOK: Any = None
+
+
+def instrument(
+    *, data_source: str = "langchain", metadata: Optional[Dict[str, Any]] = None
+) -> None:
+    """Attach the handler to every LangChain run in this process.
+
+    ``data_source`` and ``metadata`` are the same tags
+    :func:`OdysseyCallbackHandler` takes, and they matter more here than on
+    the per-call form: a process-wide attachment is the one capture path whose
+    journeys nobody chose individually, so without them a shard arrives
+    carrying nothing that says which service produced it.
+
+    The alternative is the per-call form — ``config={"callbacks": [...]}`` on
+    every ``invoke()`` — which is one edit per call site and silently records
+    nothing at the call site somebody forgot. This is the difference between
+    "odyssey is installed" and "odyssey is installed everywhere it matters",
+    and it is what makes ``odyssey.init()`` the single integration point for a
+    LangChain app rather than the first of many.
+
+    Uses ``langchain_core.tracers.context.register_configure_hook``, the same
+    mechanism LangSmith and the other tracing integrations attach through: the
+    handler is held in a ``ContextVar`` that LangChain's own ``_configure``
+    reads when it assembles the callback list for a run, so a run started
+    anywhere — including inside a nested chain or a LangGraph node that never
+    forwards ``config`` — is covered.
+
+    One handler serves the whole process. That is safe because
+    :class:`_Recorder` keys every journey on the run tree's root id rather than
+    on instance state, so concurrent runs never see each other's turns.
+
+    Idempotent. Requires ``langchain-core``; a failure to attach is the
+    caller's to see through :func:`odyssey.health`, not an exception — an app
+    that cannot be traced must still run.
+    """
+    global _HOOK
+    if _HOOK is not None:
+        return
+    from contextvars import ContextVar
+
+    # pyrefly: ignore[missing-import]  — optional extra, `odyssey[langchain]`.
+    from langchain_core.tracers.context import register_configure_hook
+
+    handler = OdysseyCallbackHandler(data_source=data_source, metadata=metadata)
+    var: ContextVar = ContextVar("odyssey_langchain_handler", default=None)
+    # `inheritable=True`: a run started in a child context — a thread from
+    # LangChain's own executor, an asyncio task — inherits the handler. Without
+    # it, exactly the fan-out cases that most need tracing would be the ones
+    # missing it.
+    register_configure_hook(var, True)
+    var.set(handler)
+    _HOOK = (var, handler)
+
+
+def uninstrument() -> None:
+    """Detach the process-wide handler. Safe to call when nothing was attached.
+
+    The hook itself stays registered — ``register_configure_hook`` appends to a
+    module-level list LangChain owns and offers no removal — but the
+    ``ContextVar`` it reads is cleared, so it contributes no handler.
+    """
+    global _HOOK
+    if _HOOK is None:
+        return
+    var, _handler = _HOOK
+    _HOOK = None
+    try:
+        var.set(None)
+    except Exception:  # noqa: BLE001 - detaching must always succeed
+        pass
+
+
+def is_instrumented() -> bool:
+    return _HOOK is not None

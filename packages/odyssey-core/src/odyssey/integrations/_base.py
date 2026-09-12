@@ -31,7 +31,13 @@ from odyssey.builders.messages import messages_from_anthropic_messages
 from odyssey.capture import _emit, _jsonable
 from odyssey.client import require_client
 from odyssey.context import JourneyContext, current
+from odyssey.integrations._timing import stamp
+from odyssey.integrations.providers import Adapter, apply_adapter
 from odyssey.primitives import Message
+
+# The SDK behind these calls. Lands on `Message.provider`; distinct from
+# `model_id`, which the provider itself reports per response.
+PROVIDER = "anthropic"
 
 # Blocks the ported parser understands.
 _PARSEABLE_BLOCKS = frozenset({"text", "tool_use", "tool_result"})
@@ -53,6 +59,11 @@ _PARAM_KEYS = (
 _STATE_CONSUMED = "_anthropic_consumed"
 _STATE_SYSTEM = "_anthropic_system"
 _STATE_TOOLS = "_anthropic_tools"
+
+
+def _state_key(base: str, key: str) -> str:
+    """Per-client bookkeeping inside one journey; see `_openai_base._state_key`."""
+    return base if key == "default" else f"{base}:{key}"
 
 
 def split_blocks(content: Any) -> Tuple[Any, Optional[str], List[str]]:
@@ -165,16 +176,19 @@ def _params(kwargs: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def capture_request(kwargs: Dict[str, Any]) -> None:
+def capture_request(kwargs: Dict[str, Any], *, key: str = "default") -> None:
     """Record the parts of a request that have not been recorded yet."""
     ctx = current()
     if ctx is None:
         return
+    consumed_key = _state_key(_STATE_CONSUMED, key)
+    system_state_key = _state_key(_STATE_SYSTEM, key)
+    tools_state_key = _state_key(_STATE_TOOLS, key)
 
     entries = kwargs.get("messages") or []
     if not isinstance(entries, (list, tuple)):
         entries = []
-    consumed = int(ctx.state.get(_STATE_CONSUMED, 0))
+    consumed = int(ctx.state.get(consumed_key, 0))
 
     if len(entries) < consumed:
         # The caller rebuilt or truncated its message list, so our offset is
@@ -189,7 +203,7 @@ def capture_request(kwargs: Dict[str, Any]) -> None:
                     "resyncing without re-recording"
                 ),
             )
-        ctx.state[_STATE_CONSUMED] = len(entries)
+        ctx.state[consumed_key] = len(entries)
         return
 
     new_entries = list(entries[consumed:])
@@ -199,8 +213,8 @@ def capture_request(kwargs: Dict[str, Any]) -> None:
     # which is exactly the prompt-refresh case the step builder handles on read.
     system = kwargs.get("system")
     system_key = repr(_jsonable(system))
-    if system is not None and ctx.state.get(_STATE_SYSTEM) != system_key:
-        ctx.state[_STATE_SYSTEM] = system_key
+    if system is not None and ctx.state.get(system_state_key) != system_key:
+        ctx.state[system_state_key] = system_key
         messages = _system_messages(system) + messages
 
     # Tool definitions are resent on every call exactly like the system prompt,
@@ -209,9 +223,9 @@ def capture_request(kwargs: Dict[str, Any]) -> None:
     # once per turn.
     tools = _tool_definitions(kwargs.get("tools"))
     tools_key = repr([(t.name, t.parameters) for t in tools]) if tools else None
-    tools_changed = tools is not None and ctx.state.get(_STATE_TOOLS) != tools_key
+    tools_changed = tools is not None and ctx.state.get(tools_state_key) != tools_key
     if tools_changed:
-        ctx.state[_STATE_TOOLS] = tools_key
+        ctx.state[tools_state_key] = tools_key
 
     meta: Dict[str, Any] = {"direction": "request"}
     params = _params(kwargs)
@@ -233,10 +247,20 @@ def capture_request(kwargs: Dict[str, Any]) -> None:
             metadata=meta,
         )
 
-    ctx.state[_STATE_CONSUMED] = len(entries)
+    ctx.state[consumed_key] = len(entries)
 
 
-def capture_response(response: Any, *, model: Optional[str] = None) -> None:
+def capture_response(
+    response: Any,
+    *,
+    model: Optional[str] = None,
+    latency_ms: Optional[float] = None,
+    ttft_ms: Optional[float] = None,
+    provider: Optional[str] = None,
+    adapt: Optional[Adapter] = None,
+    key: str = "default",
+    extra_meta: Optional[Dict[str, Any]] = None,
+) -> None:
     """Record the assistant turn a provider returned."""
     ctx = current()
     if ctx is None:
@@ -258,17 +282,28 @@ def capture_response(response: Any, *, model: Optional[str] = None) -> None:
             k: v for k, v in usage.items() if isinstance(v, int) and v is not None
         }
 
+    if adapt is not None:
+        entry = apply_adapter(
+            adapt, entry, response, label=f"provider.adapt:{provider}"
+        )
     messages, unknown = to_messages([entry])
     meta: Dict[str, Any] = {"direction": "response"}
     if payload.get("id"):
         meta["provider_message_id"] = payload["id"]
     if unknown:
         meta["unknown_blocks"] = sorted(set(unknown))
+    if extra_meta:
+        meta.update(extra_meta)
 
     for msg in messages:
         _emit(
             "message",
-            message=msg,
+            message=stamp(
+                msg,
+                latency_ms=latency_ms,
+                ttft_ms=ttft_ms,
+                provider=provider or PROVIDER,
+            ),
             model_id=str(payload.get("model") or model or "") or None,
             metadata=meta,
         )
@@ -276,8 +311,145 @@ def capture_response(response: Any, *, model: Optional[str] = None) -> None:
     # The caller will append this turn to its own message list before the next
     # call. Account for it now so the next delta starts at the new user turn.
     if messages:
-        _advance_consumed(ctx, 1)
+        _advance_consumed(ctx, 1, key)
 
 
-def _advance_consumed(ctx: JourneyContext, by: int) -> None:
-    ctx.state[_STATE_CONSUMED] = int(ctx.state.get(_STATE_CONSUMED, 0)) + by
+def _advance_consumed(ctx: JourneyContext, by: int, key: str = "default") -> None:
+    name = _state_key(_STATE_CONSUMED, key)
+    ctx.state[name] = int(ctx.state.get(name, 0)) + by
+
+
+class MessageAccumulator:
+    """Folds Anthropic's stream events back into the one message they described.
+
+    ``message_start`` carries the id, model and input usage;
+    ``content_block_*`` build each block, a tool call's input arriving as
+    partial JSON; ``message_delta`` carries the stop reason and output usage.
+    """
+
+    __slots__ = ("id", "model", "role", "blocks", "stop_reason", "usage")
+
+    def __init__(self) -> None:
+        self.id: Optional[str] = None
+        self.model: Optional[str] = None
+        self.role = "assistant"
+        self.blocks: Dict[int, Dict[str, Any]] = {}
+        self.stop_reason: Optional[str] = None
+        self.usage: Dict[str, int] = {}
+
+    @property
+    def finished(self) -> bool:
+        return self.stop_reason is not None
+
+    def add(self, event: Any) -> bool:
+        """Fold one event in. True when it carried model output."""
+        d = _jsonable(event)
+        if not isinstance(d, dict):
+            return False
+        kind = d.get("type")
+        if kind == "message_start":
+            msg = d.get("message")
+            if isinstance(msg, dict):
+                self.id = msg.get("id") or self.id
+                self.model = msg.get("model") or self.model
+                self.role = msg.get("role") or self.role
+                self._add_usage(msg.get("usage"))
+            return False
+        if kind == "content_block_start":
+            block = d.get("content_block")
+            if isinstance(block, dict):
+                self.blocks[_index(d)] = {
+                    k: v for k, v in block.items() if v is not None
+                }
+            return False
+        if kind == "content_block_delta":
+            return self._add_delta(_index(d), d.get("delta"))
+        if kind == "message_delta":
+            delta = d.get("delta")
+            if isinstance(delta, dict) and delta.get("stop_reason"):
+                self.stop_reason = str(delta["stop_reason"])
+            self._add_usage(d.get("usage"))
+        return False
+
+    def _add_delta(self, index: int, delta: Any) -> bool:
+        if not isinstance(delta, dict):
+            return False
+        block = self.blocks.setdefault(index, {"type": "text", "text": ""})
+        kind = delta.get("type")
+        if kind == "text_delta":
+            block["text"] = (block.get("text") or "") + str(delta.get("text") or "")
+            return True
+        if kind == "input_json_delta":
+            block["_json"] = (block.get("_json") or "") + str(
+                delta.get("partial_json") or ""
+            )
+            return True
+        if kind == "thinking_delta":
+            block["thinking"] = (block.get("thinking") or "") + str(
+                delta.get("thinking") or ""
+            )
+            return True
+        return False
+
+    def _add_usage(self, usage: Any) -> None:
+        if isinstance(usage, dict):
+            self.usage.update({k: v for k, v in usage.items() if isinstance(v, int)})
+
+    def payload(self) -> Optional[Dict[str, Any]]:
+        """The assembled message, shaped like a non-streamed response."""
+        if not self.blocks:
+            return None
+        import json
+
+        content: List[Dict[str, Any]] = []
+        for i in sorted(self.blocks):
+            block = dict(self.blocks[i])
+            partial = block.pop("_json", None)
+            if partial is not None:
+                try:
+                    block["input"] = json.loads(partial) if partial else {}
+                except ValueError:
+                    # Cut off mid-argument: keep what arrived rather than drop
+                    # the call.
+                    block["input"] = {"_partial_json": partial}
+            content.append(block)
+        return {
+            "id": self.id,
+            "model": self.model,
+            "role": self.role,
+            "content": content,
+            "stop_reason": self.stop_reason,
+            "usage": self.usage or None,
+        }
+
+
+def _index(d: Dict[str, Any]) -> int:
+    index = d.get("index")
+    return index if isinstance(index, int) else 0
+
+
+def record_stream(
+    acc: MessageAccumulator,
+    *,
+    model: Optional[str] = None,
+    latency_ms: Optional[float] = None,
+    ttft_ms: Optional[float] = None,
+    provider: Optional[str] = None,
+    adapt: Optional[Adapter] = None,
+    key: str = "default",
+    extra_meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Record the message a drained event stream assembled."""
+    payload = acc.payload()
+    if payload is None:
+        return
+    capture_response(
+        payload,
+        model=model,
+        latency_ms=latency_ms,
+        ttft_ms=ttft_ms,
+        provider=provider,
+        adapt=adapt,
+        key=key,
+        extra_meta=extra_meta,
+    )

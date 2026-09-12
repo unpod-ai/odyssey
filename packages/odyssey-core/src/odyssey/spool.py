@@ -136,6 +136,16 @@ class SpoolPathError(ValueError):
     """A path escaped the configured spool root."""
 
 
+class DrainFailed(RuntimeError):
+    """A background drain tick could not deliver what it read.
+
+    Carried to :meth:`Client.note_error` rather than raised: the drain thread
+    must survive a sink that is down, because the spool is the retry queue and
+    the next tick is the retry. Exists only so the failure has a type and a
+    message in ``health()["stats"]["recent_errors"]``.
+    """
+
+
 @runtime_checkable
 class Sink(Protocol):
     """Where a drain sends events. Raise to signal failure — never return false."""
@@ -838,6 +848,7 @@ class IntervalDrainer:
         interval_seconds: float,
         *,
         batch_size: int = 1,
+        on_result: Optional[Callable[[DrainResult], None]] = None,
     ) -> None:
         self._spool = spool
         self._sink = sink
@@ -846,6 +857,12 @@ class IntervalDrainer:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.last_result: Optional[DrainResult] = None
+        # Called with every tick's result, failures included. Public and
+        # rebindable after construction on purpose: `Client` wires its own
+        # counter in, and a host application that wants the failure in its
+        # log can set it on `get_client().drainer` without `init()` growing
+        # another argument.
+        self.on_result: Optional[Callable[[DrainResult], None]] = on_result
 
     def start(self) -> None:
         if self._thread is not None:
@@ -861,6 +878,14 @@ class IntervalDrainer:
 
     def _loop(self) -> None:
         while not self._stop.wait(self._interval):
-            self.last_result = drain(
-                self._spool, self._sink, batch_size=self._batch_size
-            )
+            result = drain(self._spool, self._sink, batch_size=self._batch_size)
+            self.last_result = result
+            callback = self.on_result
+            if callback is None:
+                continue
+            try:
+                callback(result)
+            except Exception:  # noqa: BLE001 - an observer never stops the drain
+                # Reporting the failure must not become the failure. The tick
+                # already did its job; the spool is still correct either way.
+                pass

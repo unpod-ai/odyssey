@@ -403,7 +403,7 @@ def test_metadata_is_passed_through_to_the_journey_header(tmp_path):
 
     header = client_obj.spool.header(TRACE)
     assert header is not None
-    assert header.journey_metadata == {"tenant": "acme"}
+    assert (header.journey_metadata or {})["tenant"] == "acme"
     assert header.data_source == "otel"
 
 
@@ -499,3 +499,195 @@ def test_shutdown_and_force_flush_are_safe_no_ops(tmp_path):
     processor = OdysseySpanProcessor()
     processor.shutdown()
     assert processor.force_flush() is True
+
+
+# --------------------------------------------------------------------------
+# Process-wide attachment
+# --------------------------------------------------------------------------
+
+
+class FakeTracerProvider:
+    """A real ``TracerProvider``: has somewhere to attach a processor."""
+
+    def __init__(self):
+        self.processors = []
+
+    def add_span_processor(self, processor):
+        self.processors.append(processor)
+
+
+class ProxyProvider:
+    """What OTel's global provider is before anything configures one — no
+    ``add_span_processor`` to attach to."""
+
+
+@pytest.fixture
+def provider_api(monkeypatch):
+    """Give the fake ``opentelemetry`` package a tracer-provider API."""
+    trace_mod = sys.modules["opentelemetry.trace"]
+    sdk_trace = sys.modules["opentelemetry.sdk.trace"]
+    state = {"provider": ProxyProvider()}
+
+    trace_mod.get_tracer_provider = lambda: state["provider"]  # type: ignore[attr-defined]
+
+    def set_tracer_provider(p):
+        state["provider"] = p
+
+    trace_mod.set_tracer_provider = set_tracer_provider  # type: ignore[attr-defined]
+    sdk_trace.TracerProvider = FakeTracerProvider  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "opentelemetry", sys.modules["opentelemetry"])
+
+    from odyssey.integrations.otel import uninstrument
+
+    uninstrument()
+    yield state
+    uninstrument()
+
+
+def test_the_processor_attaches_to_an_existing_provider(tmp_path, provider_api):
+    """Never replaced: the application configured that provider, and swapping
+    it would silently detach every exporter it already carries."""
+    from odyssey.integrations.otel import instrument, is_instrumented
+
+    existing = FakeTracerProvider()
+    provider_api["provider"] = existing
+    start(tmp_path)
+    instrument()
+
+    assert is_instrumented()
+    assert provider_api["provider"] is existing
+    assert len(existing.processors) == 1
+
+
+def test_a_provider_is_installed_when_the_process_has_none(tmp_path, provider_api):
+    """The default global provider is a proxy with nothing to attach to, so
+    the choice is between setting one and recording nothing."""
+    from odyssey.integrations.otel import instrument
+
+    start(tmp_path)
+    instrument()
+
+    assert isinstance(provider_api["provider"], FakeTracerProvider)
+    assert len(provider_api["provider"].processors) == 1
+
+
+def test_attaching_twice_adds_one_processor(tmp_path, provider_api):
+    from odyssey.integrations.otel import instrument
+
+    provider_api["provider"] = FakeTracerProvider()
+    start(tmp_path)
+    instrument()
+    instrument()
+
+    assert len(provider_api["provider"].processors) == 1
+
+
+def test_a_detached_processor_records_nothing_further(tmp_path, provider_api):
+    """A `TracerProvider` offers no removal, so honouring `shutdown()` is the
+    only detach there is."""
+    from odyssey.integrations.otel import instrument, is_instrumented, uninstrument
+
+    provider = FakeTracerProvider()
+    provider_api["provider"] = provider
+    start(tmp_path)
+    instrument()
+    processor = provider.processors[0]
+    uninstrument()
+
+    assert not is_instrumented()
+    processor.on_start(FakeSpan("t1"))
+    processor.on_end(FakeSpan("t1"))
+    client = odyssey.get_client()
+    assert client is not None
+    assert client.spool.journey_ids() == []
+
+
+def test_init_attaches_it_when_asked(tmp_path, provider_api):
+    from odyssey.integrations.otel import is_instrumented
+
+    provider_api["provider"] = FakeTracerProvider()
+    start(tmp_path, instrument=["otel"])
+
+    assert is_instrumented()
+
+
+def test_init_does_not_attach_it_under_auto(tmp_path, provider_api):
+    """`opentelemetry-sdk` is a common transitive dependency. Attaching on its
+    presence would double every corpus that also patches a provider client."""
+    from odyssey.integrations.otel import is_instrumented
+
+    provider_api["provider"] = FakeTracerProvider()
+    start(tmp_path, instrument="auto")
+
+    assert not is_instrumented()
+
+
+# --------------------------------------------------------------------------
+# Attribution: framework, project, and what `instrument()` tags
+# --------------------------------------------------------------------------
+
+
+def test_the_header_names_otel_as_the_framework(tmp_path):
+    """`framework` promised "otel" as a value and no code path produced it."""
+    start(tmp_path)
+    recorder = _Recorder(data_source="otel", metadata=None)
+
+    recorder.on_start(TRACE)
+    recorder.on_end(
+        trace_id=TRACE,
+        is_root=True,
+        attributes={},
+        events=[],
+        ok=True,
+        description=None,
+    )
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(TRACE)
+    assert header is not None
+    assert header.framework == "otel"
+
+
+def test_the_configured_project_tags_a_journey_this_recorder_built(tmp_path):
+    start(tmp_path, project="super-task")
+    recorder = _Recorder(data_source="otel", metadata=None)
+
+    recorder.on_start(TRACE)
+    recorder.on_end(
+        trace_id=TRACE,
+        is_root=True,
+        attributes={},
+        events=[],
+        ok=True,
+        description=None,
+    )
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(TRACE)
+    assert header is not None
+    assert (header.journey_metadata or {})["project"] == "super-task"
+
+
+def test_instrument_tags_the_journeys_it_creates(tmp_path, provider_api):
+    """Attached process-wide with no arguments, every span it recorded landed
+    in a journey carrying nothing that says where it came from."""
+    from odyssey.integrations.otel import instrument
+
+    start(tmp_path, instrument="none")
+    instrument(data_source="voice-worker", metadata={"service": "superkik"})
+
+    processor = provider_api["provider"].processors[0]
+    span = FakeSpan(
+        trace_id=0xABCDEF, parent=None, status=FakeStatus(FakeStatusCode.OK)
+    )
+    processor.on_start(span)
+    processor.on_end(span)
+
+    client = odyssey.get_client()
+    assert client is not None
+    header = client.spool.header(format(0xABCDEF, "032x"))
+    assert header is not None
+    assert header.data_source == "voice-worker"
+    assert (header.journey_metadata or {})["service"] == "superkik"

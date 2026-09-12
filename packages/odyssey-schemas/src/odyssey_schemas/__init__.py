@@ -19,6 +19,7 @@ __all__ = [
     "HealthOut",
     "StepOut",
     "JourneyMetricsOut",
+    "JourneyProvenanceOut",
     "JourneySummaryOut",
     "JourneyDetailOut",
     "JourneyPageOut",
@@ -48,6 +49,13 @@ class StepOut(BaseModel):
     index: int
     trainable_status: str
     message_count: int
+    # Schema 2.1, off the step's own assistant turn: who served it and what the
+    # caller waited for. `None` for a step recorded before 2.1, or by an
+    # integration that cannot time its provider (see `latency_ms` in
+    # `docs/journey-schema.md`).
+    provider: Optional[str] = None
+    latency_ms: Optional[float] = None
+    ttft_ms: Optional[float] = None
 
 
 class JourneyMetricsOut(BaseModel):
@@ -58,10 +66,25 @@ class JourneyMetricsOut(BaseModel):
     tool_error_rate: Optional[float] = None
 
 
+class JourneyProvenanceOut(BaseModel):
+    """Schema 2.1: what recorded a journey, what served it, how long it took.
+
+    Averages rather than totals — a journey's turns are a conversation, and the
+    number a deployment tunes against is what one reply costs.
+    """
+
+    framework: Optional[str] = None
+    parent_journey_id: Optional[str] = None
+    providers: List[str] = []
+    avg_latency_ms: Optional[float] = None
+    avg_ttft_ms: Optional[float] = None
+
+
 class JourneySummaryOut(BaseModel):
     journey_id: str
     date: str
     complete: bool
+    provenance: JourneyProvenanceOut = JourneyProvenanceOut()
 
 
 class JourneyDetailOut(BaseModel):
@@ -69,6 +92,7 @@ class JourneyDetailOut(BaseModel):
     complete: bool
     incomplete_reason: Optional[str] = None
     metrics: JourneyMetricsOut
+    provenance: JourneyProvenanceOut = JourneyProvenanceOut()
     steps: List[StepOut]
 
 

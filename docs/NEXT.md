@@ -1,5 +1,151 @@
 # odyssey — session handoff
 
+## Open work — decided 2026-09-12; items 1-4 done, PR #1 next
+
+Everything below lands on `main_v2`, which is PR #1 (`unpod-ai/odyssey#1`).
+PR #1 is **not** to be merged until this work is done: it is the last step, not
+the first. CI runs on the PR only (workflows trigger on `main` pushes and PRs).
+
+### Settled, do not reopen
+
+| Question | Decision |
+|---|---|
+| PR #1 | Leave open, merge last. New work keeps landing on `main_v2`. |
+| `instrument` default for a fresh install | Stays `"auto"`. The one-line promise in README/CHANGELOG holds. |
+| LiveKit `metrics_collected` volume | Keep **all** metrics. No opt-out knob. |
+| Realtime/Live capture scope | Turns + latency (transcripts, tool calls, interruptions), the same corpus shape the LiveKit/Pipecat recorders produce. Not a raw event log. |
+| Agent identity | A caller tag in `journey_metadata`, never a schema field (see `journey-schema.md`). |
+| Stash `stash@{0}` on `main` | Leave it. |
+
+### 1. Three small fixes — **done**
+
+- **LangChain turns carry no `provider`/`latency_ms`.** Fixed: the patch under
+  a marked model run now measures the call and reports it
+  (`_reentry.framework_call`/`report_framework_call` → `_Handler.observed` →
+  `_Recorder.note_provider_call`), and `on_llm_end` stamps the assistant turn.
+  Streams report `ttft_ms` on drain; a report for a run that already ended is
+  dropped. `in_framework_call()` is gone, replaced by `framework_call()`.
+- **`test_an_explicitly_named_missing_package_is_reported` depends on the
+  environment.** Fixed: `_hide_package` clears the cached modules *and* blocks
+  the finders, so the test answers the same with `langchain` installed or not.
+- **Unused `sqlite3` import** in `packages/odyssey-store/tests/test_db.py`:
+  removed.
+
+### 2. Bedrock capture — **done**
+
+`integrations/bedrock.py` patches `botocore.client.BaseClient._make_api_call`
+(plus `aiobotocore`'s async twin) and filters to the `bedrock-runtime` service
+and four operations: `Converse`, `ConverseStream`, `InvokeModel`,
+`InvokeModelWithResponseStream`. Converse shapes are translated into the ones
+`_base.py` already parses rather than parsed again; `ConverseAccumulator` and
+`InvokeAccumulator` subclass `MessageAccumulator`. `Capture` gained an optional
+`observe` hook for an SDK whose streamed response is a dict carrying the event
+stream under a key, which is how boto3 returns one. `auto` attaches it when
+`botocore` is installed. Tests: `tests/test_bedrock.py` against a fake botocore.
+
+### 3. Realtime/Live capture — **done**
+
+`integrations/realtime.py`: `attach(journey_id=...)` for an app driving its own
+event loop, `observe(conn, journey_id=...)` for one that should not change. One
+recorder reads both vendors — OpenAI/Azure events carry a `type`, Gemini Live
+messages carry `server_content`, and every field is read by attribute *or* key.
+Turns, tool calls (plus `tool_result()` for the half that travels up the
+socket), barge-in, `ttft_ms`/`latency_ms`, and the session `instructions` as the
+system message. Registered for STALE closure like the other recorders, and named
+in `_ATTACH_ONLY` so `instrument=["realtime"]` answers with the `attach` call.
+
+**Inside LiveKit or Pipecat there was nothing to do.** `AgentSession` emits
+`conversation_item_added` whether its LLM is `openai.realtime.RealtimeModel` or
+a chat model, and a Pipecat pipeline pushes the same frames (`TTSTextFrame`
+included, already consumed) whichever service fills the LLM slot — both
+recorders are provider-agnostic by construction. Tests:
+`tests/test_realtime.py`.
+
+### 4. Read path for the 2.1 fields — **done**
+
+End to end: `odyssey-store` gained `framework`/`parent_journey_id`/`providers`/
+`avg_latency_ms`/`avg_ttft_ms` on `journeys` plus an idempotent `ADD COLUMN`
+pass for a database that predates them; `journeys_indexer` writes them;
+`domain/provenance.py` is the single place that folds per-event values into
+per-journey ones, so the index-backed listing and the shard-backed detail
+cannot disagree; `JourneyProvenanceOut` rides on the summary and detail DTOs
+and `StepOut` carries per-turn `provider`/`latency_ms`/`ttft_ms`;
+`openapi.json`, `sdk/python` (no drift — it re-exports the DTOs) and
+`sdk/javascript`'s `types.generated.ts` regenerated; `apps/web` shows the
+columns, the stat cards, per-step timing and a link from a `.llm` journey back
+to its call. Verified locally: `pytest` for api/store/schemas, `next build`,
+`vitest`, `eslint`, and all three codegen `--check`s.
+
+### Release checklist — after the above, then merge PR #1
+
+1. Merge PR #1.
+2. Deploy **the collector before the SDK**. An old collector re-encodes a 2.1
+   shard with 2.0 dataclasses and silently drops the new fields.
+3. Re-lock odyssey in `super-task` (`pyproject.toml` pins the git branch; the
+   SHA lives in `uv.lock`). No code change is needed there: `init()` already
+   defaults to `"auto"` and all three handlers call `attach()` before
+   `session.start()`.
+4. One live QA call. Stream capture has only ever run against fakes built from
+   the SDK sources, never a real provider. Check the call produces
+   `<call_id>.llm` with the right `provider` per turn.
+
+### Where things stand
+
+All four items are on `main_v2`. What is left is the release checklist above,
+starting with PR #1 — which is now ~6k added lines, so review it by commit
+rather than as one diff. Nothing else is tracked and unscheduled.
+
+## One integration point + schema 2.1 (timing, provenance) + Pipecat — built, tested, on `main_v2`
+
+Committed on `main_v2` (`d6b9ac4`, follow-up fixes in `dbf6845`) and merged
+with `main`'s SQLite index / product-management work below. `odyssey-core`:
+`810 passed, 1 skipped`, lint and types clean, golden fixture current
+(regenerated at `2.1`).
+
+**What landed** (details in `CHANGELOG.md`'s `[Unreleased]`, items 0.17/0.18/
+0′.7 in [`WORKING.md`](WORKING.md), and
+[`journey-schema.md`](journey-schema.md#timing-and-provenance-21)):
+
+- `odyssey.init()` is now the only line an app adds — `instrument` defaults to
+  `"auto"` (`ODYSSEY_INSTRUMENT`), patching every provider SDK actually
+  installed and registering LangChain's handler process-wide. `otel` stays out
+  of `auto` (it would double-record a patched client, and `opentelemetry-sdk`
+  is a transitive dependency nobody chose); `livekit`/`pipecat` answer with the
+  `attach(...)` call to write. `integrations/_reentry.py` keeps one provider
+  call to one recorded turn when a drop-in client sits over a patched SDK.
+- `init()`'s default sink now follows `ODYSSEY_ENDPOINT` (set → `HttpSink`,
+  unset → `FileSink`, malformed → `FileSink` + a counted error, never a raise).
+- `SCHEMA_VERSION` `2.0` → `2.1`, additive: `Message.latency_ms`/`ttft_ms`/
+  `provider`, `JourneyHeader.framework`. Agent identity stays a caller tag in
+  `journey_metadata`, not a schema field. Timing from the shared
+  `integrations/_timing.py`.
+- `integrations/pipecat.py` — `attach(task, journey_id=...)`, a `BaseObserver`
+  so it is agnostic to which LLM service the pipeline runs; frames
+  deduplicated on `frame.id` because `on_push_frame` fires once per hop.
+- LiveKit gained `metrics_collected` → `voice` latency events.
+- Follow-up fixes (`dbf6845`): `init(project=...)` reaches integration-built
+  journeys; a LangChain run inside an ambient journey joins it;
+  `init(instrument_metadata=...)` tags the journeys `langchain`/`otel` open;
+  `framework` set for `langchain`/`otel`. Agent identity was moved back out
+  of the schema into `journey_metadata`.
+- Auto-capture across providers: async and streamed calls on every
+  OpenAI-compatible host, Gemini and Anthropic streams, provider named from
+  `base_url` (`integrations/providers.py`, with `register_provider`/`adapt`),
+  LangChain calls left to the handler, and a voice call's provider calls in a
+  linked `<journey_id>.llm` journey.
+- A background drain that failed every tick was silent; `IntervalDrainer` now
+  reports each tick through `on_result` and `Client` counts a `DrainFailed`,
+  so `health()` shows a sink that is rejecting everything.
+
+**Next, and not started: push the 2.1 fields downstream.** `packages/odyssey-schemas`
+DTOs, `services/api`, both SDKs and `apps/web` know nothing about `latency_ms`,
+`ttft_ms`, `provider` or the header's `framework` — the corpus
+carries them and no read path exposes them. The `GET /metrics` work below is
+the precedent to copy: DTO in `odyssey-schemas` → repository/domain/router in
+`services/api` → regenerate `openapi.json` + both SDK resources (remembering
+that codegen does not wire the top-level client) → the `apps/web` page.
+
+
 ## services/api SQLite read index + services/collector product management on SQLite — done
 
 Two coupled plans, both landing on one new shared SQLite file

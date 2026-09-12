@@ -41,7 +41,7 @@ routing fallbacks, so a journey-level label would silently mix models.
 
 | `kind` | payload | carries |
 |---|---|---|
-| `message` | `Message` | one turn: `role`, `content`, `tool_calls`/`tool_response`/`tool_definitions`, `usage`, `finish_reason`, `reasoning`, `trainable_status` |
+| `message` | `Message` | one turn: `role`, `content`, `tool_calls`/`tool_response`/`tool_definitions`, `usage`, `finish_reason`, `reasoning`, `trainable_status`, and (2.1) `latency_ms`, `ttft_ms`, `provider` — see [Timing and provenance](#timing-and-provenance-21) |
 | `signal` | `Signal` | explicit feedback about an earlier event — `signal` (`thumbs_up`/`thumbs_down`/`regenerated`/`user_edit`), `target_seq`, `regen_order`, `edited_output`. This is what makes DPO possible: `Reward` is a scalar judgement, a `Signal` is an *ordering* |
 | `reward` | `Reward` | `aggregated_value` + optional `components: [RewardComponent]` (name/value/weight/explanation) |
 | `terminal` | `Terminal` | closes the journey — `termination_reason` (`TIMEOUT`/`ENV_DONE`/`MAX_STEPS`/`TRUNCATION`/`STALE`/`ERROR`/`NONE`), optional `error`. No event with a higher `seq` is accepted after it |
@@ -71,11 +71,77 @@ JourneyHeader(
     trace_id: str | None,
     started_at: str | None,
     journey_metadata: dict | None,   # snapshot of journey-level tags as of the first event
+    framework: str | None,           # 2.1 — which capture path wrote this shard
 )
 ```
 
 Only fields that cannot change once recording starts live here — a later
 per-event tag has nowhere to land in a header that was already written.
+
+`framework` is `"livekit"`, `"pipecat"`, `"langchain"`, `"otel"`, or `None`
+for a directly wrapped provider client. It answers "which integration is
+actually feeding this corpus", which is otherwise only inferable from the
+shape of what arrived.
+
+## Timing and provenance (2.1)
+
+Three optional fields on `Message` and one on `JourneyHeader`, added
+because a corpus that cannot say how long a turn took, or which SDK and
+capture path produced it, cannot be filtered on either.
+
+| Field | On | What it means |
+|---|---|---|
+| `latency_ms` | `Message` | Wall time of the provider call, request sent → response returned. Recorded on the **response** turn only: a request turn has no duration of its own, and putting the pair's latency on both halves double-counts it for anything summing the column |
+| `ttft_ms` | `Message` | Time to first token. Meaningful for a streamed completion and for voice (LiveKit/Pipecat report it directly); `None` for a non-streamed call, where it would be indistinguishable from `latency_ms` |
+| `provider` | `Message` | The SDK behind the call — `"openai"`, `"anthropic"`, `"gemini"`, or whatever a voice framework names its plugin. Distinct from `JourneyEvent.model_id`: one provider serves many models, and an OpenAI-compatible gateway serves models that are not OpenAI's at all |
+| `framework` | `JourneyHeader` | The capture path that wrote the shard |
+
+Timing is produced by `integrations/_timing.py`, shared by all three
+provider bases: a `perf_counter`-based `Timer` measured *around* the
+provider call (so the number is the provider's latency, not odyssey's own
+bookkeeping, and a wall-clock adjustment mid-call cannot yield a negative
+duration), and a `stamp()` that never overwrites a value an integration
+that knew better — a streaming wrapper with its own TTFT — already set.
+
+### Reading them back
+
+`services/api` indexes the per-journey shape of all four at fold time
+(`domain/provenance.py`, one place so the listing and the detail endpoint
+cannot disagree): `framework`, `parent_journey_id`, the distinct `providers`
+that served the journey, and `avg_latency_ms`/`avg_ttft_ms` — averages, because
+a journey's turns are a conversation and the number a deployment tunes against
+is what *one* reply costs. They ride on `JourneySummaryOut`/`JourneyDetailOut`
+as `provenance`, and `StepOut` carries the `provider`/`latency_ms`/`ttft_ms` of
+the turn that step produced. The dashboard shows both, and the
+`parent_journey_id` on a `.llm` journey is a link back to the call it belongs
+to. A journey recorded before 2.1 reports every one of them as `null` rather
+than omitting them: a reader must not have to tell "not recorded" apart from
+"this build does not know about it".
+
+### Agent identity is a caller tag
+
+There is deliberately no `agent_id` field. What an agent id *is* differs
+per deployment — a config row id, a version tag, a class name — so the
+schema does not claim to know. Pass it like any other tag
+(`attach(session, journey_id=..., agent_id=row.id)`) and it lands in
+`journey_metadata` under whatever name and meaning the deployment chose,
+and reaches the exported artifact through `telemetry.data`.
+
+A handoff that retags it needs nothing extra: `journey_metadata` is
+already snapshot-plus-delta, so the header holds the tag as of the first
+event and a later change rides on exactly the events after it
+(`JourneyContext.event_metadata()`). LiveKit additionally names each
+handoff on the `system` message it produced (`agent`,
+`instructions_origin: "handoff"`).
+
+### Linked provider-call journeys
+
+A LiveKit or Pipecat `attach()` also opens `<journey_id>.llm` for the raw
+provider calls made during that call — exact requests, tools, parameters,
+latency, usage — recorded by `instrument="auto"`. It is an ordinary journey:
+the call's `journey_metadata` plus `parent_journey_id`, so the two are joined
+by that tag. The call journey keeps what was *said*; the `.llm` journey keeps
+what each model was *asked and answered*. Neither duplicates the other.
 
 ## The read-time projection: `fold()`
 
@@ -162,8 +228,9 @@ reader rejects an unrecognized MAJOR outright rather than mis-parsing
 |---|---|---|
 | `1.0` → `1.1` | MINOR (additive) | Header gained journey identity (`JourneyHeader`); a `message.trainable_status` still at the writer default is no longer encoded. A 1.0 reader still parses a 1.1 file — extra header keys are ignored, the absent label decodes back to its default |
 | `1.x` → `2.0` | MAJOR (breaking) | New `"voice"` `EventKind` with its own payload field (item 0′.4). A 1.x reader's kind-dispatch has no branch for `"voice"` — it would drop real turns or raise, not safely ignore them. No migration tool ships with this bump; a 1.x shard on disk simply stops parsing under a 2.x reader |
+| `2.0` → `2.1` | MINOR (additive) | `Message` gained `latency_ms`, `ttft_ms`, `provider`; `JourneyHeader` gained `framework` (see [above](#timing-and-provenance-21)). Every one is optional and defaults to `None`, so a 2.0 shard decodes under 2.1 unchanged and a 2.0 reader ignores the extra keys — additive in both directions, hence MINOR. No new `EventKind`, no changed field meaning |
 
-Current: `SCHEMA_VERSION = "2.0"`.
+Current: `SCHEMA_VERSION = "2.1"`.
 
 ## Where this schema is consumed
 

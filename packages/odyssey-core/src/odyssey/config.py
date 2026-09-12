@@ -28,6 +28,7 @@ ENV_SAMPLE_RATE = "ODYSSEY_SAMPLE_RATE"
 ENV_DRAIN_BATCH_SIZE = "ODYSSEY_DRAIN_BATCH_SIZE"
 ENV_COLLECT_METRICS = "ODYSSEY_COLLECT_METRICS"
 ENV_METRICS_INTERVAL = "ODYSSEY_METRICS_INTERVAL"
+ENV_INSTRUMENT = "ODYSSEY_INSTRUMENT"
 
 # Distinguishes "the caller didn't pass this argument, run the normal
 # resolution chain" from "the caller explicitly passed None" -- the same

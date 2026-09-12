@@ -21,3 +21,18 @@ export function formatBytes(bytes: number | null | undefined): string {
   const decimals = unitIndex === 0 ? 0 : 1;
   return `${sign}${value.toFixed(decimals)} ${UNITS[unitIndex]}`;
 }
+
+/** A latency in milliseconds, as a dashboard reads it: sub-second numbers
+ * stay in ms (that is the unit a voice deployment tunes in), a second or
+ * more reads as seconds. `null`/`undefined` is "not recorded" -- a journey
+ * from before schema 2.1, or an integration that cannot time its provider --
+ * and shows the same em dash every other unset value here does. */
+export function formatMs(ms: number | null | undefined): string {
+  if (ms == null || Number.isNaN(ms)) {
+    return "—";
+  }
+  if (Math.abs(ms) < 1000) {
+    return `${Math.round(ms)} ms`;
+  }
+  return `${(ms / 1000).toFixed(2)} s`;
+}

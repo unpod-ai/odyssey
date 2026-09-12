@@ -60,6 +60,18 @@ def test_health(tmp_path):
     assert resp.json() == {"status": "ok"}
 
 
+# A 2.0 shard carries none of schema 2.1's provenance, and says so rather
+# than leaving the fields out: a reader must not have to tell "not recorded"
+# apart from "this build of the API does not know about it".
+_NO_PROVENANCE = {
+    "framework": None,
+    "parent_journey_id": None,
+    "providers": [],
+    "avg_latency_ms": None,
+    "avg_ttft_ms": None,
+}
+
+
 def test_journeys_list_and_detail(tmp_path):
     journeys_dir = tmp_path / "journeys"
     date_dir = journeys_dir / "2026-08-28"
@@ -91,7 +103,12 @@ def test_journeys_list_and_detail(tmp_path):
     assert listed.status_code == 200
     listed_body = listed.json()
     assert listed_body["items"] == [
-        {"journey_id": JID, "date": "2026-08-28", "complete": True}
+        {
+            "journey_id": JID,
+            "date": "2026-08-28",
+            "complete": True,
+            "provenance": _NO_PROVENANCE,
+        }
     ]
     assert listed_body["total"] == 1
     assert listed_body["has_more"] is False
@@ -145,7 +162,14 @@ def test_journeys_list_excludes_metrics_directory(tmp_path):
     listed = client.get("/journeys")
     assert listed.status_code == 200
     body = listed.json()["items"]
-    assert body == [{"journey_id": JID, "date": "2026-08-28", "complete": True}]
+    assert body == [
+        {
+            "journey_id": JID,
+            "date": "2026-08-28",
+            "complete": True,
+            "provenance": _NO_PROVENANCE,
+        }
+    ]
     assert all(entry["date"] != "metrics" for entry in body)
     assert all(entry["journey_id"] != "2026-08-28" for entry in body)
 
@@ -511,3 +535,91 @@ def test_journeys_counts(tmp_path):
     assert by_product == {"unpod": 2, "acme": 1}
     by_date = {row["date"]: row["count"] for row in body["by_date"]}
     assert by_date == {"2026-08-28": 2, "2026-08-29": 1}
+
+
+def test_a_21_journey_reports_who_served_it_and_how_long_it_took(tmp_path):
+    """The write path stamps `framework`, `provider`, `latency_ms`, `ttft_ms`
+    and the `<call>.llm` link on every voice call. This is the read path: the
+    listing answers from the index, the detail from the shard, and the two have
+    to agree."""
+    journeys_dir = tmp_path / "journeys"
+    date_dir = journeys_dir / "2026-08-28"
+    date_dir.mkdir(parents=True)
+    jid = "call_1.llm"
+    write_events(
+        date_dir / f"{jid}.jsonl",
+        [
+            JourneyEvent(
+                journey_id=jid,
+                seq=0,
+                kind="message",
+                event_id="e0",
+                message=Message(role="user", content="what are your hours?"),
+            ),
+            JourneyEvent(
+                journey_id=jid,
+                seq=1,
+                kind="message",
+                event_id="e1",
+                message=Message(
+                    role="assistant",
+                    content="9 to 5",
+                    provider="groq",
+                    latency_ms=300.0,
+                    ttft_ms=100.0,
+                ),
+            ),
+            JourneyEvent(
+                journey_id=jid,
+                seq=2,
+                kind="message",
+                event_id="e2",
+                message=Message(role="user", content="tuesday?"),
+            ),
+            JourneyEvent(
+                journey_id=jid,
+                seq=3,
+                kind="message",
+                event_id="e3",
+                message=Message(
+                    role="assistant",
+                    content="3pm is free",
+                    provider="openai",
+                    latency_ms=500.0,
+                    ttft_ms=200.0,
+                ),
+            ),
+            JourneyEvent(
+                journey_id=jid,
+                seq=4,
+                kind="terminal",
+                event_id="e4",
+                terminal=Terminal(termination_reason="ENV_DONE"),
+            ),
+        ],
+        header=JourneyHeader(
+            journey_id=jid,
+            data_source="livekit",
+            framework="livekit",
+            journey_metadata={"parent_journey_id": "call_1"},
+        ),
+    )
+    client = _client(Settings(journeys_dir=journeys_dir))
+
+    listed = client.get("/journeys").json()["items"][0]
+    assert listed["provenance"] == {
+        "framework": "livekit",
+        "parent_journey_id": "call_1",
+        "providers": ["groq", "openai"],
+        "avg_latency_ms": 400.0,
+        "avg_ttft_ms": 150.0,
+    }
+
+    detail = client.get(f"/journeys/{jid}").json()
+    assert detail["provenance"] == listed["provenance"], "index and shard agree"
+    timed = [
+        (s["provider"], s["latency_ms"], s["ttft_ms"])
+        for s in detail["steps"]
+        if s["provider"]
+    ]
+    assert timed == [("groq", 300.0, 100.0), ("openai", 500.0, 200.0)]

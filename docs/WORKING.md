@@ -10,7 +10,7 @@ checklist.
 Every claim here was checked by running the code. The commands that prove each
 claim are in [§9 Verification](#9-verification--prove-every-claim-yourself).
 
-**Last verified:** 2026-08-25 · 468 passed, 1 skipped · flake8 clean at 100 cols
+**Last verified:** 2026-09-07 · 801 passed, 1 skipped · `task lint` + `task types` clean
 
 ---
 
@@ -25,9 +25,14 @@ The product requirement, stated plainly:
 
 Two halves to that, and they pull in different directions:
 
-- **Collection must be invisible.** One `init()`, one drop-in client or one
-  decorator. No instrumentation sprinkled across the codebase, no per-call-site
-  bookkeeping. If a developer has to remember to log, the corpus has holes.
+- **Collection must be invisible.** One `init()` — and since `instrument`
+  defaults to `"auto"`, that call alone patches every provider SDK the process
+  actually has installed and registers LangChain's handler process-wide. No
+  import to swap, no instrumentation sprinkled across the codebase, no
+  per-call-site bookkeeping. If a developer has to remember to log, the corpus
+  has holes. The two voice frameworks are the one exception, and they cost one
+  line each: they attach to an object the app owns (`attach(session, ...)`,
+  `attach(task, ...)`), which `init()` has no way to reach.
 - **The dump must be training-grade.** Not just observability rows. Cumulative
   turns, tool-call correlation preserved, per-turn `trainable` labels, and
   preference pairs (chosen vs rejected) that DPO can actually read.
@@ -45,17 +50,19 @@ A Langfuse-style SDK is these layers. Ticks are verified, not aspirational.
 | L2 | **Local buffer + delivery** | survive process death, retry, dedupe | in-memory queue + background flush | ✅ **done** (disk-backed — stronger than Langfuse) |
 | L3 | **Projection / read side** | events → usable conversation | server-side trace assembly | ✅ **done** (`fold`) |
 | L4 | **Ambient context** | auto `journey_id` + auto `seq`, no threading params | `contextvar` trace/span stack | ✅ **done** (`context.py`) |
-| L5 | **Auto-instrumentation** | drop-in clients, decorator, framework callbacks | `@observe`, `openai` shim, LangChain handler, OTel | ✅ Anthropic + OpenAI + Gemini + LiveKit + LangChain/LangGraph + OTel bridge done; LlamaIndex still open |
-| L6 | **One-line init** | `odyssey.init()` + env vars + `atexit` flush | `langfuse.init()` | ✅ **done** (`client.py`) |
-| L7 | **HTTP transport** | ship to a server, not a folder | `/api/public/ingestion` | ❌ **0%** (only `FileSink`) |
-| L8 | **Collector / server** | the "one place" everything lands | Langfuse server | ❌ **0%** |
-| L9 | **Dashboard** | look at what landed | Langfuse UI | ❌ **0%** |
+| L5 | **Auto-instrumentation** | drop-in clients, decorator, framework callbacks | `@observe`, `openai` shim, LangChain handler, OTel | ✅ Anthropic + OpenAI + Gemini + LiveKit + Pipecat + LangChain/LangGraph + OTel bridge done, and `instrument="auto"` attaches the installed ones from `init()` itself; LlamaIndex still open |
+| L6 | **One-line init** | `odyssey.init()` + env vars + `atexit` flush | `langfuse.init()` | ✅ **done** (`client.py`) — and it is now genuinely *one* line: `instrument="auto"`, plus a default sink taken from `ODYSSEY_ENDPOINT` |
+| L7 | **HTTP transport** | ship to a server, not a folder | `/api/public/ingestion` | ✅ **done** (`sinks.HttpSink` — stdlib only, gzip, keep-alive, `Retry-After` backoff, cross-journey batching; `init()` picks it up from `ODYSSEY_ENDPOINT`) |
+| L8 | **Collector / server** | the "one place" everything lands | Langfuse server | ✅ **done** (`services/collector` ingest + `services/api` read side, item 1.8 / Step 8) |
+| L9 | **Dashboard** | look at what landed | Langfuse UI | ✅ **done** (`apps/web` — journeys, runs, exports, metrics pages) |
 | L10 | **Training export** | corpus → SFT/DPO files | (Langfuse: dataset export) | ✅ **Trajectory JSON, SFT, and DPO all ship** (`odyssey export` / `sft` / `dpo`) |
 
-**6 of 10 layers built.** L4 and L6 — the "install it in one place" half — landed
-in the capture-layer change. What remains between "an agent runs" and "a model
-trains" is now exactly two things: **L7/L8, a destination that is not a local
-folder**, and **L10, something that writes an SFT or DPO file**.
+**All 10 layers now have a working implementation.** L4/L6 — the "install it
+in one place" half — landed in the capture-layer change and closed properly with
+`instrument="auto"`; L7/L8 landed as `HttpSink` → `services/collector` →
+`services/api`; L9 is `apps/web`; L10 is `odyssey export`/`sft`/`dpo`. What
+remains is depth rather than layers: LlamaIndex hooks (L5), and the per-member
+gaps each section below names.
 
 ### What the API looks like now
 
@@ -71,9 +78,19 @@ with odyssey.journey(id=platform_call_id, user_id="u_42") as j:
     j.signal("thumbs_up")      # target defaults to the turn just recorded
     j.reward(0.9)
 
-# automatic provider capture — an import swap, nothing else
+# automatic provider capture — nothing at all, it is already on:
+# init() defaults to instrument="auto", so an installed anthropic/openai/
+# google-genai is patched in place and LangChain's handler is registered
+# process-wide. The explicit drop-in still works and still reads better in a
+# traceback, it is just no longer required:
 from odyssey.integrations.anthropic import Anthropic
-client = Anthropic()           # every messages.create() is recorded
+client = Anthropic()           # every messages.create() is recorded, once
+                               # (the _reentry guard means the patch
+                               #  underneath does not record it a second time)
+
+# voice frameworks attach to an object the app owns — one line each
+odyssey.integrations.livekit.attach(session, journey_id=ctx.room.name)
+odyssey.integrations.pipecat.attach(task, journey_id=call_id)
 
 # your own tool functions
 @odyssey.observe(as_tool=True)
@@ -81,15 +98,23 @@ def book(day: str, time: str) -> dict:
     ...
 ```
 
-Opt-in patching, for call sites that cannot be edited:
+Narrowing or turning off what attaches, when the default is not what you want:
 
 ```python
-odyssey.init(instrument=["anthropic"])   # existing anthropic clients now record
+odyssey.init(instrument="none")            # attach nothing (the old default)
+odyssey.init(instrument=["openai"])        # exactly one target, and say so
+                                           # loudly if it isn't installed
+odyssey.init(instrument=["auto", "otel"])  # add the OTel bridge
+odyssey.init(instrument="all")             # same thing, shorter
 ```
 
-The explicit drop-in is the default because a patched call stack is harder to
-read in a traceback and harder to reason about when two libraries patch the same
-method. Patching is the escape hatch.
+`ODYSSEY_INSTRUMENT` sets the same thing from the environment. `"auto"`
+deliberately excludes the OTel bridge: a process running both it and a patched
+provider client records every call twice, under two different journeys, and
+`opentelemetry-sdk` is a common transitive dependency nobody chose. An
+*expanded* group skips a package that is not installed; an *explicitly named*
+target is always attempted, so a typo or a missing extra shows up in
+`odyssey.health()` instead of vanishing.
 
 ### The constraint that shaped it: single writer per journey
 
@@ -100,8 +125,9 @@ conversations. The fold deduplicates on `event_id`, not `seq`, so it would not
 catch that on its own.
 
 So every event carries a `writer_id` in `JourneyEvent.metadata`
-(`WRITER_META_KEY`) — **not a new schema field**, which is what keeps
-`SCHEMA_VERSION` at `1.0`. `fold()` reports `writers`, exposes
+(`WRITER_META_KEY`) — **not a new schema field**, which is what kept this
+out of a `SCHEMA_VERSION` bump of its own (the version is `2.1` today, for
+unrelated reasons: voice events, then timing/provenance). `fold()` reports `writers`, exposes
 `writer_conflict`, and sets `complete=False` when there is more than one. The
 CLI exits `3` on it.
 
@@ -117,50 +143,58 @@ deliberately not taken yet.
 ### Verified, just now
 
 ```
-pytest tests -q                     → 468 passed, 1 skipped   (2.3 s)
-pytest --collect-only -q            → 469 collected across 17 files
-flake8 --max-line-length=100        → exit 0, clean
+pytest tests -q                     → 801 passed, 1 skipped   (20.4 s)
+pytest --collect-only -q            → 802 collected across 30 files
+task lint                           → exit 0, clean
+task types                          → 0 errors (88 suppressed)
 scripts/make_golden.py --check      → golden fixture is current   ← wire format intact
-python -m odyssey.cli --help        → push · export · sft · dpo · status · show · health
+python -m odyssey.cli --help        → push · export · sft · dpo · status · show · prune · health
 python -m odyssey.cli export --help → --events · --out · --journey · --last-step
 ```
 
-The one skip is `test_superdialog_does_not_depend_on_odyssey` — the sibling
+The one skip is `test_contract.py`'s superdialog import gate — the sibling
 checkout is not on this machine, not a failure.
 
-Two notes on the lint number, because "clean" needs a column width to mean
-anything. At 100 columns the tree is clean. At flake8's own default of 79 it is
-not, and the offenders are almost all one file: `builders/messages.py` carries 27
-long lines of provider-shape literals, where wrapping a payload example makes it
-harder to compare against the SDK's own docs. There is no `.flake8` /`setup.cfg`
-in the repo yet, so the width lives in the command rather than in config — item
-9.2, the CI file that would pin it, is still unwritten.
+A note on the lint number, because "clean" needs a configuration to mean
+anything. The gate is `task lint`, which is
+`flake8 --max-line-length=88 --extend-ignore=E203,E501,W503,F541,F841 src tests`
+— the house settings, black-compatible, and the only invocation CI runs. At
+flake8's bare defaults the tree is *not* clean, and the offenders are almost all
+line length in one file: `builders/messages.py` carries long provider-shape
+literals, where wrapping a payload example makes it harder to compare against
+the SDK's own docs. There is still no `.flake8`/`setup.cfg`, so the settings
+live in `Taskfile.yml` rather than in config a bare `flake8` would find.
 
 ### Size
 
 | | Before the capture layer | Now |
 |---|---|---|
-| Source | 11 files, 2 587 LOC | **24 files, 6 806 LOC** |
-| Tests | 12 files, 3 025 LOC | **18 files, 7 640 LOC** |
-| Tests passing | 197 | **468** (+1 skipped) |
+| Source | 11 files, 2 587 LOC | **38 files, 12 081 LOC** |
+| Tests | 12 files, 3 025 LOC | **31 files, 14 093 LOC** |
+| Tests passing | 197 | **801** (+1 skipped) |
 | Third-party deps in core | 0 | **0** — still, verified by import scan |
-| `src/odyssey/__init__.py` | 0 bytes | **131 LOC** (public API, 50 exports) |
+| `src/odyssey/__init__.py` | 0 bytes | **208 LOC** (public API, 70 exports) |
 
-Tests now outweigh source, 7 640 lines to 6 806. That ratio is the honest cost of
-a layer whose failure mode is silence: a capture bug does not crash the host, it
-produces a corpus that is quietly wrong, so almost every rule in the fold and the
-export has a test that would notice.
+Tests now outweigh source, 14 093 lines to 12 081. That ratio is the honest cost
+of a layer whose failure mode is silence: a capture bug does not crash the host,
+it produces a corpus that is quietly wrong, so almost every rule in the fold and
+the export has a test that would notice.
 
-> **`uv.lock` grew from 19 to 35 packages, and that is not a regression.**
-> Declaring the `anthropic` optional extra makes uv lock its whole transitive
-> tree — `pydantic`, `httpx`, `anyio` and friends now appear in the lockfile.
-> None of it is installed: `uv sync --extra dev` still produces an environment
-> with no `anthropic` and no `pydantic`, and all 468 tests pass in it, because
-> `test_integrations.py` injects a fake SDK through `sys.modules`. Only
-> `uv sync --extra anthropic` pulls the real one. `dependencies = []` is
-> unchanged.
+> **The workspace `uv.lock` went 97 → 129 packages when the `pipecat` extra was declared, and that is not a regression.**
+> Every optional extra — `anthropic`, `openai`, `gemini`, `langchain`, `otel`,
+> and now `pipecat` — makes uv lock its whole transitive tree, so `pydantic`,
+> `httpx`, `anyio`, and (for pipecat) 32 more entries from `aiohttp` to
+> `llvmlite` appear in the lockfile. None of it
+> is installed: `uv sync --extra dev` still produces an environment with no
+> `anthropic`, no `openai` and no `google-genai` (checked with `find_spec`
+> against the dev env itself), and all 801 tests pass in it, because every
+> provider test injects a fake SDK through `sys.modules`. Only
+> `uv sync --extra <name>` pulls a real one. `dependencies = []` is unchanged
+> — and `instrument="auto"` attaches nothing at all in that environment, which
+> is exactly the intended behaviour: it patches what is installed, not what is
+> locked.
 
-### Test report — 469 cases, and what each file is holding down
+### Test report — 802 cases, and what each file is holding down
 
 One line per file, newest first in intent rather than alphabet. The count is what
 `pytest --collect-only` reports, so parametrised cases are counted the way they
@@ -168,20 +202,34 @@ actually run.
 
 | File | Cases | What it exists to catch |
 |---|---|---|
-| `test_livekit.py` | 83 | Streamed utterances coalescing into one turn; tool calls paired with their outputs; the system prompt read off the live agent and followed through a handoff; a `close` that arrives after the worker already tore the session down |
-| `test_sdk.py` | 56 | `init()`/`journey()`/`observe()` end to end, the never-raise boundary, `health()` counters, the `atexit` drain |
-| `test_spool.py` | 51 | Append-only durability (a real SIGKILLed child), shard rotation, LRU handle eviction, watermarks, resumed drains, redaction |
+| `test_livekit.py` | 98 | Streamed utterances coalescing into one turn; tool calls paired with their outputs; the system prompt read off the live agent and followed through a handoff; agent identity in the header and the per-turn delta after a handoff; `metrics_collected` readings becoming `voice` latency events; a `close` that arrives after the worker already tore the session down |
+| `test_spool.py` | 71 | Append-only durability (a real SIGKILLed child), shard rotation, LRU handle eviction, watermarks, resumed drains, redaction, `gc`, and a failed background drain tick reaching `on_result` |
+| `test_sdk.py` | 69 | `init()`/`journey()`/`observe()` end to end, the never-raise boundary, `health()` counters, the `atexit` drain |
+| `test_sinks.py` | 39 | `HttpSink` against a real stdlib HTTP server (not a mocked `urlopen`): gzip, keep-alive reuse, `Retry-After` backoff, per-journey batch outcomes |
 | `test_export.py` | 38 | The artifact: Trajectory shape, cumulative steps, `--last-step` trimming, filename sanitisation, atomic write, one unreadable shard not aborting a run |
+| `test_pipecat.py` | 34 | The `BaseObserver` path: one turn per LLM response rather than per `LLMTextFrame`; the same frame observed at every pipeline hop recorded exactly once; interim transcriptions ignored; barge-in marking the reply truncated; `MetricsFrame` TTFB becoming a `voice` event; `EndFrame` closing the journey |
+| `test_openai_integration.py` | 34 | The OpenAI drop-in, the opt-in patch, and the resend-the-whole-conversation problem, against a fake SDK injected through `sys.modules` |
 | `builders/test_build_messages.py` | 33 | Provider payload parsing — OpenAI, Anthropic, Vercel, flat — including unparseable tool arguments |
 | `test_fold.py` | 31 | Dedupe, terminal cut, gap detection, writer conflict, `trainable_status` precedence |
-| `test_jsonl.py` | 27 | The codec: version header, truncated last line, per-line rejection, append without a second header |
+| `test_integrations.py` | 29 | The Anthropic drop-in and opt-in patching, plus the `_reentry` guard: a drop-in client over a patched SDK records one turn, not two |
+| `test_jsonl.py` | 27 | The codec: version header, truncated last line, per-line rejection, append without a second header, an unusable timing value degrading to `None` |
 | `builders/test_build_helpers.py` | 25 | The small pure functions the builders lean on |
-| `test_integrations.py` | 23 | The Anthropic drop-in and opt-in patching, against a fake SDK injected through `sys.modules` |
+| `test_cli.py` | 24 | `push` · `export` · `sft` · `dpo` · `status` · `show` · `prune` · `health`, including the exit-3 writer-conflict contract |
+| `test_gemini_integration.py` | 23 | Gemini's different shape — `contents`/`parts`, `role="model"`, system prompt and tools under `config` — through its own parser and capture base |
+| `test_otel_integration.py` | 22 | The span bridge against a fake `opentelemetry.sdk`: one journey per trace, `gen_ai.*` vocabularies in priority order, `shutdown()` actually detaching |
+| `test_one_integration_point.py` | 20 | What `instrument="auto"` picks up and what it refuses: only installed targets, `otel` excluded from `auto`, an explicitly named missing target reported rather than skipped, `livekit`/`pipecat` answered with the `attach()` call to write, and `ODYSSEY_ENDPOINT` choosing the default sink |
 | `test_contract.py` | 21 | The cross-project golden fixture — every event kind, tool correlation, preference chain, and the rule that `Step` never reaches the wire |
+| `test_langchain_integration.py` | 18 | The callback handler against a fake `langchain_core`, the LangGraph run shapes, and `instrument()` registering process-wide through `register_configure_hook` |
 | `test_context.py` | 18 | `ContextVar` propagation into tasks but *not* threads, and 8×200 concurrent `seq` allocation with no holes |
-| `test_cli.py` | 18 | `push` · `export` · `status` · `show` · `health`, including the exit-3 writer-conflict contract |
 | `builders/test_build_metrics_and_steps.py` | 18 | Tool counts, error rate, one cumulative step per turn |
 | `builders/test_build_journey.py` | 17 | Journey assembly, content hash, idempotency key |
+| `test_metrics.py` | 16 | Opt-in host telemetry: the snapshot's stdlib-sourced fields, the reporter's interval, and that a transport failure never raises |
+| `test_dpo.py` | 15 | DPO pair extraction — (prompt, chosen, rejected) out of a folded journey |
+| `test_pii.py` | 14 | Content-level PII scan/redact (regex, not NER — including the Luhn check on card numbers) |
+| `test_timing_fields.py` | 12 | `stamp()` never overwriting timing an integration already set, and agent identity staying a caller tag in `journey_metadata` rather than a schema field |
+| `test_auto_capture.py` | 35 | Auto-capture as a voice deployment exercises it: async and streamed calls on OpenAI-compatible hosts (tool-call deltas, cancelled streams, chunks rewritten after reading), Gemini and Anthropic streams, provider naming from `base_url` with registry/env/`adapt`, raw responses, LangChain-recorded calls left alone, per-client history, and the linked `<journey_id>.llm` journey for LiveKit/Pipecat |
+| `test_sft.py` | 13 | SFT export — one JSON line per trainable turn |
+| `test_project.py` | 11 | `resolve_project()`'s auto-detect chain: env → git `origin` → cwd dirname, and every malformed-git fallback |
 | `builders/test_langsmith_roundtrip.py` | 4 | A LangSmith-shaped trace surviving the round trip |
 | `builders/test_build_reward.py` | 3 | Scalar → `Reward` |
 | `builders/test_anthropic_e2e.py` | 3 | A real-shaped Anthropic exchange end to end |
@@ -290,7 +338,9 @@ Legend: ✅ done & tested · 🟡 partly there · ❌ not started
 | 0.13 | Background drain thread | ✅ | `IntervalDrainer`, now started by `init()` |
 | 0.14 | Voice-agent turn capture | ✅ | `integrations/livekit.py` — one `attach()` per `AgentSession`: streamed utterances coalesced into one turn, tool calls paired with outputs, the system prompt read off the live agent and followed through handoffs (or skipped with `record_instructions=False`), and `.tool()` for engines LiveKit does not drive. STT confidence and barge-in now emit real `voice` events alongside the turn (item 0′.4) |
 | 0.15 | **Never crash the host** | ✅ | Capture failures counted, not raised. `ODYSSEY_DEBUG=1` re-raises for local dev |
-| 0.16 | **Diagnostics** | ✅ | `diagnostics.py`, `odyssey.health()`, `odyssey.cli health` |
+| 0.16 | **Diagnostics** | ✅ | `diagnostics.py`, `odyssey.health()`, `odyssey.cli health`. Now also counts a failed *background* drain: `IntervalDrainer` reports every tick through an `on_result` callback and `Client._note_drain_result` records a `DrainFailed` in `recent_errors`, so a sink that rejects every batch (a 401 from an unauthenticated collector, a wrong endpoint) is visible instead of ticking silently forever while the spool grows |
+| 0.17 | **One integration point, by default** | ✅ | `init()`'s `instrument` defaults to `"auto"`: `client._resolve_instrument` expands `auto`/`all`/`none`/an explicit list (also from `ODYSSEY_INSTRUMENT`), probes each target with `importlib.util.find_spec` so asking never costs an import, and attaches every installed provider patch plus LangChain's process-wide handler. `otel` is excluded from `auto` (double-recording, and `opentelemetry-sdk` is a transitive dependency nobody chose); `livekit`/`pipecat` are recognized but not attachable from `init()` and answer with the `attach(...)` call to write. `integrations/_reentry.py` makes the outermost attachment the one that records, so a drop-in client over a patched SDK yields one turn rather than two — the failure mode this default would otherwise have introduced everywhere. Default sink also follows the deployment now: `ODYSSEY_ENDPOINT` set → `HttpSink`, unset → `FileSink`, malformed → `FileSink` plus a counted error, never a raise |
+| 0.18 | **Pipecat voice capture** | ✅ | `integrations/pipecat.py` — one `attach(task, journey_id=...)` per `PipelineTask` (or `observers=[observer(...)]` on the construction path), implemented as a `BaseObserver` rather than a provider wrapper because which service sits in Pipecat's LLM slot is a deployment choice. Records the user's `TranscriptionFrame` (never the interim ones), one assistant turn per `LLMFullResponseStart`/`LLMTextFrame`/`LLMFullResponseEnd` group, tool calls paired by `tool_call_id`, `MetricsFrame` TTFB as a `voice` latency event, barge-in as a truncated reply, and `EndFrame`/`CancelFrame` as the terminal. `on_push_frame` fires once per pipeline *hop*, so frames are deduplicated on `frame.id` in a bounded ring — without that a six-processor pipeline would multiply the corpus by six. Optional `odyssey[pipecat]` extra |
 
 **Design decisions worth knowing before extending this:**
 
@@ -324,14 +374,17 @@ Legend: ✅ done & tested · 🟡 partly there · ❌ not started
 | 0′.4 | **Voice events** | ✅ | Real breaking change: `SCHEMA_VERSION` bumped `1.1` → `2.0`, a new `"voice"` `EventKind`, `VoiceEvent` (`voice_kind: stt_transcript\|tts_output\|barge_in\|latency`, `text`, `confidence`, `latency_ms`), `JourneyEvent.voice`. `fold()` accumulates them into `FoldResult.voice_events`, kept separate from `Journey.messages`/`Step[]` — a voice event has no `trainable` notion. `integrations/livekit.py` now emits `stt_transcript` (turn-level weighted transcript confidence) and `barge_in` (the existing `INTERRUPTED_FLAG`) events. Golden fixture regenerated at 2.0 with a `voice` event. **No migration tool**: a 1.x shard on disk no longer parses under this reader — one-way major bump, documented in CHANGELOG.md |
 | 0′.5 | Streaming coverage | ✅ | Both `messages.stream()` (sync `MessageStreamManager`) and the async counterpart (`AsyncAnthropic.messages.stream()`) are wrapped — `_AsyncStreamProxy`/`_AsyncStreamBody` mirror the sync `_StreamProxy`/`_StreamBody` shape exactly, capturing the assembled final message on `get_final_message()`, never per-chunk |
 | 0′.6 | Sampling | ✅ | `ODYSSEY_SAMPLE_RATE` / `Config.sample_rate` (default `1.0`, clamped `[0,1]`). The coin-flip happens once per journey at `journey()` open, stored on `JourneyContext.state["_sampled"]` so a nested join inherits the parent's decision rather than re-rolling; `_emit()` drops before touching the spool. `client.count_journey_sampled_out()` surfaced in `health()` |
+| 0′.7 | **Timing + provenance** | ✅ | `SCHEMA_VERSION` `2.0` → `2.1`, additive both directions. `Message` gained `latency_ms`, `ttft_ms`, `provider`; `JourneyHeader` gained `framework`. Timing comes from the shared `integrations/_timing.py` — a `perf_counter` `Timer` measured *around* the provider call (never `time.time`, which can go backwards mid-call) and a `stamp()` that never overwrites what a wrapper that measured its own TTFT already set — wired through all three provider bases and both streaming wrappers. Agent identity is deliberately not a field — its meaning is per-deployment, so it stays a caller tag in `journey_metadata`. `jsonl.py` decodes timing through `_opt_float`, so a string or null from a third-party object costs that one field, not the turn. Golden fixture regenerated at `2.1`; see [`journey-schema.md`](journey-schema.md#timing-and-provenance-21) |
 
 ---
 
 ### Step 1 — Transport & the one destination (L7–L8)
 
-**"Sab logs ek jagah aa jaayein" — the *jagah* still does not exist.** With only
-`FileSink`, the "one place" is a local folder per machine, which is not one
-place. **This is the top of the critical path.**
+**"Sab logs ek jagah aa jaayein" — the *jagah* exists now.** `HttpSink`
+(item 1.5) ships to `services/collector` (1.8), `init()` selects it from
+`ODYSSEY_ENDPOINT` with no code change, and `services/api` + `apps/web` read
+that same store. `FileSink` remains the no-endpoint default, which is right for
+a laptop and was never the "one place".
 
 | # | Item | Status | Evidence / what's missing |
 |---|---|---|---|
@@ -360,7 +413,7 @@ as predicted. See [§11 Extension points](#11-extension-points).
 |---|---|---|---|
 | 2.1 | Append-only local layout | ✅ | `<root>/journeys/<jid>/NNN.jsonl` + `watermarks.json` |
 | 2.2 | Shard rotation | ✅ | Survives the handle cache — `test_rotation_still_happens_with_a_cached_handle` |
-| 2.3 | Versioned wire format | ✅ | `SCHEMA_VERSION = "2.0"` (bumped from 1.1 for item 0′.4's voice events), unknown MAJOR refuses to parse |
+| 2.3 | Versioned wire format | ✅ | `SCHEMA_VERSION = "2.1"` (major bump from 1.1 for item 0′.4's voice events, then an additive minor for 0′.7's timing/agent fields), unknown MAJOR refuses to parse |
 | 2.4 | Truncated-writer tolerance | ✅ | Killed mid-append → every complete event returned |
 | 2.5 | Per-line rejection | ✅ | One bad line → one `Rejection`, file still readable |
 | 2.6 | Path-traversal / symlink containment | ✅ | `safe_child()` → `SpoolPathError`, on the cold path where it belongs |
@@ -791,7 +844,7 @@ EXPORT (the artifact, not the transport)
 
 ## 5. Module reference
 
-24 files, 6 806 LOC, **zero third-party dependencies**. `stdlib` only — verified
+38 files, 12 081 LOC, **zero third-party dependencies**. `stdlib` only — verified
 by scanning every import. That is a constraint, not an accident: a dependency
 nothing imports is a phantom dep, and the change that needs one adds it.
 
@@ -799,17 +852,24 @@ nothing imports is a phantom dep, and the change that needs one adds it.
 
 | Module | LOC | Responsibility |
 |---|---|---|
-| `__init__.py` | 131 | Public API. 50 exports; the one place a user imports from |
-| `context.py` | 228 | `ContextVar` journey stack, `SeqAllocator`, `bind()`. **No I/O at all** |
-| `config.py` | 123 | `ODYSSEY_*` env → `Config`. Explicit args win; a bad env value falls back rather than failing startup |
-| `client.py` | 427 | The singleton: spool, allocator, drainer, `atexit`, opt-in SIGTERM, counters, `health()`. `init(sink=...)` accepts any destination |
-| `capture.py` | 534 | `journey()`, `JourneyHandle`, `observe()`, `_emit()`. The never-raise boundary |
-| `diagnostics.py` | 295 | `scan()` a spool, `render_journey()` for `show`, formatters |
-| `integrations/_base.py` | 283 | Request+response → events: prefix dedup, unknown-block handling (Anthropic) |
-| `integrations/anthropic.py` | 249 | Drop-in sync/async client, opt-in patch. Provider imported **inside** `__init__` |
-| `integrations/_openai_base.py` | 235 | Same job, OpenAI's shape. No separate system-prompt case needed — it's `messages[0]`, covered by the same tail-tracking logic |
-| `integrations/openai.py` | 225 | Drop-in sync/async client, opt-in patch. Also covers OpenAI-*compatible* providers via `base_url=...` — same SDK, same wrapper |
-| `integrations/livekit.py` | 939 | One `attach()` per `AgentSession`. Coalesces streamed utterances into one message per turn, pairs tool calls with their outputs, reads the system prompt off the live agent — or skips it entirely under `record_instructions=False`. `.tool()` records a call LiveKit never ran, which is how flow- and playbook-driven deployments get tool turns at all |
+| `__init__.py` | 208 | Public API. 70 exports; the one place a user imports from |
+| `context.py` | 259 | `ContextVar` journey stack, `SeqAllocator`, `bind()`, and header tag seeding (`project`). **No I/O at all** |
+| `config.py` | 194 | `ODYSSEY_*` env → `Config` (including `ODYSSEY_INSTRUMENT`). Explicit args win; a bad env value falls back rather than failing startup |
+| `client.py` | 691 | The singleton: spool, allocator, drainer, `atexit`, opt-in SIGTERM, counters, `health()`. Also `_resolve_instrument` (what `"auto"`/`"all"`/`"none"`/a list expands to), `_installed` (`find_spec`, never an import), `_default_sink` (`ODYSSEY_ENDPOINT` → `HttpSink`), and `_note_drain_result` (a failed background drain becomes a counted error). `init(sink=...)` still accepts any destination |
+| `capture.py` | 608 | `journey()`, `JourneyHandle`, `observe()`, `_emit()`. The never-raise boundary |
+| `diagnostics.py` | 292 | `scan()` a spool, `render_journey()` for `show`, formatters |
+| `integrations/_base.py` | 300 | Request+response → events: prefix dedup, unknown-block handling, timing/`provider` stamping (Anthropic) |
+| `integrations/anthropic.py` | 375 | Drop-in sync/async client, opt-in patch, sync + async streaming. Provider imported **inside** `__init__` |
+| `integrations/_openai_base.py` | 253 | Same job, OpenAI's shape. No separate system-prompt case needed — it's `messages[0]`, covered by the same tail-tracking logic |
+| `integrations/openai.py` | 247 | Drop-in sync/async client, opt-in patch. Also covers OpenAI-*compatible* providers via `base_url=...` — same SDK, same wrapper |
+| `integrations/_gemini_base.py` | 307 | Same job again, Gemini's shape: `contents` of `parts`, `role="model"`, system prompt and tools under `config` |
+| `integrations/gemini.py` | 239 | One `Client` wrapper for both `client.models` and `client.aio.models`, plus the opt-in patch |
+| `integrations/langchain.py` | 435 | `OdysseyCallbackHandler` (one flat journey per root `run_id`, LangGraph covered by the same callback tree) and `instrument()`/`uninstrument()`, which register it process-wide through `register_configure_hook` — the reason a node that never forwards `config` is still recorded |
+| `integrations/otel.py` | 428 | `OdysseySpanProcessor` — one journey per **trace**, `gen_ai.*` content only, root `StatusCode` → termination reason. `instrument()` attaches it to the global `TracerProvider` (installing one only when the process has none); deliberately outside `"auto"` |
+| `integrations/livekit.py` | 1 154 | One `attach()` per `AgentSession`. Coalesces streamed utterances into one message per turn, pairs tool calls with their outputs, reads the system prompt off the live agent — or skips it entirely under `record_instructions=False`. `.tool()` records a call LiveKit never ran, which is how flow- and playbook-driven deployments get tool turns at all. Carries `framework="livekit"` and the agent identity, and turns `metrics_collected` readings into `voice` latency events |
+| `integrations/pipecat.py` | 674 | One `attach()` per `PipelineTask`, as a `BaseObserver` — provider-agnostic by construction, since the LLM service in a Pipecat pipeline is a deployment choice. Frames deduplicated on `frame.id` because `on_push_frame` fires once per hop |
+| `integrations/_timing.py` | 77 | `Timer` (monotonic, idempotent `first_token()`) and `stamp()`, shared by the three provider bases so "how long did this take" means one thing |
+| `integrations/_reentry.py` | 51 | The `ContextVar` guard that makes the outermost attachment the only one that records — the reason `instrument="auto"` under an explicit drop-in client does not double every turn |
 
 **`context.py`** — the piece that made everything else possible.
 `SeqAllocator.next()` holds its lock across the seed call deliberately: releasing
@@ -853,19 +913,19 @@ skipped one is merely a hole. The discrepancy is counted and shows in `health()`
 
 | Module | LOC | Responsibility |
 |---|---|---|
-| `primitives.py` | 412 | `JourneyEvent` and the vocabulary it validates against |
-| `spool.py` | 626 | Append-only capture, cached shard handles, watermark, `drain()` |
-| `jsonl.py` | 416 | Versioned codec: truncation handling, per-line rejection, header written once per file |
-| `fold.py` | 341 | Event fold + projection + writer-conflict detection |
-| `builders/messages.py` | 665 | Provider *parsers* (OpenAI, Anthropic, Vercel, flat) |
+| `primitives.py` | 434 | `JourneyEvent` and the vocabulary it validates against |
+| `spool.py` | 891 | Append-only capture, cached shard handles, watermark, `drain()`, `gc()`, and `IntervalDrainer`'s `on_result` hook (plus the `DrainFailed` type a failed tick is reported as) |
+| `jsonl.py` | 468 | Versioned codec: truncation handling, per-line rejection, header written once per file |
+| `fold.py` | 349 | Event fold + projection + writer-conflict detection |
+| `builders/messages.py` | 782 | Provider *parsers* (OpenAI, Anthropic, Vercel, flat) |
 | `builders/journey.py` | 213 | Journey assembly, metrics, content hash |
 | `builders/steps.py` | 161 | One cumulative step per turn, copy-on-write system prefix |
 | `builders/metrics.py` | 57 | Tool counts, error rate, elapsed time |
 | `builders/reward.py` | 42 | Scalar → `Reward` |
 | `hashing.py` | 43 | Canonical JSON → SHA-256 |
-| `cli.py` | 202 | `push` · `export` · `status` · `show` · `health` |
-| `sinks.py` | 142 | `FileSink` (moved out of `cli.py` so the library never imports the CLI) and `HttpSink` — the network destination, stdlib `urllib` only. Any object with `send(journey_id, events, header)` is a sink |
-| `export.py` | 374 | The artifact: `Journey` → `{conversation_id}.json`, `--last-step` trimming, `_odyssey` diagnostics, atomic write, filename sanitisation. `_gather_from_dir`/`_gather_from_spool` are shared by `sft.py`/`dpo.py` too |
+| `cli.py` | 455 | `push` · `export` · `sft` · `dpo` · `status` · `show` · `prune` · `health` |
+| `sinks.py` | 363 | `FileSink` (moved out of `cli.py` so the library never imports the CLI) and `HttpSink` — the network destination, stdlib `urllib` only. Any object with `send(journey_id, events, header)` is a sink |
+| `export.py` | 373 | The artifact: `Journey` → `{conversation_id}.json`, `--last-step` trimming, `_odyssey` diagnostics, atomic write, filename sanitisation. `_gather_from_dir`/`_gather_from_spool` are shared by `sft.py`/`dpo.py` too |
 | `sft.py` | 133 | SFT export — one JSON line per `trainable` step, one combined `.jsonl` shard |
 | `dpo.py` | 144 | DPO pair extraction — walks `journey.steps`, pairs every `superseded` run against the `trainable` step that resolved it |
 
@@ -1298,6 +1358,8 @@ conversations is the one corruption that reads as valid data.
 | `ODYSSEY_SPOOL` | spool root (default `.odyssey`) |
 | `ODYSSEY_OUT` | `FileSink` destination (default `odyssey-out`) |
 | `ODYSSEY_ENABLED` | `0`/`false`/`no`/`off` disables recording entirely |
+| `ODYSSEY_INSTRUMENT` | what `init()` attaches: `auto` (default — every installed provider SDK plus LangChain), `all` (adds the OTel bridge), `none`, or an explicit comma/space-separated list |
+| `ODYSSEY_ENDPOINT` | collector URL. Also picks `init()`'s default sink: set → `HttpSink`, unset → `FileSink` |
 | `ODYSSEY_DRAIN_INTERVAL` | background drain seconds; a bad value falls back to 30 |
 | `ODYSSEY_DEBUG` | `1` re-raises capture failures instead of counting them |
 | `ODYSSEY_MAX_OPEN_SHARDS` | cached file-handle cap (default 256) |
@@ -1437,7 +1499,7 @@ Expected tail:
 
 ```bash
 cd packages/odyssey-core
-uv run pytest tests -q                 # → 468 passed, 1 skipped
+uv run pytest tests -q                 # → 801 passed, 1 skipped
 task lint                              # → exit 0
 task types                             # → 0 errors
 python scripts/make_golden.py --check  # → golden fixture is current
@@ -1629,7 +1691,25 @@ or schedule a rewrite of `primitives.py`.
   for `voice` events.
 - **A schema-1.x `*.jsonl` shard no longer parses** (0′.4's `SCHEMA_VERSION`
   1.1 → 2.0 major bump). No migration tool ships with this repo; a 1.x file on
-  disk is stuck unless something else rewrites it forward.
+  disk is stuck unless something else rewrites it forward. The later 2.0 → 2.1
+  bump (0′.7) adds nothing to this: it is additive in both directions, so a 2.0
+  shard reads under 2.1 and a 2.0 reader ignores 2.1's new optional keys.
+- **Nothing downstream reads the 2.1 fields yet.** `latency_ms`, `ttft_ms`,
+  `provider` and the header's `framework` are captured, encoded
+  and folded, but `packages/odyssey-schemas`' DTOs, `services/api`, both SDKs
+  and `apps/web` know nothing about them — a corpus can be filtered on them by
+  hand, not through the read API or the dashboard.
+- **Auto-instrumentation is on by default** (0.17), which is a behaviour change
+  for any deployment that upgraded expecting `init()` to attach nothing. A
+  process with `openai` installed now records its calls after `init()` alone.
+  Opt out with `instrument="none"` / `ODYSSEY_INSTRUMENT=none`; `_reentry`
+  means having both the patch and an explicit drop-in client attached still
+  records one turn, so the usual double-capture failure does not apply.
+- **`instrument="auto"` cannot attach the voice frameworks** (0.17/0.18).
+  LiveKit and Pipecat capture an object the application owns — an
+  `AgentSession`, a `PipelineTask` — which `init()` never sees, so those
+  deployments still add one `attach(...)` line each. Naming one in
+  `instrument=` raises with the call to write rather than "unknown target".
 - **LlamaIndex hooks are not started** (0.10). LangChain, LangGraph (0.10/0′.2),
   and the OTel bridge (0.11/0′.3) are all covered now. **LlamaIndex is
   intentionally deferred, to be picked up together with item 9.4** (`NOTICE`
