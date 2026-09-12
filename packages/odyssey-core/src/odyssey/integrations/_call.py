@@ -11,9 +11,13 @@ module plugs that in.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
-from odyssey.integrations._reentry import in_framework_call, outermost
+from odyssey.integrations._reentry import (
+    framework_call,
+    outermost,
+    report_framework_call,
+)
 from odyssey.integrations._scope import CallScope, safe
 from odyssey.integrations._streams import ObservedAsyncStream, ObservedStream
 from odyssey.integrations._timing import Timer
@@ -78,6 +82,7 @@ class _Call:
         "provider",
         "key",
         "streaming",
+        "framework",
         "scope",
         "timer",
         "acc",
@@ -85,7 +90,12 @@ class _Call:
     )
 
     def __init__(
-        self, spec: Capture, resource: Any, kwargs: Dict[str, Any], streaming: bool
+        self,
+        spec: Capture,
+        resource: Any,
+        kwargs: Dict[str, Any],
+        streaming: bool,
+        framework: Optional[Tuple[Any, str]] = None,
     ) -> None:
         self.spec = spec
         self.kwargs = kwargs
@@ -93,16 +103,20 @@ class _Call:
         # One history offset per SDK client inside a shared journey.
         self.key = _client_key(resource)
         self.streaming = streaming
-        self.scope = CallScope()
+        # Set when a framework integration is already recording this call: the
+        # turn is its to write, and this capture only measures and reports.
+        self.framework = framework
+        self.scope = None if framework is not None else CallScope()
         self.timer = Timer()
         self.acc: Any = None
         self._done = False
 
     def request(self) -> None:
-        self.scope.run(
-            f"{self.spec.label}.request",
-            lambda: self.spec.request(self.kwargs, key=self.key),
-        )
+        if self.scope is not None:
+            self.scope.run(
+                f"{self.spec.label}.request",
+                lambda: self.spec.request(self.kwargs, key=self.key),
+            )
         # Started after the request capture, so the number is the provider's.
         self.timer = Timer()
 
@@ -124,6 +138,9 @@ class _Call:
             return
         self._done = True
         elapsed = self.timer.latency_ms
+        if self.scope is None:
+            self._report(latency_ms=elapsed)
+            return
         self.scope.run(
             f"{self.spec.label}.response",
             lambda: self.spec.response(
@@ -157,6 +174,9 @@ class _Call:
             meta["incomplete"] = True
         if exc is not None:
             meta["stream_error"] = type(exc).__name__
+        if self.scope is None:
+            self._report(latency_ms=latency, ttft_ms=ttft)
+            return
         self.scope.run(
             f"{self.spec.label}.response",
             lambda: self.spec.streamed(
@@ -176,7 +196,26 @@ class _Call:
         if self._done:
             return
         self._done = True
-        self.scope.close(exc)
+        # A failed call has no turn to stamp: the framework's own handler sees
+        # the error and ends its run with it.
+        if self.scope is not None:
+            self.scope.close(exc)
+
+    def _report(
+        self, *, latency_ms: Optional[float] = None, ttft_ms: Optional[float] = None
+    ) -> None:
+        framework = self.framework
+        if framework is None:  # only reached with no scope of our own
+            return
+        safe(
+            f"{self.spec.label}.framework",
+            lambda: report_framework_call(
+                framework,
+                provider=self.provider.name,
+                latency_ms=latency_ms,
+                ttft_ms=ttft_ms,
+            ),
+        )
 
 
 def capture_sync(
@@ -191,15 +230,20 @@ def capture_sync(
 
     The request is recorded *before* the call, so a provider timeout still
     leaves the prompt in the corpus.
+
+    A call a framework integration is already recording is measured but not
+    recorded: its timing and provider go to that integration's turn (see
+    ``_reentry.report_framework_call``), because a second turn here would be
+    the same answer twice.
     """
-    if in_framework_call():
-        return call()
     with outermost() as mine:
         if not mine:
             # An outer wrapper is already recording this call -- a drop-in
             # client over the in-place patch. See `_reentry`.
             return call()
-        rec = _Call(spec, resource, kwargs, _streaming(kwargs, streaming))
+        rec = _Call(
+            spec, resource, kwargs, _streaming(kwargs, streaming), framework_call()
+        )
         rec.request()
         try:
             result = call()
@@ -218,12 +262,12 @@ async def capture_async(
     streaming: Optional[bool] = None,
 ) -> Any:
     """Record one awaited call; see :func:`capture_sync`."""
-    if in_framework_call():
-        return await call()
     with outermost() as mine:
         if not mine:
             return await call()
-        rec = _Call(spec, resource, kwargs, _streaming(kwargs, streaming))
+        rec = _Call(
+            spec, resource, kwargs, _streaming(kwargs, streaming), framework_call()
+        )
         rec.request()
         try:
             result = await call()

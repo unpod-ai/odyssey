@@ -203,12 +203,15 @@ def openai_target(script: List[Any]) -> Any:
     return module
 
 
-def patch_openai(script: Any = None) -> Any:
+def instrument_openai(target: Any) -> Any:
     from odyssey.integrations.openai import instrument
 
-    target = openai_target(list(script or []))
     instrument(target)
     return target
+
+
+def patch_openai(script: Any = None) -> Any:
+    return instrument_openai(openai_target(list(script or [])))
 
 
 USER = [{"role": "user", "content": "what are your hours?"}]
@@ -462,13 +465,24 @@ def test_a_raw_response_is_recorded_once_parsed(tmp_path):
 
 
 class _Owner:
-    """What a framework handler exposes: which of its runs are still going."""
+    """What a framework handler exposes: which of its runs are still going,
+    and a hook for what the patch underneath measured."""
 
     def __init__(self) -> None:
         self.running = {"run_1"}
+        self.measured: List[Dict[str, Any]] = []
 
     def is_running(self, run_id: str) -> bool:
         return run_id in self.running
+
+    def observed(self, run_id: str, **fields: Any) -> None:
+        self.measured.append({"run_id": run_id, **fields})
+
+
+class _MuteOwner(_Owner):
+    """A handler from an older release: marks its runs, takes no measurements."""
+
+    observed = None  # type: ignore[assignment]
 
 
 def test_a_call_a_framework_is_recording_is_left_to_it(tmp_path):
@@ -505,6 +519,94 @@ def test_a_mark_whose_run_already_ended_does_not_silence_capture(tmp_path):
     finally:
         exit_framework_call(token)
     assert len(journey_ids()) == 1
+
+
+def test_a_framework_recorded_call_still_reports_provider_and_latency(tmp_path):
+    """The handler writes the turn, but only the patch below sees who served
+    it. Without this the LangChain turns carry no provider and no timing."""
+    from odyssey.integrations._reentry import enter_framework_call, exit_framework_call
+
+    start(tmp_path)
+    target = patch_openai()
+    owner = _Owner()
+    token = enter_framework_call(owner, "run_1")
+    try:
+        target.Completions("https://api.groq.com/openai/v1").create(
+            model="m", messages=USER
+        )
+    finally:
+        exit_framework_call(token)
+
+    assert journey_ids() == [], "still no turn of our own"
+    assert len(owner.measured) == 1
+    got = owner.measured[0]
+    assert got["run_id"] == "run_1"
+    assert got["provider"] == "groq"
+    assert got["latency_ms"] is not None
+    assert got["ttft_ms"] is None, "nothing was streamed"
+
+
+def test_a_framework_recorded_stream_reports_its_time_to_first_token(tmp_path):
+    from odyssey.integrations._reentry import enter_framework_call, exit_framework_call
+
+    start(tmp_path)
+    target = patch_openai([[chunk("Hel"), chunk("lo"), chunk(finish="stop")]])
+    owner = _Owner()
+    token = enter_framework_call(owner, "run_1")
+    try:
+        stream = target.Completions().create(model="m", messages=USER, stream=True)
+        assert owner.measured == [], "nothing to report until it is drained"
+        assert list(stream) != []
+    finally:
+        exit_framework_call(token)
+
+    assert journey_ids() == []
+    got = owner.measured[0]
+    assert got["provider"] == "openai"
+    assert got["ttft_ms"] is not None and got["latency_ms"] is not None
+
+
+def test_a_framework_recorded_call_that_fails_reports_nothing(tmp_path):
+    """The handler's own `on_llm_error` ends that run; there is no turn to stamp."""
+    from odyssey.integrations._reentry import enter_framework_call, exit_framework_call
+
+    start(tmp_path)
+
+    class Boom(Exception):
+        pass
+
+    def explode(self, **kwargs):
+        raise Boom("provider down")
+
+    # Patched over the failing call, not the other way round.
+    target = openai_target([])
+    target.Completions.create = explode
+    instrument_openai(target)
+    owner = _Owner()
+    token = enter_framework_call(owner, "run_1")
+    try:
+        with pytest.raises(Boom):
+            target.Completions().create(model="m", messages=USER)
+    finally:
+        exit_framework_call(token)
+
+    assert owner.measured == [] and journey_ids() == []
+
+
+def test_a_handler_with_nothing_to_report_to_still_works(tmp_path):
+    from odyssey.integrations._reentry import enter_framework_call, exit_framework_call
+
+    start(tmp_path)
+    target = patch_openai([completion("fine")])
+    owner = _MuteOwner()
+    token = enter_framework_call(owner, "run_1")
+    try:
+        result = target.Completions().create(model="m", messages=USER)
+    finally:
+        exit_framework_call(token)
+
+    assert result["choices"][0]["message"]["content"] == "fine"
+    assert journey_ids() == []
 
 
 def test_two_clients_in_one_journey_each_keep_their_own_history(tmp_path):

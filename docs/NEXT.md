@@ -1,6 +1,6 @@
 # odyssey — session handoff
 
-## Open work — decided 2026-09-12, nothing started
+## Open work — decided 2026-09-12; item 1 done, items 2-4 open
 
 Everything below lands on `main_v2`, which is PR #1 (`unpod-ai/odyssey#1`).
 PR #1 is **not** to be merged until this work is done: it is the last step, not
@@ -17,17 +17,19 @@ the first. CI runs on the PR only (workflows trigger on `main` pushes and PRs).
 | Agent identity | A caller tag in `journey_metadata`, never a schema field (see `journey-schema.md`). |
 | Stash `stash@{0}` on `main` | Leave it. |
 
-### 1. Three small fixes
+### 1. Three small fixes — **done**
 
-- **LangChain turns carry no `provider`/`latency_ms`.** The handler records the
-  turn and the SDK patch skips it (`_reentry.in_framework_call`). The patch
-  should stamp provider and latency onto the handler's turn rather than staying
-  silent. Touches `integrations/_call.py`, `_reentry.py`, `langchain.py`.
+- **LangChain turns carry no `provider`/`latency_ms`.** Fixed: the patch under
+  a marked model run now measures the call and reports it
+  (`_reentry.framework_call`/`report_framework_call` → `_Handler.observed` →
+  `_Recorder.note_provider_call`), and `on_llm_end` stamps the assistant turn.
+  Streams report `ttft_ms` on drain; a report for a run that already ended is
+  dropped. `in_framework_call()` is gone, replaced by `framework_call()`.
 - **`test_an_explicitly_named_missing_package_is_reported` depends on the
-  environment** — it fails whenever `langchain` is installed; CI passes only
-  because it installs dev extras alone (`tests/test_one_integration_point.py`).
-- **Unused `sqlite3` import** in `packages/odyssey-store/tests/test_db.py`
-  (pre-existing on `main`, that package has no CI workflow).
+  environment.** Fixed: `_hide_package` clears the cached modules *and* blocks
+  the finders, so the test answers the same with `langchain` installed or not.
+- **Unused `sqlite3` import** in `packages/odyssey-store/tests/test_db.py`:
+  removed.
 
 ### 2. Bedrock capture
 
@@ -71,9 +73,10 @@ precedent) → `apps/web`. This is the first item here to trigger `ci-sdk`,
 
 ### Where things stand
 
-`main_v2` = `1c500e8`, CI green, no conflicts with `main`. Known gaps that are
-tracked but unscheduled: nothing beyond items 2 and 3. Watch the size — PR #1
-is already ~2,750 added lines and items 2-4 roughly double it.
+`main_v2` = the three small fixes above on top of `222c04a`, CI green, no
+conflicts with `main`. Known gaps that are tracked but unscheduled: nothing
+beyond items 2 and 3. Watch the size — PR #1 is already ~2,750 added lines and
+items 2-4 roughly double it.
 
 ## One integration point + schema 2.1 (timing, provenance) + Pipecat — built, tested, on `main_v2`
 

@@ -60,6 +60,7 @@ from odyssey.client import require_client
 from odyssey.context import JourneyContext, SeqAllocator, bind, current
 from odyssey.integrations._linked import linked_journey
 from odyssey.integrations._reentry import enter_framework_call, exit_framework_call
+from odyssey.integrations._timing import stamp
 from odyssey.primitives import Message, Role, TerminationReason, ToolCall, ToolResponse
 
 __all__ = ["OdysseyCallbackHandler"]
@@ -96,6 +97,9 @@ class _Recorder:
         # opened here. Tracked so `_end` never terminates someone else's
         # journey -- see `_ctx_for`.
         self._borrowed: Set[str] = set()
+        # run_id -> what the provider patch underneath measured for that model
+        # run. Written by `note_provider_call`, read once by `on_llm_end`.
+        self._measured: Dict[str, Dict[str, Any]] = {}
 
     def _guard(self, label: str, fn: Callable[[], Any]) -> None:
         """Run a capture step from inside a LangChain callback. Never raises
@@ -186,6 +190,34 @@ class _Recorder:
 
     # -- LLM ----------------------------------------------------------
 
+    def note_provider_call(
+        self,
+        run_id: str,
+        *,
+        provider: Optional[str] = None,
+        latency_ms: Optional[float] = None,
+        ttft_ms: Optional[float] = None,
+    ) -> None:
+        """Timing and provenance for a model run, from the SDK patch below.
+
+        The handler owns the turn -- the patch stays out of a call LangChain is
+        already recording -- but only the patch sees which host served it and
+        how long it took, so it hands both here and `on_llm_end` stamps them
+        onto the turn it writes.
+
+        Last write wins, per field: a run that retried has the answer of its
+        final attempt, and a provider that failed over answered from somewhere
+        else than the attempt before it.
+        """
+        measured = self._measured.setdefault(run_id, {})
+        for name, value in (
+            ("provider", provider),
+            ("latency_ms", latency_ms),
+            ("ttft_ms", ttft_ms),
+        ):
+            if value is not None:
+                measured[name] = value
+
     def on_llm_start(
         self,
         serialized: Any,
@@ -232,6 +264,9 @@ class _Recorder:
         self, response: Any, *, run_id: Any, parent_run_id: Any = None, **_: Any
     ) -> None:
         root = self._root_for(run_id, parent_run_id)
+        # Popped outside `go` so the run leaves nothing behind even if
+        # recording it fails.
+        measured = self._measured.pop(_rid(run_id), {})
 
         def go() -> None:
             with bind(self._ctx_for(root)):
@@ -244,7 +279,9 @@ class _Recorder:
                             else getattr(gen, "text", "")
                         )
                         self._handle(root).message(
-                            Message(role="assistant", content=str(text))
+                            stamp(
+                                Message(role="assistant", content=str(text)), **measured
+                            )
                         )
             if self._is_root(run_id):
                 self._end(root)
@@ -255,6 +292,7 @@ class _Recorder:
         self, error: BaseException, *, run_id: Any, parent_run_id: Any = None, **_: Any
     ) -> None:
         root = self._root_for(run_id, parent_run_id)
+        self._measured.pop(_rid(run_id), None)
         if self._is_root(run_id):
             self._end(root, reason="ERROR", error=f"{type(error).__name__}: {error}")
 
@@ -384,6 +422,16 @@ def OdysseyCallbackHandler(
                 self._marks[rid] = enter_framework_call(self, rid)
             except Exception:  # noqa: BLE001 - never break the chain over a mark
                 pass
+
+        def observed(self, run_id: str, **measured: Any) -> None:
+            """What the provider patch measured for one of this handler's runs.
+
+            Only while the run is still marked: a report arriving after the run
+            ended belongs to no turn this handler will write, and keeping it
+            would be a dict entry nothing ever pops.
+            """
+            if self.is_running(run_id):
+                recorder.note_provider_call(run_id, **measured)
 
         def _unmark(self, kwargs: Dict[str, Any]) -> None:
             token = self._marks.pop(_rid(kwargs.get("run_id")), None)

@@ -147,6 +147,26 @@ def test_asking_for_nothing_patches_nothing(tmp_path, fake_openai):
 # --------------------------------------------------------------------------
 
 
+def _hide_package(monkeypatch, name):
+    """Make `name` unimportable for one test, installed or not.
+
+    Clearing `sys.modules` is not enough on its own (the real package would
+    just be imported again) and neither is a `None` entry (a `from
+    pkg.sub.mod import x` finds `pkg.sub.mod` in `sys.modules` and never looks
+    at the parent), so both the cached modules and the finders are taken out.
+    """
+    for cached in [m for m in sys.modules if m == name or m.startswith(f"{name}.")]:
+        monkeypatch.delitem(sys.modules, cached)
+
+    class _Blocker:
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname == name or fullname.startswith(f"{name}."):
+                raise ImportError(f"{name} is hidden for this test")
+            return None
+
+    monkeypatch.setattr(sys, "meta_path", [_Blocker(), *sys.meta_path])
+
+
 def test_naming_livekit_explains_itself(tmp_path):
     """It attaches to an `AgentSession` the application owns. "Unknown target"
     would send someone looking for a typo that is not there."""
@@ -171,9 +191,15 @@ def test_an_unknown_target_is_reported_not_raised(tmp_path):
     assert any("nonesuch_provider" in e for e in errors)
 
 
-def test_an_explicitly_named_missing_package_is_reported(tmp_path):
+def test_an_explicitly_named_missing_package_is_reported(tmp_path, monkeypatch):
     """Unlike an expanded group, an explicit name is always attempted — asking
-    for it and getting silence is worse than asking for it and being told."""
+    for it and getting silence is worse than asking for it and being told.
+
+    `langchain_core` is hidden rather than assumed absent, so the suite gives
+    the same answer on a machine that has the optional extra installed as it
+    does in CI, which installs the dev extras alone.
+    """
+    _hide_package(monkeypatch, "langchain_core")
     start(tmp_path, instrument=["langchain"])
 
     assert odyssey.health()["stats"]["capture_errors"] >= 1

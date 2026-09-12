@@ -210,6 +210,17 @@ project has not yet made a versioned release, so entries accumulate under
   such a run is in progress. A mark names its handler and run and counts only
   while that run is still going, so one left in a context that never saw the
   run end cannot silence capture for the rest of the task.
+- **LangChain turns now carry `provider` and timing.** The handler records
+  the turn and the provider patch underneath skips the call, so nothing was
+  left to fill in `provider`, `latency_ms` or `ttft_ms` — a LangChain corpus
+  looked like it had been recorded by a client that could not time anything.
+  The patch still writes no turn, but it measures the call and reports what
+  only it can see to the handler's run
+  (`_reentry.report_framework_call` → `_Handler.observed` →
+  `_Recorder.note_provider_call`), which stamps it onto the assistant turn.
+  Streamed runs report their time-to-first-token once the stream is drained; a
+  measurement arriving after its run ended is dropped rather than stamped onto
+  the next one.
 - **`init(project=...)` now reaches every journey, not only hand-opened
   ones.** The tag was seeded inside `capture.journey()`, and every
   integration — `livekit`, `langchain`, `otel`, `pipecat` — builds its own

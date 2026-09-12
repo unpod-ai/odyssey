@@ -73,6 +73,10 @@ def rid():
     return uuid.uuid4()
 
 
+def messages(jid):
+    return [e.message for e in events(jid) if e.kind == "message" and e.message]
+
+
 def test_importing_odyssey_does_not_import_langchain(monkeypatch):
     monkeypatch.delitem(sys.modules, "langchain_core", raising=False)
     import importlib
@@ -249,6 +253,114 @@ def test_a_capture_failure_never_raises(tmp_path):
     run_id = rid()
     # `generations=None` would break naive iteration; must be swallowed, not raised.
     handler.on_llm_end(FakeLLMResult(None), run_id=run_id)  # no prior on_llm_start
+
+
+# --------------------------------------------------------------------------
+# What the provider patch underneath measured
+# --------------------------------------------------------------------------
+
+
+def _report(**measured):
+    """What the patched provider SDK does at the end of a call it is not
+    recording (`integrations/_call.py`), driven by hand here so this file
+    still needs no provider SDK."""
+    from odyssey.integrations._reentry import framework_call, report_framework_call
+
+    framework = framework_call()
+    assert framework is not None, "the handler did not mark its run"
+    report_framework_call(framework, **measured)
+
+
+def test_a_turn_carries_the_provider_and_timing_measured_below_it(tmp_path):
+    """The handler records the turn and the patch underneath stays out of it —
+    but the patch is the only layer that sees who served the call."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_chat_model_start({}, [[FakeMessage("human", "hi")]], run_id=run_id)
+    _report(provider="groq", latency_ms=120.5, ttft_ms=40.25)
+    handler.on_llm_end(
+        FakeLLMResult([[FakeGeneration(message=FakeMessage("ai", "hello!"))]]),
+        run_id=run_id,
+    )
+
+    answer = messages(str(run_id))[-1]
+    assert answer.role == "assistant"
+    assert (answer.provider, answer.latency_ms, answer.ttft_ms) == (
+        "groq",
+        120.5,
+        40.25,
+    )
+
+
+def test_the_request_turn_is_not_stamped_with_the_calls_latency(tmp_path):
+    """A request has no duration of its own; stamping both halves would double
+    the call for anything summing the column."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    _report(provider="openai", latency_ms=10.0)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="hey")]]), run_id=run_id)
+
+    asked = messages(str(run_id))[0]
+    assert asked.role == "user"
+    assert (asked.latency_ms, asked.provider) == (None, None)
+
+
+def test_the_last_attempt_under_one_run_is_the_one_stamped(tmp_path):
+    """A retry answers from wherever it ended up, not from where it failed."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    _report(provider="openai", latency_ms=9.0)
+    _report(provider="together", latency_ms=11.0)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="hey")]]), run_id=run_id)
+
+    answer = messages(str(run_id))[-1]
+    assert (answer.provider, answer.latency_ms) == ("together", 11.0)
+
+
+def test_a_measurement_for_a_finished_run_is_dropped(tmp_path):
+    """A stream drained after its run ended has no turn left to stamp, and
+    must not leave an entry nothing ever pops."""
+    from odyssey.integrations.langchain import OdysseyCallbackHandler
+
+    start(tmp_path)
+    handler = OdysseyCallbackHandler()
+    run_id = rid()
+
+    handler.on_llm_start({}, ["hi"], run_id=run_id)
+    handler.on_llm_end(FakeLLMResult([[FakeGeneration(text="hey")]]), run_id=run_id)
+    handler.observed(str(run_id), provider="openai", latency_ms=10.0)
+
+    answer = messages(str(run_id))[-1]
+    assert answer.provider is None
+
+
+def test_an_errored_run_leaves_no_measurement_behind(tmp_path):
+    """A run that never reaches `on_llm_end` still has to let its measurement go."""
+    from odyssey.integrations.langchain import _Recorder
+
+    start(tmp_path)
+    recorder = _Recorder(data_source="langchain", metadata=None)
+    run_id = rid()
+
+    recorder.on_llm_start({}, ["hi"], run_id=run_id)
+    recorder.note_provider_call(str(run_id), provider="openai", latency_ms=10.0)
+    recorder.on_llm_error(RuntimeError("provider down"), run_id=run_id)
+
+    assert recorder._measured == {}
 
 
 # --------------------------------------------------------------------------
