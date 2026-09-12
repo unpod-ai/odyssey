@@ -64,6 +64,26 @@ def fake_openai(monkeypatch):
     uninstrument()
 
 
+@pytest.fixture
+def fake_botocore(monkeypatch):
+    """An importable `botocore`, so `auto` has a Bedrock seam to patch."""
+    module = types.ModuleType("botocore")
+    client_mod = types.ModuleType("botocore.client")
+
+    class BaseClient:
+        def _make_api_call(self, operation_name, api_params):
+            return {}
+
+    client_mod.BaseClient = BaseClient  # type: ignore[attr-defined]
+    module.client = client_mod  # type: ignore[attr-defined]
+    for name, mod in (("botocore", module), ("botocore.client", client_mod)):
+        monkeypatch.setitem(sys.modules, name, mod)
+    yield module
+    from odyssey.integrations.bedrock import uninstrument
+
+    uninstrument()
+
+
 # --------------------------------------------------------------------------
 # What "auto" means
 # --------------------------------------------------------------------------
@@ -123,6 +143,14 @@ def test_auto_skips_what_is_not_installed():
 
 def test_auto_attaches_a_provider_that_is_installed(tmp_path, fake_openai):
     from odyssey.integrations.openai import is_instrumented
+
+    start(tmp_path)
+    assert is_instrumented()
+
+
+def test_auto_attaches_bedrock_when_boto_is_installed(tmp_path, fake_botocore):
+    """Bedrock has no SDK of its own to find: boto3's presence is the signal."""
+    from odyssey.integrations.bedrock import is_instrumented
 
     start(tmp_path)
     assert is_instrumented()

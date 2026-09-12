@@ -54,6 +54,7 @@ _TARGET_MODULE: Dict[str, str] = {
     "anthropic": "anthropic",
     "openai": "openai",
     "gemini": "google.genai",
+    "bedrock": "botocore",
     "langchain": "langchain_core",
     "otel": "opentelemetry.sdk",
 }
@@ -62,7 +63,7 @@ _TARGET_MODULE: Dict[str, str] = {
 # client and an OTel processor records the same call twice, under two journeys,
 # and `opentelemetry-sdk` is a common transitive dependency that nobody chose.
 # See `integrations/otel.instrument`. `all` is the opt-in that includes it.
-_AUTO = ("anthropic", "openai", "gemini", "langchain")
+_AUTO = ("anthropic", "openai", "gemini", "bedrock", "langchain")
 _ALL = _AUTO + ("otel",)
 
 # Integrations that cannot be attached from `init()` because they need an
@@ -442,8 +443,9 @@ def init(
 
     ``instrument`` (``ODYSSEY_INSTRUMENT``) decides what attaches itself to
     this process, and defaults to ``"auto"`` — every provider SDK that is
-    actually installed (``anthropic``, ``openai``, ``google-genai``) is patched
-    in place, and LangChain's handler is registered process-wide. That default
+    actually installed (``anthropic``, ``openai``, ``google-genai``, and
+    ``botocore`` for Bedrock) is patched in place, and LangChain's handler is
+    registered process-wide. That default
     is what makes this call the *single* integration point: an app that adds
     ``odyssey.init()`` and nothing else is recording, with no import to swap
     and no callback to thread through every ``invoke()``.
@@ -623,6 +625,10 @@ def _instrument(
             instrument()
         elif key == "gemini":
             from odyssey.integrations.gemini import instrument
+
+            instrument()
+        elif key == "bedrock":
+            from odyssey.integrations.bedrock import instrument
 
             instrument()
         elif key == "langchain":

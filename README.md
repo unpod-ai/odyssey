@@ -76,7 +76,7 @@ odyssey/
 - **Architectural Highlights**:
   - `primitives.py`: Formal definition of the unified `JourneyEvent` schema.
   - `spool.py`: Crash-resilient local disk spooler that automatically redacts sensitive credentials at record time.
-  - `integrations/`: Drop-in capture wrappers for OpenAI, Anthropic, Gemini, Langchain, and LiveKit.
+  - `integrations/`: Drop-in capture wrappers for OpenAI, Anthropic, Gemini, Bedrock, Langchain, and LiveKit.
 - **Verification**: `cd packages/odyssey-core && uv sync --extra dev && bash scripts/run_tests.sh all`
 </details>
 
@@ -195,7 +195,7 @@ Launches the high-throughput standard-library gateway to accept events from edge
 cd services/collector
 uv run odyssey-collector --data-dir ./collector-data
 ```
-In your production application, one call is the whole integration — `init()` reads `ODYSSEY_ENDPOINT` for the gateway and defaults to `instrument="auto"`, which patches every provider SDK you actually have installed (`anthropic`, `openai` and any OpenAI-compatible gateway, `google-genai`) and registers LangChain's handler process-wide:
+In your production application, one call is the whole integration — `init()` reads `ODYSSEY_ENDPOINT` for the gateway and defaults to `instrument="auto"`, which patches every provider SDK you actually have installed (`anthropic`, `openai` and any OpenAI-compatible gateway, `google-genai`, and `boto3` for Bedrock) and registers LangChain's handler process-wide:
 ```bash
 export ODYSSEY_ENDPOINT=http://127.0.0.1:8787
 ```

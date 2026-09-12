@@ -23,6 +23,24 @@ project has not yet made a versioned release, so entries accumulate under
   and Anthropic's `AsyncMessages.create`, `beta.messages` and `stream=True`
   (Pipecat's Anthropic service) are captured the same way, through one shared
   implementation (`integrations/_call.py`, `_streams.py`, `_scope.py`).
+- **AWS Bedrock capture** (`integrations/bedrock.py`), the provider behind
+  LiveKit's `aws.LLM` and Pipecat's `AWSBedrockLLMService`. Neither touches a
+  provider SDK odyssey could wrap: boto3 builds a client's methods at runtime,
+  so the seam is `botocore.client.BaseClient._make_api_call` (and
+  `aiobotocore`'s async twin), filtered to the `bedrock-runtime` service and
+  the four operations that carry a conversation — `Converse`, `ConverseStream`,
+  `InvokeModel`, `InvokeModelWithResponseStream`. The Converse API is the
+  messages API in AWS spelling, so its shapes are translated into the ones
+  `integrations/_base.py` already parses (tool calls, tool results, reasoning
+  blocks, usage, stop reasons) rather than parsed a second time; a streamed
+  call folds back into one turn with time-to-first-token, exactly like the
+  other providers. `InvokeModel`'s per-family body is handled for the Anthropic
+  family (whose body *is* the messages API) and for the text-completion
+  families (Titan, Llama, Cohere), and its response body — an HTTP stream that
+  reads once — is replaced with a replayable one, so the caller reads the same
+  bytes it would have. `instrument="auto"` picks Bedrock up when `botocore` is
+  installed; the patch sits under every boto3 call in the process and answers
+  in one dict lookup for all of them but these four.
 - **Provider named from the client's `base_url`, with per-provider logic**
   (`integrations/providers.py`). Groq, xAI, Cerebras, OpenRouter, Sarvam,
   DeepInfra, Azure, Ollama, DeepSeek, Modal and others are all the `openai`

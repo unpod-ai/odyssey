@@ -19,7 +19,11 @@ from odyssey.integrations._reentry import (
     report_framework_call,
 )
 from odyssey.integrations._scope import CallScope, safe
-from odyssey.integrations._streams import ObservedAsyncStream, ObservedStream
+from odyssey.integrations._streams import (
+    ObservedAsyncStream,
+    ObservedStream,
+    OnEnd,
+)
 from odyssey.integrations._timing import Timer
 from odyssey.integrations.providers import Provider, resolve
 
@@ -48,6 +52,11 @@ class Capture:
     streamed: Callable[..., None]
     accumulator: Callable[[], Any]
     provider: Callable[[Any], Provider]
+    # Optional: ``observe(result, on_chunk, on_end)`` for an SDK whose streamed
+    # response is not itself the stream -- boto3 returns a dict carrying the
+    # event stream under a key. Returns the result to hand back, or ``None``
+    # when there was nothing stream-shaped in it after all.
+    observe: Optional[Callable[[Any, Callable[[Any], None], OnEnd], Any]] = None
 
 
 def provider_from_base_url(default: str) -> Callable[[Any], Provider]:
@@ -124,14 +133,30 @@ class _Call:
         if raw_ok and is_raw(self.kwargs):
             return RawResponse(result, self)
         if self.streaming:
-            if hasattr(result, "__aiter__"):
-                self.acc = self.spec.accumulator()
-                return ObservedAsyncStream(result, self._chunk, self._drained)
-            if hasattr(result, "__iter__"):
-                self.acc = self.spec.accumulator()
-                return ObservedStream(result, self._chunk, self._drained)
+            observed = self._observe(result)
+            if observed is not None:
+                return observed
         self.respond(result)
         return result
+
+    def _observe(self, result: Any) -> Any:
+        """The response, wrapped so the turn is recorded once it has arrived.
+
+        ``None`` when nothing in it is stream-shaped, and the caller records
+        the response as it stands instead.
+        """
+        self.acc = self.spec.accumulator()
+        if self.spec.observe is not None:
+            wrapped = self.spec.observe(result, self._chunk, self._drained)
+        elif hasattr(result, "__aiter__"):
+            wrapped = ObservedAsyncStream(result, self._chunk, self._drained)
+        elif hasattr(result, "__iter__"):
+            wrapped = ObservedStream(result, self._chunk, self._drained)
+        else:
+            wrapped = None
+        if wrapped is None:
+            self.acc = None
+        return wrapped
 
     def respond(self, result: Any) -> None:
         if self._done:

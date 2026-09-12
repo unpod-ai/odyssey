@@ -1,6 +1,6 @@
 # odyssey — session handoff
 
-## Open work — decided 2026-09-12; item 1 done, items 2-4 open
+## Open work — decided 2026-09-12; items 1-2 done, items 3-4 open
 
 Everything below lands on `main_v2`, which is PR #1 (`unpod-ai/odyssey#1`).
 PR #1 is **not** to be merged until this work is done: it is the last step, not
@@ -31,14 +31,17 @@ the first. CI runs on the PR only (workflows trigger on `main` pushes and PRs).
 - **Unused `sqlite3` import** in `packages/odyssey-store/tests/test_db.py`:
   removed.
 
-### 2. Bedrock capture
+### 2. Bedrock capture — **done**
 
-LiveKit `aws.LLM` and Pipecat `AWSBedrockLLMService`. Neither touches the
-openai/google-genai/anthropic SDKs — both go through **boto3**
-(`bedrock-runtime`: `converse`, `converse_stream`, `invoke_model*`), so this is
-a new integration plus its own fakes. Reuse `integrations/_call.py` (`Capture`
-spec, `capture_sync`/`capture_async`) and `_streams.py`; write a Bedrock
-accumulator beside the openai/anthropic/gemini ones.
+`integrations/bedrock.py` patches `botocore.client.BaseClient._make_api_call`
+(plus `aiobotocore`'s async twin) and filters to the `bedrock-runtime` service
+and four operations: `Converse`, `ConverseStream`, `InvokeModel`,
+`InvokeModelWithResponseStream`. Converse shapes are translated into the ones
+`_base.py` already parses rather than parsed again; `ConverseAccumulator` and
+`InvokeAccumulator` subclass `MessageAccumulator`. `Capture` gained an optional
+`observe` hook for an SDK whose streamed response is a dict carrying the event
+stream under a key, which is how boto3 returns one. `auto` attaches it when
+`botocore` is installed. Tests: `tests/test_bedrock.py` against a fake botocore.
 
 ### 3. Realtime/Live capture
 
