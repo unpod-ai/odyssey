@@ -1,5 +1,80 @@
 # odyssey — session handoff
 
+## Open work — decided 2026-09-12, nothing started
+
+Everything below lands on `main_v2`, which is PR #1 (`unpod-ai/odyssey#1`).
+PR #1 is **not** to be merged until this work is done: it is the last step, not
+the first. CI runs on the PR only (workflows trigger on `main` pushes and PRs).
+
+### Settled, do not reopen
+
+| Question | Decision |
+|---|---|
+| PR #1 | Leave open, merge last. New work keeps landing on `main_v2`. |
+| `instrument` default for a fresh install | Stays `"auto"`. The one-line promise in README/CHANGELOG holds. |
+| LiveKit `metrics_collected` volume | Keep **all** metrics. No opt-out knob. |
+| Realtime/Live capture scope | Turns + latency (transcripts, tool calls, interruptions), the same corpus shape the LiveKit/Pipecat recorders produce. Not a raw event log. |
+| Agent identity | A caller tag in `journey_metadata`, never a schema field (see `journey-schema.md`). |
+| Stash `stash@{0}` on `main` | Leave it. |
+
+### 1. Three small fixes
+
+- **LangChain turns carry no `provider`/`latency_ms`.** The handler records the
+  turn and the SDK patch skips it (`_reentry.in_framework_call`). The patch
+  should stamp provider and latency onto the handler's turn rather than staying
+  silent. Touches `integrations/_call.py`, `_reentry.py`, `langchain.py`.
+- **`test_an_explicitly_named_missing_package_is_reported` depends on the
+  environment** — it fails whenever `langchain` is installed; CI passes only
+  because it installs dev extras alone (`tests/test_one_integration_point.py`).
+- **Unused `sqlite3` import** in `packages/odyssey-store/tests/test_db.py`
+  (pre-existing on `main`, that package has no CI workflow).
+
+### 2. Bedrock capture
+
+LiveKit `aws.LLM` and Pipecat `AWSBedrockLLMService`. Neither touches the
+openai/google-genai/anthropic SDKs — both go through **boto3**
+(`bedrock-runtime`: `converse`, `converse_stream`, `invoke_model*`), so this is
+a new integration plus its own fakes. Reuse `integrations/_call.py` (`Capture`
+spec, `capture_sync`/`capture_async`) and `_streams.py`; write a Bedrock
+accumulator beside the openai/anthropic/gemini ones.
+
+### 3. Realtime/Live capture
+
+OpenAI Realtime, Azure Realtime (`AzureRealtimeLLMService`), Gemini Live
+(`GeminiLiveLLMService`, `GeminiMultimodalLiveLLMService`,
+`GeminiLiveVertexLLMService`). Speech-to-speech over a websocket: there is no
+chat-completions call to patch, so capture has to come from session events.
+Record turns + latency only (settled above).
+
+### 4. Read path for the 2.1 fields
+
+`framework`, `latency_ms`, `ttft_ms`, `provider` and the `<journey_id>.llm`
+link (`journey_metadata.parent_journey_id`) are written but nothing reads them.
+End to end: index columns in `services/api` (`index/journeys_indexer.py`) →
+DTOs in `packages/odyssey-schemas` → regenerate `services/api/openapi.json` and
+**both** SDKs (codegen does not wire the top-level client; see the `GET /metrics`
+precedent) → `apps/web`. This is the first item here to trigger `ci-sdk`,
+`ci-schemas`, `ci-web` and `codegen-drift`, which PR #1 has not exercised.
+
+### Release checklist — after the above, then merge PR #1
+
+1. Merge PR #1.
+2. Deploy **the collector before the SDK**. An old collector re-encodes a 2.1
+   shard with 2.0 dataclasses and silently drops the new fields.
+3. Re-lock odyssey in `super-task` (`pyproject.toml` pins the git branch; the
+   SHA lives in `uv.lock`). No code change is needed there: `init()` already
+   defaults to `"auto"` and all three handlers call `attach()` before
+   `session.start()`.
+4. One live QA call. Stream capture has only ever run against fakes built from
+   the SDK sources, never a real provider. Check the call produces
+   `<call_id>.llm` with the right `provider` per turn.
+
+### Where things stand
+
+`main_v2` = `1c500e8`, CI green, no conflicts with `main`. Known gaps that are
+tracked but unscheduled: nothing beyond items 2 and 3. Watch the size — PR #1
+is already ~2,750 added lines and items 2-4 roughly double it.
+
 ## One integration point + schema 2.1 (timing, provenance) + Pipecat — built, tested, on `main_v2`
 
 Committed on `main_v2` (`d6b9ac4`, follow-up fixes in `dbf6845`) and merged
