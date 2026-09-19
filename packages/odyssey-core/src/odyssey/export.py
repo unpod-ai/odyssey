@@ -147,6 +147,93 @@ def _diagnostics(result: FoldResult, schema_version: str) -> Dict[str, Any]:
     return diag
 
 
+def voice_provenance(result: FoldResult) -> Optional[Dict[str, Any]]:
+    """Per-stage provider name and latency stats from one journey's voice events.
+
+    ``FoldResult.voice_events`` is deliberately kept out of :func:`journey_to_dict`
+    — an SFT/DPO example has nothing to do with a latency reading (see fold.py).
+    A deployment that still wants "which STT/TTS/LLM vendor served this call and
+    how slow was each" reads it from here instead, opted into the artifact's
+    diagnostics rather than forced onto every export.
+
+    Grouped by ``metadata["stage"]`` (``llm``/``tts``/``stt``/``eou`` — see
+    ``integrations/livekit.py``'s ``_METRIC_STAGES``, the source every producer
+    of these events currently shares). A stage a producer never reported is
+    simply absent from the result, not zeroed — ``None`` means "no voice events
+    on this journey at all", an empty dict never comes back.
+    """
+    if not result.voice_events:
+        return None
+    by_stage: Dict[str, Dict[str, Any]] = {}
+    for ev in result.voice_events:
+        meta = ev.metadata or {}
+        stage = meta.get("stage")
+        if not stage:
+            continue
+        bucket = by_stage.setdefault(stage, {"label": meta.get("label"), "latencies_ms": []})
+        if ev.latency_ms is not None:
+            bucket["latencies_ms"].append(ev.latency_ms)
+
+    provenance: Dict[str, Any] = {}
+    for stage, bucket in by_stage.items():
+        latencies = bucket["latencies_ms"]
+        entry: Dict[str, Any] = {}
+        if bucket["label"]:
+            entry["provider"] = bucket["label"]
+        if latencies:
+            entry["calls"] = len(latencies)
+            entry["avg_latency_ms"] = round(sum(latencies) / len(latencies), 1)
+            entry["min_latency_ms"] = round(min(latencies), 1)
+            entry["max_latency_ms"] = round(max(latencies), 1)
+        provenance[stage] = entry
+    return provenance or None
+
+
+def _enrich_llm_provenance(
+    provenance: Dict[str, Any], llm_result: Optional[FoldResult]
+) -> None:
+    """Fold a linked ``<journey_id>.llm`` sub-journey's model id and token usage
+    into ``provenance["llm"]``, in place.
+
+    Opened by ``attach(record_provider_calls=True)``, that sub-journey is where
+    the request/response detail of each provider call actually lives — the
+    voice-side ``llm`` stage :func:`voice_provenance` already found only carries
+    time-to-first-token, never which model answered or how many tokens it cost.
+    ``gateway`` (the linked journey's ``Message.provider``) is kept separate
+    from the voice stage's ``provider`` (the plugin's own class name) rather
+    than overwriting it — a deployment behind an inference gateway wants both:
+    which plugin measured the call and which backend actually served it.
+
+    Best-effort and additive only: a call with no linked journey — provider
+    recording turned off, or none of this call's turns went through one —
+    leaves ``provenance`` exactly as :func:`voice_provenance` built it.
+    """
+    if llm_result is None:
+        return
+    entry = provenance.setdefault("llm", {})
+    if llm_result.model_ids:
+        entry["model_ids"] = sorted(set(llm_result.model_ids))
+
+    steps = llm_result.journey.steps
+    # Cumulative steps: the last one already holds every turn — see
+    # `journey_to_dict`'s `last_step_only` docstring for why.
+    messages = steps[-1].messages if steps else []
+    usage_totals: Dict[str, int] = {}
+    providers: set[str] = set()
+    for m in messages:
+        if m.role != "assistant":
+            continue
+        if m.provider:
+            providers.add(m.provider)
+        for key, val in (m.usage or {}).items():
+            if isinstance(val, (int, float)):
+                usage_totals[key] = usage_totals.get(key, 0) + val
+    if providers:
+        entry["gateway"] = sorted(providers)[0] if len(providers) == 1 else sorted(providers)
+    if usage_totals:
+        entry["token_usage_total"] = usage_totals
+
+
 # Leave room for the ``.json`` suffix and the ``.tmp`` the atomic write adds,
 # inside the 255-byte limit every common filesystem enforces on one name.
 _MAX_STEM = 240
@@ -182,6 +269,8 @@ def save(
     schema_version: str = SCHEMA_VERSION,
     indent: Optional[int] = 2,
     last_step_only: bool = False,
+    include_voice_provenance: bool = False,
+    llm_results: Optional[Dict[str, FoldResult]] = None,
 ) -> ExportResult:
     """Write each folded journey as ``{out_dir}/{conversation_id}.json``.
 
@@ -196,6 +285,18 @@ def save(
 
     ``last_step_only`` writes only the final, complete step of each journey —
     see :func:`journey_to_dict`.
+
+    ``include_voice_provenance`` adds a ``voice_provenance`` block under
+    :data:`DIAGNOSTICS_KEY` — per-stage STT/TTS/LLM/EOU provider name and
+    latency, built by :func:`voice_provenance` from each result's own
+    ``voice_events``. Off by default, matching every other diagnostic that
+    grows the file: a caller opts in rather than every export paying for it.
+
+    ``llm_results`` enriches that block further, keyed by the *main* journey's
+    id: when a caller already has the linked ``<journey_id>.llm`` sub-journey's
+    :class:`FoldResult` folded (:func:`export_dir`/:func:`export_spool` do this
+    for you), :func:`_enrich_llm_provenance` adds its model id and token usage.
+    Ignored when ``include_voice_provenance`` is ``False``.
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -208,9 +309,17 @@ def save(
         cid = result.journey.task.conversation_id or result.journey_id
         path = out / _filename(cid)
         try:
+            diag = _diagnostics(result, schema_version)
+            if include_voice_provenance:
+                provenance = voice_provenance(result)
+                if provenance is not None:
+                    _enrich_llm_provenance(
+                        provenance, (llm_results or {}).get(result.journey_id)
+                    )
+                    diag["voice_provenance"] = provenance
             payload = journey_to_dict(
                 result.journey,
-                diagnostics=_diagnostics(result, schema_version),
+                diagnostics=diag,
                 last_step_only=last_step_only,
             )
             # Written whole, then moved into place: a reader watching this
@@ -329,6 +438,28 @@ def _gather_from_spool(
     return results, errors
 
 
+def _gather_linked_llm_dir(
+    events_dir: Path, results: List[FoldResult]
+) -> Dict[str, FoldResult]:
+    """Best-effort fold of each result's ``<journey_id>.llm`` sibling shard, if
+    one was drained into the same directory.
+
+    Enrichment, not a required part of the export — a missing or unfoldable
+    sibling is silently skipped rather than turned into an error the caller
+    only wanted a latency summary from.
+    """
+    linked: Dict[str, FoldResult] = {}
+    for result in results:
+        sibling = events_dir / f"{result.journey_id}.llm.jsonl"
+        if not sibling.exists():
+            continue
+        try:
+            linked[result.journey_id] = fold_shard(sibling)
+        except (OSError, ValueError):
+            continue
+    return linked
+
+
 def export_dir(
     events_dir: Path | str,
     out_dir: Path | str,
@@ -336,6 +467,7 @@ def export_dir(
     journey_id: Optional[str] = None,
     indent: Optional[int] = 2,
     last_step_only: bool = False,
+    include_voice_provenance: bool = False,
 ) -> ExportResult:
     """Fold every drained ``*.jsonl`` in a directory and write Trajectory JSON.
 
@@ -343,10 +475,52 @@ def export_dir(
     spool into events, and this turns those events into the artifact. Kept
     separate because they fail differently — a drain that cannot reach its sink
     is retried, an export that cannot fold is a data problem.
+
+    ``include_voice_provenance`` also looks for each journey's ``.llm`` sibling
+    shard in ``events_dir`` and folds it in — see :func:`save`.
     """
     results, errors = _gather_from_dir(Path(events_dir), journey_id)
-    result = save(results, out_dir, indent=indent, last_step_only=last_step_only)
+    llm_results = (
+        _gather_linked_llm_dir(Path(events_dir), results)
+        if include_voice_provenance
+        else None
+    )
+    result = save(
+        results,
+        out_dir,
+        indent=indent,
+        last_step_only=last_step_only,
+        include_voice_provenance=include_voice_provenance,
+        llm_results=llm_results,
+    )
     return dataclasses.replace(result, errors=errors + result.errors)
+
+
+def _gather_linked_llm_spool(
+    spool_root: Path, results: List[FoldResult]
+) -> Dict[str, FoldResult]:
+    """Best-effort fold of each result's ``<journey_id>.llm`` sibling journey, if
+    ``attach(record_provider_calls=True)`` opened one for this call.
+
+    Enrichment, not a required part of the export — a missing or unfoldable
+    sibling is silently skipped rather than turned into an error the caller
+    only wanted a latency summary from.
+    """
+    from odyssey.spool import Spool, SpoolConfig
+
+    spool = Spool(SpoolConfig(root=spool_root))
+    linked: Dict[str, FoldResult] = {}
+    for result in results:
+        jid = f"{result.journey_id}.llm"
+        try:
+            events = spool.read(jid)
+            if not events:
+                continue
+            header = spool.header(jid) or JourneyHeader(journey_id=jid)
+            linked[result.journey_id] = _fold_with_header(events, header, {})
+        except (OSError, ValueError):
+            continue
+    return linked
 
 
 def export_spool(
@@ -356,6 +530,7 @@ def export_spool(
     journey_id: Optional[str] = None,
     indent: Optional[int] = 2,
     last_step_only: bool = False,
+    include_voice_provenance: bool = False,
 ) -> ExportResult:
     """Fold straight from the spool and write Trajectory JSON.
 
@@ -367,7 +542,22 @@ def export_spool(
 
     Reading the spool does **not** drain it: no watermark moves, so a later
     ``push`` still ships every event. Exporting is a view, not a consumption.
+
+    ``include_voice_provenance`` also reads each journey's ``<journey_id>.llm``
+    sub-journey straight from the spool and folds it in — see :func:`save`.
     """
     results, errors = _gather_from_spool(Path(spool_root), journey_id)
-    result = save(results, out_dir, indent=indent, last_step_only=last_step_only)
+    llm_results = (
+        _gather_linked_llm_spool(Path(spool_root), results)
+        if include_voice_provenance
+        else None
+    )
+    result = save(
+        results,
+        out_dir,
+        indent=indent,
+        last_step_only=last_step_only,
+        include_voice_provenance=include_voice_provenance,
+        llm_results=llm_results,
+    )
     return dataclasses.replace(result, errors=errors + result.errors)
