@@ -628,6 +628,65 @@ def test_drainer_rejects_double_start(tmp_path):
         d.stop()
 
 
+def _wait_for(predicate, timeout: float = 8.0) -> bool:
+    waited = 0.0
+    while waited < timeout and not predicate():
+        threading.Event().wait(0.2)
+        waited += 0.2
+    return bool(predicate())
+
+
+def test_drainer_reports_a_failing_tick(tmp_path):
+    """A rejecting sink has to be observable, not just survivable.
+
+    The regression this pins: the loop kept every tick's outcome in
+    `last_result` and told nobody. A collector answering 401 to every batch
+    looked exactly like a collector receiving every batch -- the spool grew,
+    nothing was acknowledged, and no counter moved.
+    """
+    s = spool(tmp_path)
+    s.record_all([ev(0)])
+    seen: list = []
+    d = IntervalDrainer(s, FailingSink(), interval_seconds=1.0, on_result=seen.append)
+    d.start()
+    try:
+        assert _wait_for(lambda: bool(seen)), "on_result was never called"
+    finally:
+        d.stop()
+
+    assert not seen[0].ok
+    assert seen[0].failed == 1
+    assert "sink down" in seen[0].errors[0]
+    # The failure left the queue intact: the watermark never advanced, so the
+    # event is still there for the next tick to retry.
+    assert s.watermark(JID) is None
+    assert [e.seq for e in s.undrained(JID)] == [0]
+
+
+def test_a_broken_on_result_does_not_stop_the_drain(tmp_path):
+    """Reporting the failure must never become the failure."""
+    s = spool(tmp_path)
+    s.record_all([ev(0)])
+    sink = MemorySink()
+
+    def explode(_result):
+        raise RuntimeError("observer is broken")
+
+    d = IntervalDrainer(s, sink, interval_seconds=1.0, on_result=explode)
+    d.start()
+    try:
+        assert _wait_for(lambda: bool(sink.all_events))
+        # A later tick still runs, which is the part a swallowed callback
+        # exception would otherwise have killed along with the thread.
+        s.record_all([ev(1)])
+        assert _wait_for(lambda: len(sink.all_events) == 2)
+    finally:
+        d.stop()
+
+    assert [e.seq for e in sink.all_events] == [0, 1]
+    assert s.watermark(JID) == 1
+
+
 # --------------------------------------------------------------------------
 # Cached shard handles
 #

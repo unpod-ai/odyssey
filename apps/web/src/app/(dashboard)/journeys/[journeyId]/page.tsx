@@ -4,6 +4,8 @@ import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/Card";
 import { Badge } from "@/components/Badge";
 import { DataTable } from "@/components/DataTable";
+import { formatMs } from "@/lib/format";
+import Link from "next/link";
 import type { JourneyDetailOut } from "@odyssey/sdk";
 
 async function loadJourney(journeyId: string): Promise<JourneyDetailOut> {
@@ -43,7 +45,26 @@ export default async function JourneyDetailPage({
         <StatCard label="Tool calls" value={journey.metrics.num_tool_calls ?? "—"} />
         <StatCard label="Tool failures" value={journey.metrics.num_tool_failures ?? "—"} />
         <StatCard label="Tool error rate" value={journey.metrics.tool_error_rate ?? "—"} />
+        <StatCard label="Recorded by" value={journey.provenance?.framework ?? "—"} />
+        <StatCard label="Provider" value={journey.provenance?.providers?.join(", ") || "—"} />
+        <StatCard label="Avg latency" value={formatMs(journey.provenance?.avg_latency_ms)} />
+        <StatCard label="Avg TTFT" value={formatMs(journey.provenance?.avg_ttft_ms)} />
       </div>
+
+      {journey.provenance?.parent_journey_id ? (
+        // The `<call_id>.llm` link the SDK writes: this journey holds the
+        // provider calls a voice call made, and the call itself is the
+        // conversation. Following it by hand meant knowing the convention.
+        <p>
+          Provider calls from{" "}
+          <Link
+            href={`/journeys/${encodeURIComponent(journey.provenance.parent_journey_id)}`}
+            className="mono"
+          >
+            {journey.provenance.parent_journey_id}
+          </Link>
+        </p>
+      ) : null}
 
       <DataTable
         title={`Steps (${journey.steps.length})`}
@@ -58,6 +79,21 @@ export default async function JourneyDetailPage({
             sortValue: (step) => step.trainable_status,
           },
           { header: "Messages", render: (step) => step.message_count, sortValue: (step) => step.message_count },
+          {
+            header: "Provider",
+            render: (step) => step.provider ?? "—",
+            sortValue: (step) => step.provider ?? "",
+          },
+          {
+            header: "Latency",
+            render: (step) => formatMs(step.latency_ms),
+            sortValue: (step) => step.latency_ms ?? -1,
+          },
+          {
+            header: "TTFT",
+            render: (step) => formatMs(step.ttft_ms),
+            sortValue: (step) => step.ttft_ms ?? -1,
+          },
         ]}
       />
     </div>

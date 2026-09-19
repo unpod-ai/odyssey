@@ -275,6 +275,12 @@
           "metrics": {
             "$ref": "#/components/schemas/JourneyMetricsOut"
           },
+          "provenance": {
+            "$ref": "#/components/schemas/JourneyProvenanceOut",
+            "default": {
+              "providers": []
+            }
+          },
           "steps": {
             "items": {
               "$ref": "#/components/schemas/StepOut"
@@ -390,6 +396,65 @@
         "title": "JourneyPageOut",
         "type": "object"
       },
+      "JourneyProvenanceOut": {
+        "description": "Schema 2.1: what recorded a journey, what served it, how long it took.\n\nAverages rather than totals \u2014 a journey's turns are a conversation, and the\nnumber a deployment tunes against is what one reply costs.",
+        "properties": {
+          "avg_latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Latency Ms"
+          },
+          "avg_ttft_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Ttft Ms"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "parent_journey_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Journey Id"
+          },
+          "providers": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "title": "JourneyProvenanceOut",
+        "type": "object"
+      },
       "JourneySummaryOut": {
         "properties": {
           "complete": {
@@ -403,6 +468,12 @@
           "journey_id": {
             "title": "Journey Id",
             "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/JourneyProvenanceOut",
+            "default": {
+              "providers": []
+            }
           }
         },
         "required": [
@@ -699,13 +770,46 @@
             "title": "Index",
             "type": "integer"
           },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
           "message_count": {
             "title": "Message Count",
             "type": "integer"
           },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
           "trainable_status": {
             "title": "Trainable Status",
             "type": "string"
+          },
+          "ttft_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttft Ms"
           }
         },
         "required": [

@@ -38,7 +38,13 @@ in the dependency graph can leak into it.
   redaction at record time, `drain()`.
 - `context.py` — ambient journey context (`ContextVar`, asyncio-native) +
   `SeqAllocator` (disk-seeded, so a restart never reissues a `seq`).
-- `client.py` / `config.py` — `odyssey.init()`.
+- `client.py` / `config.py` — `odyssey.init()`. One call is the whole
+  integration: `instrument` defaults to `"auto"`, which patches every
+  provider SDK the process actually has installed and registers
+  LangChain's handler process-wide (`ODYSSEY_INSTRUMENT` /
+  `instrument="none"|"all"|[...]` to narrow it), and the default sink
+  follows `ODYSSEY_ENDPOINT` — set, and drained journeys go to the
+  collector instead of a local folder.
 - `capture.py` — `@observe` decorator, `with odyssey.journey(...)`.
 - `project.py` — `resolve_project()`: auto-detects which repo/codebase a
   capturing process belongs to (`ODYSSEY_PROJECT` env → git `origin`
@@ -49,10 +55,23 @@ in the dependency graph can leak into it.
   `ODYSSEY_COLLECT_METRICS`). A background thread posts an OS/CPU/mem/disk
   snapshot to `POST /metrics` on the collector every `metrics_interval`
   seconds; no code in this module runs unless explicitly enabled.
-- `integrations/` — drop-in capture wrappers for Anthropic, OpenAI (also
-  covers OpenAI-compatible providers — Groq, Together, local vLLM/Ollama —
-  for free, same SDK shape), and Gemini (own parser, different message
-  shape).
+- `integrations/` — every capture path, and all of them optional extras
+  that import their third party lazily:
+  - Drop-in/patchable provider clients for Anthropic, OpenAI (also covers
+    OpenAI-compatible providers — Groq, Together, local vLLM/Ollama — for
+    free, same SDK shape), and Gemini (own parser, different message shape).
+  - Framework hooks: `langchain.py` (`OdysseyCallbackHandler`, LangGraph
+    covered by the same callback tree, `instrument()` registers it
+    process-wide) and `otel.py` (`OdysseySpanProcessor`, one journey per
+    trace — deliberately outside `instrument="auto"`, since it would
+    double-record what a patched client already captured).
+  - Voice: `livekit.py` (`attach(session, ...)`) and `pipecat.py`
+    (`attach(task, ...)`, a `BaseObserver` so it is agnostic to which LLM
+    service the pipeline runs). Both attach to an object the app owns, which
+    is why `init()` cannot do it for them.
+  - `_timing.py` — the shared `Timer`/`stamp()` behind `Message.latency_ms`/
+    `ttft_ms`/`provider`; `_reentry.py` — the guard that keeps one provider
+    call to one recorded turn when two capture paths are attached at once.
 - `builders/{journey,messages,metrics,reward,steps}.py` — trace →
   training-example assembly (SFT/DPO shard builders, message adapters for
   Anthropic/LangSmith shapes).
@@ -67,8 +86,10 @@ bash scripts/run_tests.sh all
 python -m odyssey.cli --spool .odyssey status
 ```
 
-**Not done here**: streaming capture for OpenAI/Anthropic's
-`generate_content_stream`-equivalents.
+**Not done here**: streaming capture for OpenAI and Gemini (Anthropic's
+`messages.stream()` is wrapped, sync and async); LlamaIndex hooks; and
+nothing downstream reads the 2.1 timing/agent fields yet — see
+[`WORKING.md`](WORKING.md#10-known-gaps).
 
 ---
 

@@ -24,6 +24,7 @@ from odyssey.export import ExportError
 from odyssey.fold import fold
 from odyssey.jsonl import MalformedHeaderError, SchemaVersionError, read_events
 
+from odyssey_api.domain.provenance import join_providers, provenance
 from odyssey_api.index.manifest import get_file_state, upsert_file_state
 from odyssey_api.repositories.filesystem import is_date_dir
 
@@ -83,14 +84,18 @@ def _index_one_shard(
         return False
 
     metrics = fold_result.journey.metrics
+    # Schema 2.1: who recorded the journey, who served it, how long it took.
+    # Indexed here rather than folded again per request -- see `domain.provenance`.
+    marks = provenance(fold_result, header)
     now = _now()
     conn.execute(
         """
         INSERT INTO journeys (
             journey_id, product_slug, project, date, complete, incomplete_reason,
             num_steps, aggregated_reward, num_tool_calls, num_tool_failures,
-            tool_error_rate, source_path, source_mtime_ns, indexed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            tool_error_rate, framework, parent_journey_id, providers,
+            avg_latency_ms, avg_ttft_ms, source_path, source_mtime_ns, indexed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(journey_id) DO UPDATE SET
             product_slug = excluded.product_slug,
             project = excluded.project,
@@ -102,6 +107,11 @@ def _index_one_shard(
             num_tool_calls = excluded.num_tool_calls,
             num_tool_failures = excluded.num_tool_failures,
             tool_error_rate = excluded.tool_error_rate,
+            framework = excluded.framework,
+            parent_journey_id = excluded.parent_journey_id,
+            providers = excluded.providers,
+            avg_latency_ms = excluded.avg_latency_ms,
+            avg_ttft_ms = excluded.avg_ttft_ms,
             source_path = excluded.source_path,
             source_mtime_ns = excluded.source_mtime_ns,
             indexed_at = excluded.indexed_at
@@ -118,6 +128,11 @@ def _index_one_shard(
             metrics.num_tool_calls if metrics else None,
             metrics.num_tool_failures if metrics else None,
             metrics.tool_error_rate if metrics else None,
+            marks.framework,
+            marks.parent_journey_id,
+            join_providers(marks.providers),
+            marks.avg_latency_ms,
+            marks.avg_ttft_ms,
             str(shard),
             stat.st_mtime_ns,
             now,

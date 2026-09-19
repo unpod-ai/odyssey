@@ -124,6 +124,7 @@ from odyssey.capture import JourneyHandle, _jsonable
 from odyssey.client import require_client
 from odyssey.context import JourneyContext, bind
 from odyssey.fold import INTERRUPTED_FLAG
+from odyssey.integrations._linked import LinkedLLMJourney
 from odyssey.primitives import (
     Message,
     Role,
@@ -155,7 +156,40 @@ _ROLE: Dict[str, Role] = {
     "assistant": "assistant",
 }
 
-_EVENTS = ("conversation_item_added", "function_tools_executed", "close")
+_EVENTS = (
+    "conversation_item_added",
+    "function_tools_executed",
+    "metrics_collected",
+    "close",
+)
+
+# What a LiveKit metrics object is measuring, decided by which field it carries
+# rather than by its class name. LiveKit ships `LLMMetrics`, `TTSMetrics`,
+# `STTMetrics`, `EOUMetrics` and `VADMetrics`, and the set grows; duck-typing
+# the distinguishing field means a new one still records instead of raising.
+#
+# Ordered: `EOUMetrics` also carries a `duration`, so the specific fields must
+# be tried before the generic one.
+_METRIC_STAGES = (
+    ("ttft", "llm"),
+    ("ttfb", "tts"),
+    ("end_of_utterance_delay", "eou"),
+    ("duration", None),
+)
+
+# Carried alongside the latency so a consumer can normalise it -- tokens for an
+# LLM turn, audio seconds for STT/TTS. Numbers only; anything else stays off.
+_METRIC_EXTRAS = (
+    "duration",
+    "audio_duration",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "tokens_per_second",
+    "characters_count",
+    "transcription_delay",
+    "on_user_turn_completed_delay",
+)
 
 
 class _Turn:
@@ -339,6 +373,16 @@ class LiveKitRecorder:
         # ever held, and every exit path flushes it, so a crash can lose the turn
         # in flight and nothing before it.
         self._pending: Optional[_Turn] = None
+        # Time-to-first-token from the most recent `LLMMetrics`, waiting for the
+        # assistant turn it belongs to. LiveKit reports the metric when the
+        # generation completes and adds the conversation item after the speech
+        # is committed, so the metric arrives first and this is consumed by the
+        # next assistant flush. Cleared on consume, so a turn never inherits an
+        # older generation's number, and `None` if the ordering does not hold —
+        # the `voice` event below is the authoritative record either way.
+        self._pending_ttft: Optional[float] = None
+        # `<journey_id>.llm`, opened by `attach(record_provider_calls=True)`.
+        self._llm: Optional[LinkedLLMJourney] = None
 
         client = require_client()
         self._enabled = client is not None and client.config.enabled
@@ -357,6 +401,11 @@ class LiveKitRecorder:
             # make every caller supply by hand, and the reason `source:
             # "livekit"` no longer needs stamping onto all N events.
             data_source="livekit",
+            # Which capture path produced the shard. `data_source` says where
+            # the conversation came from; this says what recorded it, and the
+            # two stop being the same answer as soon as a second integration
+            # can also feed a voice journey.
+            framework="livekit",
         )
         if client is not None:
             client.count_journey()
@@ -387,7 +436,17 @@ class LiveKitRecorder:
     def _register(self) -> None:
         for name in _EVENTS:
             handler = getattr(self, f"_on_{name}")
-            self._session.on(name, handler)
+            try:
+                self._session.on(name, handler)
+            except Exception as exc:  # noqa: BLE001 - see below
+                # An `AgentSession` too old to know this event must still record
+                # everything it does know. `metrics_collected` in particular is
+                # newer than the conversation events, and refusing to attach at
+                # all over it would trade every turn for some timings.
+                client = require_client()
+                if client is not None:
+                    client.note_error(f"livekit.register:{name}", exc)
+                continue
             self._handlers.append((name, handler))
         client = require_client()
         if client is not None:
@@ -418,10 +477,18 @@ class LiveKitRecorder:
         self._pending = None
         if turn is None or turn.is_empty():
             return
+        ttft = None
+        if turn.role == "assistant":
+            ttft, self._pending_ttft = self._pending_ttft, None
         with bind(self._ctx):
             handle = self._handle()
             handle.message(
-                Message(role=turn.role, content=turn.content, metadata=turn.metadata()),
+                Message(
+                    role=turn.role,
+                    content=turn.content,
+                    metadata=turn.metadata(),
+                    ttft_ms=ttft,
+                ),
             )
             # Voice events (item 0'.4): the same signals `metadata()` already
             # folds into the message's `metadata` dict, recorded a second time
@@ -434,6 +501,15 @@ class LiveKitRecorder:
                 handle.voice("stt_transcript", text=turn.content, confidence=confidence)
             if turn.interrupted:
                 handle.voice("barge_in", text=turn.content)
+
+    def _link_provider_calls(self) -> None:
+        """Make ``<journey_id>.llm`` ambient for the attaching task.
+
+        See ``integrations/_linked``. Must run in the task that goes on to start
+        the session, which is where ``attach`` is called.
+        """
+        if self._enabled and self._llm is None:
+            self._llm = LinkedLLMJourney(self._ctx)
 
     def detach(self) -> None:
         """Stop recording this session. Does not close the journey."""
@@ -771,6 +847,53 @@ class LiveKitRecorder:
         self._guard("tool", run)
         return self._ctx.last_message_seq
 
+    # -- metrics ----------------------------------------------------------
+
+    def _on_metrics_collected(self, event: Any) -> None:
+        self._guard("metrics_collected", lambda: self._record_metrics(event))
+
+    def _record_metrics(self, event: Any) -> None:
+        """Record one LiveKit metric as a ``voice`` latency event.
+
+        This is the whole reason to subscribe: LiveKit already measures the
+        voice pipeline's latency budget — LLM time-to-first-token, TTS
+        time-to-first-byte, STT and end-of-utterance delay — and without this
+        handler every one of those numbers was computed and thrown away.
+
+        Recorded as ``voice`` rather than as a message: a latency reading is not
+        a turn, and folding it into one would put a number the model never said
+        into a training example. ``fold()`` already keeps voice events on their
+        own side (``FoldResult.voice_events``) for exactly this reason.
+
+        Nothing here imports LiveKit. The metric object is read by attribute, so
+        a metrics class this build has never heard of still records — see
+        ``_METRIC_STAGES``.
+        """
+        metrics = getattr(event, "metrics", event)
+        if metrics is None:
+            return
+        reading = _metric_reading(metrics)
+        if reading is None:
+            return
+        stage, latency_ms, extras = reading
+        if stage == "llm":
+            # Held for the assistant turn this generation produced; see
+            # `_pending_ttft`.
+            self._pending_ttft = latency_ms
+        meta: Dict[str, Any] = {"stage": stage}
+        speech_id = getattr(metrics, "speech_id", None)
+        if speech_id:
+            meta["speech_id"] = str(speech_id)
+        label = getattr(metrics, "label", None)
+        if label:
+            # Which plugin produced it (`livekit.plugins.deepgram.STT`, ...).
+            # The one thing that says *whose* latency this is when a deployment
+            # swaps vendors mid-experiment.
+            meta["label"] = str(label)
+        meta.update(extras)
+        with bind(self._ctx):
+            self._handle().voice("latency", latency_ms=latency_ms, metadata=meta)
+
     def _on_close(self, event: Any) -> None:
         self._guard("close", lambda: self.close(event=event))
 
@@ -804,6 +927,11 @@ class LiveKitRecorder:
                 detail = f"{type(err).__name__}: {err}"
         with bind(self._ctx):
             self._handle().close(reason=resolved or "NONE", error=detail)
+        if self._llm is not None:
+            self._guard(
+                "close.llm",
+                lambda: self._llm.close(reason=resolved or "NONE", error=detail),
+            )
         self.detach()
 
     # -- signals, for the app to call ------------------------------------
@@ -834,6 +962,7 @@ def attach(
     journey_id: str,
     instructions: Optional[str | Callable[[], Optional[str]]] = None,
     record_instructions: bool = True,
+    record_provider_calls: bool = True,
     **metadata: Any,
 ) -> LiveKitRecorder:
     """Record an ``AgentSession`` into ``journey_id``. The one line to add.
@@ -868,11 +997,23 @@ def attach(
     training example: the same user turn under two different prompts is
     indistinguishable.
 
+    Agent identity is an ordinary tag: ``attach(session, journey_id=...,
+    agent_id=row.id)`` lands in the header's ``journey_metadata`` like any other
+    keyword, under whatever name and meaning the deployment gives it. A handoff
+    is recorded on the ``system`` message it produced (``agent`` and
+    ``instructions_origin`` in its metadata), never by rewriting that tag.
+
     ``record_instructions=False`` keeps the system prompt out of the journey
     entirely. Some prompts are thousands of tokens of business rules that dwarf
     the call itself, and a deployment may not want that text copied into every
     exported artifact. The conversation, the tool calls and the greeting are
     recorded exactly as before; only the ``system`` message is skipped.
+
+    ``record_provider_calls`` (on by default) opens ``<journey_id>.llm`` and makes
+    it the ambient journey for this task, so every provider call the session's
+    tasks make — captured by ``instrument="auto"`` — lands there, tagged with
+    ``parent_journey_id``, instead of scattering into one journey per call. It
+    only works when ``attach`` runs before ``session.start()``.
 
     Requires :func:`odyssey.init` to have run. Without it, recording is a no-op
     and one warning is emitted; the session is unaffected either way.
@@ -885,6 +1026,8 @@ def attach(
         metadata=metadata,
     )
     recorder._register()
+    if record_provider_calls:
+        recorder._link_provider_calls()
     return recorder
 
 
@@ -936,6 +1079,68 @@ def _arguments(raw: Any) -> Dict[str, Any]:
             "_odyssey_unparsed_arguments": raw if isinstance(raw, str) else repr(raw),
             "_odyssey_parse_error": str(exc),
         }
+
+
+def _seconds_to_ms(raw: Any) -> Optional[float]:
+    """A LiveKit duration (seconds, float) as milliseconds. None if unusable.
+
+    Negative is treated as unusable rather than clamped: a negative latency
+    means the reading is wrong, and a zero would claim it was instant.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    if raw < 0:
+        return None
+    return round(float(raw) * 1000, 3)
+
+
+def _metric_reading(
+    metrics: Any,
+) -> Optional[Tuple[str, float, Dict[str, Any]]]:
+    """``(stage, latency_ms, extras)`` for one LiveKit metrics object, or None.
+
+    ``None`` when nothing on the object reads as a duration — a `VADMetrics`
+    counting inference runs, say. Returning None rather than writing a zero
+    keeps "not measured" distinguishable from "measured as instant".
+
+    Read by attribute and never by type, so this does not import LiveKit and a
+    metrics class newer than this build still records under its own class name.
+    """
+    stage: Optional[str] = None
+    latency_ms: Optional[float] = None
+    for field_name, known_stage in _METRIC_STAGES:
+        value = _seconds_to_ms(getattr(metrics, field_name, None))
+        if value is None:
+            continue
+        latency_ms = value
+        stage = known_stage or _stage_from_type(metrics)
+        break
+    if stage is None or latency_ms is None:
+        return None
+
+    extras: Dict[str, Any] = {}
+    for name in _METRIC_EXTRAS:
+        value = getattr(metrics, name, None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        # Durations are reported in seconds and named in milliseconds here, so
+        # the unit is on the key rather than in a docstring nobody reads at
+        # query time. Counts keep their own name.
+        if name.endswith("_duration") or name in ("duration", "transcription_delay"):
+            extras[f"{name}_ms"] = round(float(value) * 1000, 3)
+        elif name.endswith("_delay"):
+            extras[f"{name}_ms"] = round(float(value) * 1000, 3)
+        else:
+            extras[name] = value
+    return stage, latency_ms, extras
+
+
+def _stage_from_type(metrics: Any) -> str:
+    """``STTMetrics`` -> ``stt``. The fallback for a class not in the table."""
+    name = type(metrics).__name__
+    if name.endswith("Metrics"):
+        name = name[: -len("Metrics")]
+    return name.lower() or "unknown"
 
 
 def _agent_name(session: Any) -> Optional[str]:

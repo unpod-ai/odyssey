@@ -8,6 +8,190 @@ project has not yet made a versioned release, so entries accumulate under
 
 ### Added
 
+- **Auto-capture covers streamed and async calls on every OpenAI-compatible
+  provider.** `instrument="auto"` patched only the sync, non-streamed
+  `Completions.create`, so a LiveKit or Pipecat voice agent — every LLM call
+  `await AsyncOpenAI.chat.completions.create(stream=True)` — recorded nothing.
+  The OpenAI patch now covers `Completions` and `AsyncCompletions`, sync and
+  async streams, and `with_raw_response` (LangChain's `ChatOpenAI` path, whose
+  response was never parsed). A stream is folded back into one assistant turn
+  once the caller drains it, with time-to-first-token; each chunk is
+  snapshotted as it passes, so a consumer rewriting chunks in place (LiveKit
+  strips `<think>` tags) does not change what is recorded; a stream cut off
+  early — a barge-in cancels it — records what arrived, marked `incomplete`.
+  Gemini's `generate_content_stream` (sync and async, LiveKit's Google plugin)
+  and Anthropic's `AsyncMessages.create`, `beta.messages` and `stream=True`
+  (Pipecat's Anthropic service) are captured the same way, through one shared
+  implementation (`integrations/_call.py`, `_streams.py`, `_scope.py`).
+- **The 2.1 fields have a read path.** `framework`, `latency_ms`, `ttft_ms`,
+  `provider` and the `<journey_id>.llm` link were written and nothing read
+  them. `services/api` now indexes the per-journey shape of all of them at fold
+  time — `framework`, `parent_journey_id`, the distinct `providers`, and
+  `avg_latency_ms`/`avg_ttft_ms` — in one shared place
+  (`domain/provenance.py`), so a listing answered from the SQLite index and a
+  detail answered from the shard cannot disagree. New `provenance` object on
+  `JourneySummaryOut`/`JourneyDetailOut`, and `provider`/`latency_ms`/`ttft_ms`
+  on `StepOut`; `openapi.json` and both SDKs regenerated. The dashboard's
+  journeys table gains provider and average latency/TTFT columns, the detail
+  page gains the same as stat cards plus per-step timing, and a `.llm`
+  journey's `parent_journey_id` is a link back to the call it came from.
+  `odyssey-store` gained the columns plus an idempotent `ADD COLUMN` pass, so a
+  database that predates them is migrated rather than rebuilt — the `products`
+  table in the same file is not rebuildable.
+- **Realtime/Live capture** (`integrations/realtime.py`) for an app that owns a
+  speech-to-speech websocket itself: OpenAI Realtime, Azure Realtime (the same
+  protocol) and Gemini Live. There is no `chat.completions.create` to patch —
+  audio goes up, audio comes down — so the conversation is read from the server
+  events, and it produces the corpus shape the LiveKit and Pipecat recorders
+  already produce: user and assistant turns (committed transcripts, never the
+  partials), tool calls plus the results the app sends back
+  (`RealtimeRecorder.tool_result`, the one half the server never reports),
+  barge-in as an `interrupted` turn and a `barge_in` voice event, `ttft_ms`
+  measured from the caller falling silent to the first word back, `latency_ms`
+  to the end of the reply, and the session's `instructions` as the system
+  message, re-recorded whenever it changes. `attach(journey_id=...)` returns the
+  recorder for an existing event loop; `observe(conn, journey_id=...)` wraps the
+  stream for a loop that should not change. Both vendors are read by one
+  recorder — OpenAI's events carry a `type`, Gemini's carry `server_content`, so
+  the shape selects the reader — and every field is read by attribute *or* key,
+  because the same session is a pydantic object through an SDK and a dict
+  through a bare websocket. Inside LiveKit or Pipecat nothing changes: both
+  recorders are provider-agnostic and already capture a realtime model.
+- **AWS Bedrock capture** (`integrations/bedrock.py`), the provider behind
+  LiveKit's `aws.LLM` and Pipecat's `AWSBedrockLLMService`. Neither touches a
+  provider SDK odyssey could wrap: boto3 builds a client's methods at runtime,
+  so the seam is `botocore.client.BaseClient._make_api_call` (and
+  `aiobotocore`'s async twin), filtered to the `bedrock-runtime` service and
+  the four operations that carry a conversation — `Converse`, `ConverseStream`,
+  `InvokeModel`, `InvokeModelWithResponseStream`. The Converse API is the
+  messages API in AWS spelling, so its shapes are translated into the ones
+  `integrations/_base.py` already parses (tool calls, tool results, reasoning
+  blocks, usage, stop reasons) rather than parsed a second time; a streamed
+  call folds back into one turn with time-to-first-token, exactly like the
+  other providers. `InvokeModel`'s per-family body is handled for the Anthropic
+  family (whose body *is* the messages API) and for the text-completion
+  families (Titan, Llama, Cohere), and its response body — an HTTP stream that
+  reads once — is replaced with a replayable one, so the caller reads the same
+  bytes it would have. `instrument="auto"` picks Bedrock up when `botocore` is
+  installed; the patch sits under every boto3 call in the process and answers
+  in one dict lookup for all of them but these four.
+- **Provider named from the client's `base_url`, with per-provider logic**
+  (`integrations/providers.py`). Groq, xAI, Cerebras, OpenRouter, Sarvam,
+  DeepInfra, Azure, Ollama, DeepSeek, Modal and others are all the `openai`
+  SDK, so `Message.provider` said `openai` for every one. Resolution order:
+  `register_provider(name, hosts=/match=, adapt=)`, then
+  `ODYSSEY_PROVIDER_HOSTS=host=name,...`, then a built-in host table, then the
+  bare hostname. An `adapt` hook rewrites the assembled assistant message for
+  one provider's quirks; one that raises is counted and the unadapted turn is
+  recorded. `reasoning_content`/object-shaped `reasoning` are normalized for
+  every provider. Gemini reports `vertex` for a Vertex AI client.
+- **A voice call's provider calls land in one linked journey.** LiveKit's and
+  Pipecat's `attach()` open `<journey_id>.llm` — the call's tags plus
+  `parent_journey_id` — for the provider calls the session's tasks make
+  (the main LLM, a filler model, a LangGraph node), instead of one unlinked
+  journey per LLM call or a second copy of the conversation inside the call
+  journey. Linked, not ambient: `odyssey.current()` and `journey()` are
+  unchanged, an explicit `journey()` still wins, and a provider call made after
+  the call ended opens its own journey. `attach` must run before
+  `session.start()`; `record_provider_calls=False` turns it off. History
+  offsets are kept per SDK client, so several conversations sharing the journey
+  do not resync each other into silence.
+- **`odyssey.init()` is now the *only* line an application adds** —
+  `instrument` defaults to `"auto"` (it was `()`, i.e. nothing; see
+  "Changed" below for the behavior change that implies). `"auto"` patches
+  every provider SDK that is actually installed — `anthropic`, `openai`
+  (including every OpenAI-compatible gateway, same SDK shape), `google-genai`
+  — and registers LangChain's handler process-wide, so a provider-calling app
+  records with no import to swap and no `callbacks=` threaded through each
+  `invoke()`. New `ODYSSEY_INSTRUMENT` env var / `instrument=` argument accept
+  `"auto"`, `"all"` (adds the OTel bridge), `"none"`/`()`, a single target
+  name, or any list mixing them (`["auto", "otel"]` is the common one) —
+  resolved by `client._resolve_instrument`, deduplicated and order-preserving.
+  Presence is probed with `importlib.util.find_spec` (plus a `sys.modules`
+  check), so asking "is `anthropic` installed" never costs the import of
+  `anthropic` in a process that does not use it. An *expanded group* skips a
+  missing package silently; an *explicitly named* target is always attempted,
+  so a typo or a missing extra is reported through `odyssey.health()` instead
+  of vanishing. `livekit`/`pipecat` are recognized but not attachable from
+  `init()` (they need an object the app owns) — naming one raises with the
+  `attach(...)` call to write instead of "unknown target".
+- **Process-wide attachment for LangChain and the OTel bridge** —
+  `integrations/langchain.instrument()`/`uninstrument()` register the handler
+  through `langchain_core.tracers.context.register_configure_hook` (the same
+  mechanism LangSmith attaches through, `inheritable=True` so a run started in
+  a child thread/task is still covered), which is what makes a LangGraph node
+  that never forwards `config` recordable at all. `integrations/otel.
+  instrument()`/`uninstrument()` attach `OdysseySpanProcessor` to the global
+  `TracerProvider` (installing one only when the process has none — the
+  default global provider is a proxy with nothing to attach to; an existing
+  provider is used as-is, never replaced), and `OdysseySpanProcessor.shutdown()`
+  now actually detaches, since a `TracerProvider` offers no processor removal.
+  `otel` is deliberately **excluded** from `"auto"`: a process running both it
+  and a patched provider client records the same call twice under two
+  journeys, and `opentelemetry-sdk` is a common transitive dependency nobody
+  chose. Opt in with `instrument=["otel"]` or `"all"`.
+- **Double-capture guard** (`integrations/_reentry.py`) — with `"auto"` on, an
+  app that still uses the explicit drop-in client also has the in-place patch
+  active underneath it, and the proxy's `create` calls the patched real method:
+  without a guard the assistant's turn lands in the corpus twice, with two
+  fresh `event_id`s the fold cannot dedupe. A `ContextVar` (not a thread local
+  — the async wrappers await inside the guarded region) makes the outermost
+  attachment the one that records; every provider wrapper now runs its capture
+  inside `with outermost() as mine`. The outermost one wins because it sees the
+  arguments the application actually passed.
+- **Pipecat capture** — new `odyssey.integrations.pipecat`:
+  `attach(task, journey_id=...)` on a `PipelineTask`, or
+  `observers=[observer(journey_id=...)]` on the construction path. Implemented
+  as a `BaseObserver` rather than a provider wrapper on purpose: which service
+  sits in Pipecat's LLM slot is a deployment choice (`OpenAILLMService`,
+  `AnthropicLLMService`, `GeminiMultimodalLiveLLMService`, a gateway), so
+  patching a provider SDK would capture some deployments and silently miss
+  others. Consumes `TranscriptionFrame` (never `InterimTranscriptionFrame` —
+  that fires per partial hypothesis and would spool prefixes of one sentence),
+  `LLMFullResponseStartFrame`/`LLMTextFrame`/`LLMFullResponseEndFrame`
+  assembled into one turn per response (never one per chunk),
+  `FunctionCallInProgressFrame`/`FunctionCallResultFrame` correlated by
+  `tool_call_id`, `MetricsFrame` TTFB/processing time as `voice` latency
+  events, `StartInterruptionFrame`/`InterruptionFrame` marking the interrupted
+  reply truncated rather than trainable, and `EndFrame`/`CancelFrame` closing
+  the journey so it folds. `on_push_frame` fires once per *hop*, so every
+  frame is recorded at most once keyed on `frame.id`, held in a bounded ring —
+  otherwise a six-processor pipeline would multiply the corpus by its own
+  length. New `odyssey[pipecat]` extra (`pipecat-ai>=0.0.60`); the base class
+  is imported lazily and falls back to a plain object when absent.
+- **`SCHEMA_VERSION` `2.0` → `2.1` — timing and provenance on the
+  wire** (additive MINOR, both directions safe: every field is optional and
+  defaults to `None`, so a 2.0 shard decodes under 2.1 unchanged and a 2.0
+  reader ignores the new keys the way a 1.0 reader ignored 1.1's). `Message`
+  gained `latency_ms` (wall time of the provider call, on the *response* turn
+  only — a request has no duration, and putting the pair's latency on both
+  halves double-counts for anything summing the column), `ttft_ms` (streamed
+  completions and voice, `None` for a non-streamed call where it would be
+  indistinguishable from `latency_ms`), and `provider` (the SDK
+  behind the call, distinct from the event's `model_id` — one provider serves
+  many models, and an OpenAI-compatible gateway serves models that are not
+  OpenAI's). `JourneyHeader` gained `framework`
+  (`"livekit"`, `"pipecat"`, `"langchain"`, `"otel"`, or `None` for a directly
+  wrapped provider client — "which integration is actually feeding the corpus",
+  otherwise only inferable from the shape of what arrived). Agent identity is
+  deliberately **not** a schema field: what an agent id means differs per
+  deployment, so it stays a caller tag in `journey_metadata` (`attach(...,
+  agent_id=...)` lands there like any other keyword), where a handoff that
+  retags it already rides as a per-event delta. Timing is measured in
+  the shared `integrations/_timing.py` (`Timer`, `perf_counter`-based so a
+  wall-clock adjustment mid-call cannot produce a negative duration; `stamp()`
+  never overwrites a value an integration that knew better already set) and
+  wired through all three provider bases plus the Anthropic sync/async
+  streaming wrappers. `jsonl.py` decodes the timing fields through an
+  `_opt_float` helper — a string or null from a third-party object degrades
+  that one field to `None` rather than taking the whole turn down. Golden
+  fixture regenerated at `2.1` with `framework` in the header, a stamped
+  assistant turn, and a latency-carrying `voice` event.
+- **LiveKit framework tag and latency events** — the header now carries
+  `framework="livekit"`. `metrics_collected` readings are recorded
+  as `voice` latency events (LLM TTFT, TTS TTFB, EOU delay, STT/processing
+  duration, with the stage named in metadata), and an LLM TTFT reading is also
+  pipelined onto the next assistant turn's `ttft_ms`.
 - `services/api` now maintains its own SQLite read index (`packages/odyssey-store`,
   a new shared schema/connection-helper package) instead of scanning the
   filesystem on every request — `GET /journeys` used to re-walk
@@ -47,8 +231,83 @@ project has not yet made a versioned release, so entries accumulate under
   cache. See `docs/superpowers/specs/2026-09-05-api-sqlite-index-design.md`
   for the full design.
 
+### Changed
+
+- **`odyssey.init(instrument=...)`'s default changed from `()` to `"auto"`** —
+  a process that has a provider SDK installed now records that provider's
+  calls after `init()` alone, where before it recorded nothing until the app
+  swapped an import or passed `instrument=[...]`. This is the behavior change
+  behind "one integration point", and it is deliberately opt-*out*:
+  `instrument="none"` (or `ODYSSEY_INSTRUMENT=none`, or `()`) restores the old
+  do-nothing default, and `ODYSSEY_ENABLED=false` still disables capture
+  wholesale. The explicit drop-in clients are unchanged and still the clearer
+  thing to read in a traceback — they are just no longer something a
+  deployment has to remember, and the new `_reentry` guard means having both
+  attached records one turn, not two.
+- **`init()` now picks its default sink from `ODYSSEY_ENDPOINT`** — set, and
+  drained journeys go to `HttpSink()` (the collector); unset, they land in
+  `out_dir` through `FileSink` exactly as before. Having to *also* write
+  `sink=HttpSink(...)` in application code made a deployment concern into a
+  code change when the endpoint was already configured out of process. A
+  malformed endpoint falls back to the file sink and counts the failure
+  (visible in `odyssey.health()`) rather than raising — `init()` must never
+  take the application down over a typo in an env var.
+
 ### Fixed
 
+- **A LangChain run and the provider patch under it recorded the same turn
+  twice.** `ChatOpenAI` calls the `openai` SDK, so with `auto` both the handler
+  and the patch captured it, into different journeys. The handler now runs
+  inline and marks each model run; every provider patch skips a call made while
+  such a run is in progress. A mark names its handler and run and counts only
+  while that run is still going, so one left in a context that never saw the
+  run end cannot silence capture for the rest of the task.
+- **LangChain turns now carry `provider` and timing.** The handler records
+  the turn and the provider patch underneath skips the call, so nothing was
+  left to fill in `provider`, `latency_ms` or `ttft_ms` — a LangChain corpus
+  looked like it had been recorded by a client that could not time anything.
+  The patch still writes no turn, but it measures the call and reports what
+  only it can see to the handler's run
+  (`_reentry.report_framework_call` → `_Handler.observed` →
+  `_Recorder.note_provider_call`), which stamps it onto the assistant turn.
+  Streamed runs report their time-to-first-token once the stream is drained; a
+  measurement arriving after its run ended is dropped rather than stamped onto
+  the next one.
+- **`init(project=...)` now reaches every journey, not only hand-opened
+  ones.** The tag was seeded inside `capture.journey()`, and every
+  integration — `livekit`, `langchain`, `otel`, `pipecat` — builds its own
+  `JourneyContext`, so the integration-recorded corpus carried no `project`
+  and indexed with a NULL project column. Seeded now by
+  `JourneyContext._tags()` when the header is built; a caller-supplied
+  `project` still wins.
+- **A LangChain run inside an ambient journey joins it.** The handler keyed
+  every top-level run on LangChain's own run id and never consulted
+  `current()`, so a graph invoked during a voice call landed in a second
+  journey under a uuid appearing nowhere else. It now borrows the bound
+  context and never terminates one it borrowed. Standalone runs are unchanged.
+- **Process-wide `langchain`/`otel` attachment can tag what it opens.**
+  `instrument()` built its handler/processor with no arguments, so those
+  journeys carried nothing saying which service produced them. Both now take
+  `data_source=`/`metadata=`, and `init(instrument_metadata=...)` passes
+  metadata through — needed because `instrument()` is idempotent and `init()`'s
+  `auto` attaches first.
+- **`framework` is set for `langchain` and `otel`.** The field documented both
+  values and no code path produced them.
+- **A background drain that failed every tick was completely silent.**
+  `IntervalDrainer._loop` kept each tick's `DrainResult` in `last_result` and
+  did nothing else, so a sink rejecting every batch — a collector answering
+  401 because no API key was configured, a wrong `ODYSSEY_ENDPOINT` — ticked
+  forever with nothing logged and nothing counted: `odyssey.health()` reported
+  `capture_errors: 0` while the spool grew without bound and no journey ever
+  reached the collector. Recording looked healthy because, locally, it was.
+  `IntervalDrainer` now takes (and exposes, rebindable) an `on_result`
+  callback, `Client` wires `_note_drain_result` into it, and a failed drain is
+  counted through the same `note_error` path every other swallowed failure
+  uses — surfacing as a new `DrainFailed` entry in
+  `health()["stats"]["recent_errors"]`. Not raised: a failed drain leaves the
+  watermark and the events in place, which makes the next tick the retry. A
+  callback that itself raises is swallowed too — reporting the failure must
+  not become the failure.
 - `services/api`'s `GET /journeys` (and `GET /journeys/{id}`) and
   `GET /metrics` both returned an empty list against a product-scoped
   `services/collector` deployment (`--products-file`) even with data

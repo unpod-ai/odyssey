@@ -52,6 +52,12 @@ def _cmd_export(args: argparse.Namespace) -> int:
     `--last-step` writes the final step alone. Each step carries the whole
     conversation up to its turn, so the last one already holds every message and
     every tool call; the rest are prefixes of it and cost O(N**2) bytes.
+
+    `--voice-provenance` adds a `voice_provenance` block under `_odyssey`:
+    per-stage STT/TTS/LLM/EOU provider name and latency from the journey's own
+    voice events, enriched with the linked `<journey_id>.llm` sub-journey's
+    model id and token usage when one exists. Off by default — not every
+    journey is voice, and not every consumer wants the file to grow for it.
     """
     from odyssey.export import export_dir, export_spool
 
@@ -65,6 +71,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
             Path(args.out),
             journey_id=args.journey,
             last_step_only=args.last_step,
+            include_voice_provenance=args.voice_provenance,
         )
     else:
         result = export_spool(
@@ -72,6 +79,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
             Path(args.out),
             journey_id=args.journey,
             last_step_only=args.last_step,
+            include_voice_provenance=args.voice_provenance,
         )
     print(f"exported {result.count}")
     for cid, reason in sorted(result.incomplete.items()):
@@ -240,6 +248,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--last-step",
         action="store_true",
         help="write only the final step (it already holds the whole conversation)",
+    )
+    export.add_argument(
+        "--voice-provenance",
+        action="store_true",
+        help=(
+            "add per-stage STT/TTS/LLM/EOU provider name and latency, plus the "
+            "linked <journey_id>.llm sub-journey's model id and token usage"
+        ),
     )
     export.set_defaults(func=_cmd_export)
 

@@ -124,6 +124,13 @@ class JourneyContext:
     data_source: Optional[str] = None
     trace_id: Optional[str] = None
     started_at: str = field(default_factory=_utc_now_iso)
+
+    # What recorded this journey -- odyssey's own capture path, fixed for the
+    # journey and header-only. Agent identity is deliberately not a field: it
+    # means something different to every deployment, so it is a caller tag in
+    # ``metadata``, and a handoff that retags it already rides on the events
+    # through :meth:`event_metadata`.
+    framework: Optional[str] = None
     # SDK bookkeeping — integration state, seen-system-prompt, and so on.
     # Deliberately separate from ``metadata``: that one is emitted, this one is
     # not, and mixing them would smear internal counters across the corpus.
@@ -169,9 +176,35 @@ class JourneyContext:
                 data_source=self.data_source,
                 trace_id=self.trace_id,
                 started_at=self.started_at,
-                journey_metadata=dict(self.metadata) or None,
+                journey_metadata=self._tags(),
+                framework=self.framework,
             )
         return self._header
+
+    def _tags(self) -> Optional[Dict[str, Any]]:
+        """Caller tags, plus the process-wide ``project`` when none was given.
+
+        Seeded here rather than at each construction site because every
+        integration builds its own context -- ``integrations/livekit``,
+        ``langchain``, ``otel``, ``pipecat`` -- and only ``capture.journey()``
+        remembered to apply the tag. ``init(project=...)`` therefore reached
+        the journeys a caller opened by hand and missed the ones the
+        integrations opened, which is most of a real corpus, and a reader
+        grouping by project saw nothing rather than something mislabelled.
+
+        A caller-supplied ``project`` always wins: a per-journey tag is more
+        specific than a process-wide default.
+        """
+        tags = dict(self.metadata)
+        if "project" not in tags:
+            # Local import: `client` imports this module for `SeqAllocator`, so
+            # the dependency can only run one way at module scope.
+            from odyssey.client import require_client
+
+            client = require_client()
+            if client is not None and client.config.project is not None:
+                tags["project"] = client.config.project
+        return tags or None
 
     def event_metadata(self) -> Dict[str, Any]:
         """Caller tags this event must carry because the header does not.

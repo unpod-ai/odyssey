@@ -27,59 +27,67 @@ async (``client.aio.models``) surfaces off *one* object, not two separate
 client classes — so there is one ``Client`` wrapper here, not a ``Client`` /
 ``AsyncClient`` pair.
 
-Streaming (``generate_content_stream``) is not wrapped yet — same open item
-as Anthropic's/OpenAI's own streaming coverage (``docs/WORKING.md`` 0'.5).
+``generate_content_stream`` is captured too: chunks are folded back into one
+turn once the caller has drained the stream — LiveKit's Google plugin streams.
 """
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
-from odyssey.capture import journey
-from odyssey.client import require_client
-from odyssey.integrations._gemini_base import capture_request, capture_response
+from odyssey.integrations._call import Capture, capture_async, capture_sync
+from odyssey.integrations._gemini_base import (
+    PROVIDER,
+    ResponseAccumulator,
+    capture_request,
+    capture_response,
+    record_stream,
+)
+from odyssey.integrations.providers import Provider
 
 # Set by instrument(); cleared by uninstrument(). Module-level because patching
 # is a process-wide act and must be reversible exactly once.
 _patched: Dict[str, Any] = {}
 
 
-def _safe(label: str, fn: Callable[[], None]) -> None:
-    """Run a capture step. A failure here must never reach the caller."""
-    try:
-        fn()
-    except Exception as exc:  # noqa: BLE001 - capture is best-effort by contract
-        client = require_client()
-        if client is not None:
-            client.note_error(label, exc)
+def _provider(resource: Any) -> Provider:
+    """``vertex`` for a Vertex AI client, ``gemini`` for the Developer API."""
+    api = getattr(resource, "_api_client", None)
+    return Provider("vertex" if getattr(api, "vertexai", False) else PROVIDER)
 
 
-def _record_call(kwargs: Dict[str, Any], call: Callable[[], Any]) -> Any:
-    """Capture request, run the provider call, capture response. Order matters.
-
-    The request is recorded *before* the call so a provider timeout still
-    leaves the prompt in the corpus — a journey that shows what was asked and
-    then terminates with an error is useful; one that shows nothing is not.
-    """
-    with journey():
-        _safe("gemini.request", lambda: capture_request(kwargs))
-        result = call()
-        _safe(
-            "gemini.response",
-            lambda: capture_response(result, model=kwargs.get("model")),
-        )
-        return result
+CAPTURE = Capture(
+    label="gemini",
+    request=capture_request,
+    response=capture_response,
+    streamed=record_stream,
+    accumulator=ResponseAccumulator,
+    provider=_provider,
+)
 
 
 class _ModelsProxy:
-    """Wraps ``client.models``, capturing ``generate_content``."""
+    """Wraps ``client.models``, capturing ``generate_content`` and its stream."""
 
     def __init__(self, inner: Any) -> None:
         self._inner = inner
 
     def generate_content(self, *args: Any, **kwargs: Any) -> Any:
-        return _record_call(
-            kwargs, lambda: self._inner.generate_content(*args, **kwargs)
+        return capture_sync(
+            CAPTURE,
+            self._inner,
+            kwargs,
+            lambda: self._inner.generate_content(*args, **kwargs),
+            streaming=False,
+        )
+
+    def generate_content_stream(self, *args: Any, **kwargs: Any) -> Any:
+        return capture_sync(
+            CAPTURE,
+            self._inner,
+            kwargs,
+            lambda: self._inner.generate_content_stream(*args, **kwargs),
+            streaming=True,
         )
 
     def __getattr__(self, name: str) -> Any:
@@ -91,14 +99,22 @@ class _AsyncModelsProxy:
         self._inner = inner
 
     async def generate_content(self, *args: Any, **kwargs: Any) -> Any:
-        with journey():
-            _safe("gemini.request", lambda: capture_request(kwargs))
-            result = await self._inner.generate_content(*args, **kwargs)
-            _safe(
-                "gemini.response",
-                lambda: capture_response(result, model=kwargs.get("model")),
-            )
-            return result
+        return await capture_async(
+            CAPTURE,
+            self._inner,
+            kwargs,
+            lambda: self._inner.generate_content(*args, **kwargs),
+            streaming=False,
+        )
+
+    async def generate_content_stream(self, *args: Any, **kwargs: Any) -> Any:
+        return await capture_async(
+            CAPTURE,
+            self._inner,
+            kwargs,
+            lambda: self._inner.generate_content_stream(*args, **kwargs),
+            streaming=True,
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -151,11 +167,10 @@ class Client:
 def instrument(target: Optional[Any] = None) -> None:
     """Patch ``google.genai`` in place so existing clients record.
 
-    Idempotent. ``target`` overrides the module to patch, which is what makes
-    this testable without the real SDK installed. Patches both the sync
-    ``Models.generate_content`` and the async ``AsyncModels.generate_content``
-    on the same target module, mirroring how ``client.models``/``client.aio.models``
-    are one SDK, not two.
+    Patches ``generate_content`` and ``generate_content_stream`` on both
+    ``Models`` and ``AsyncModels``, mirroring how ``client.models`` and
+    ``client.aio.models`` are one SDK, not two. Idempotent. ``target`` overrides
+    the module to patch, which is what makes this testable without the SDK.
     """
     if _patched:
         return
@@ -175,42 +190,57 @@ def instrument(target: Optional[Any] = None) -> None:
             "this google-genai version is not supported by instrument()"
         )
 
-    original_sync = sync_cls.generate_content
-    original_async = async_cls.generate_content
-
-    def patched_sync(self: Any, *args: Any, **kwargs: Any) -> Any:
-        return _record_call(kwargs, lambda: original_sync(self, *args, **kwargs))
-
-    async def patched_async(self: Any, *args: Any, **kwargs: Any) -> Any:
-        with journey():
-            _safe("gemini.request", lambda: capture_request(kwargs))
-            result = await original_async(self, *args, **kwargs)
-            _safe(
-                "gemini.response",
-                lambda: capture_response(result, model=kwargs.get("model")),
+    patches = []
+    for cls, is_async in ((sync_cls, False), (async_cls, True)):
+        for method, streaming in (
+            ("generate_content", False),
+            ("generate_content_stream", True),
+        ):
+            original = getattr(cls, method, None)
+            if original is None:
+                continue
+            patches.append((cls, method, original))
+            setattr(
+                cls,
+                method,
+                _patched_method(original, is_async=is_async, streaming=streaming),
             )
-            return result
+    _patched["patches"] = patches
 
-    patched_sync.__wrapped__ = original_sync  # type: ignore[attr-defined]
-    patched_async.__wrapped__ = original_async  # type: ignore[attr-defined]
-    sync_cls.generate_content = patched_sync
-    async_cls.generate_content = patched_async
-    _patched["sync_cls"] = sync_cls
-    _patched["async_cls"] = async_cls
-    _patched["generate_content"] = original_sync
-    _patched["generate_content_async"] = original_async
+
+def _patched_method(original: Any, *, is_async: bool, streaming: bool) -> Any:
+    if is_async:
+
+        async def patched_async(self: Any, *args: Any, **kwargs: Any) -> Any:
+            return await capture_async(
+                CAPTURE,
+                self,
+                kwargs,
+                lambda: original(self, *args, **kwargs),
+                streaming=streaming,
+            )
+
+        patched_async.__wrapped__ = original  # type: ignore[attr-defined]
+        return patched_async
+
+    def patched(self: Any, *args: Any, **kwargs: Any) -> Any:
+        return capture_sync(
+            CAPTURE,
+            self,
+            kwargs,
+            lambda: original(self, *args, **kwargs),
+            streaming=streaming,
+        )
+
+    patched.__wrapped__ = original  # type: ignore[attr-defined]
+    return patched
 
 
 def uninstrument() -> None:
     """Undo :func:`instrument`. Safe to call when nothing was patched."""
-    sync_cls = _patched.pop("sync_cls", None)
-    async_cls = _patched.pop("async_cls", None)
-    original_sync = _patched.pop("generate_content", None)
-    original_async = _patched.pop("generate_content_async", None)
-    if sync_cls is not None and original_sync is not None:
-        sync_cls.generate_content = original_sync
-    if async_cls is not None and original_async is not None:
-        async_cls.generate_content = original_async
+    for cls, method, original in _patched.pop("patches", []):
+        setattr(cls, method, original)
+    _patched.clear()
 
 
 def is_instrumented() -> bool:

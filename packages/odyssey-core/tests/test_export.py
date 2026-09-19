@@ -22,6 +22,7 @@ from odyssey.export import (
     fold_shard,
     journey_to_dict,
     save,
+    voice_provenance,
 )
 from odyssey.fold import fold
 from odyssey.jsonl import write_events
@@ -33,6 +34,7 @@ from odyssey.primitives import (
     Terminal,
     ToolCall,
     ToolResponse,
+    VoiceEvent,
 )
 
 JID = "call_export_1"
@@ -577,3 +579,259 @@ def test_the_cli_exports_only_the_last_step_on_demand(tmp_path, capsys):
     doc = json.loads((tmp_path / "exports" / f"{JID}.json").read_text())
     assert len(doc["steps"]) == 1
     assert doc[DIAGNOSTICS_KEY]["steps_written"] == "last"
+
+
+# --------------------------------------------------------------------------
+# Voice provenance — per-stage STT/TTS/LLM/EOU provider name and latency
+# --------------------------------------------------------------------------
+
+
+def voice_ev(seq, *, stage, latency_ms, label=None, extra=None):
+    """A ``voice`` event carrying the shape ``integrations/livekit.py`` writes."""
+    meta = {"stage": stage}
+    if label:
+        meta["label"] = label
+    if extra:
+        meta.update(extra)
+    return ev(
+        seq,
+        kind="voice",
+        voice=VoiceEvent(voice_kind="latency", latency_ms=latency_ms, metadata=meta),
+    )
+
+
+def voice_stream():
+    """A short call: greeting, one STT/TTS/LLM/EOU reading each, terminal."""
+    return [
+        msg(0, "assistant", "Hello, how can I help?"),
+        msg(1, "user", "Book me for Tuesday."),
+        voice_ev(2, stage="stt", latency_ms=120.0, label="plugins.sarvam.stt.STT"),
+        voice_ev(3, stage="eou", latency_ms=1000.0),
+        voice_ev(4, stage="llm", latency_ms=4000.0, label="agents.inference.llm.LLM"),
+        voice_ev(5, stage="tts", latency_ms=800.0, label="vendors.bakbak.tts.TTS"),
+        msg(6, "assistant", "Booked for Tuesday."),
+        ev(7, kind="terminal", terminal=Terminal(termination_reason="ENV_DONE")),
+    ]
+
+
+def test_voice_provenance_is_absent_from_the_export_by_default(tmp_path):
+    """Every other diagnostic in this file is opt-in the moment it costs bytes on
+    a journey that has none to report; this one is opt-in even when it does."""
+    p = tmp_path / "events" / f"{JID}.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    write_events(p, voice_stream(), header=HEADER)
+
+    save([fold_shard(p)], tmp_path / "exports")
+    doc = json.loads((tmp_path / "exports" / f"{JID}.json").read_text())
+    assert "voice_provenance" not in doc[DIAGNOSTICS_KEY]
+
+
+def test_voice_provenance_groups_by_stage(tmp_path):
+    """One entry per stage, each carrying the plugin's own label and the
+    latency stats a deployment tunes against."""
+    p = tmp_path / "events" / f"{JID}.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    write_events(p, voice_stream(), header=HEADER)
+
+    save([fold_shard(p)], tmp_path / "exports", include_voice_provenance=True)
+    doc = json.loads((tmp_path / "exports" / f"{JID}.json").read_text())
+    prov = doc[DIAGNOSTICS_KEY]["voice_provenance"]
+
+    assert prov["stt"] == {
+        "provider": "plugins.sarvam.stt.STT",
+        "calls": 1,
+        "avg_latency_ms": 120.0,
+        "min_latency_ms": 120.0,
+        "max_latency_ms": 120.0,
+    }
+    assert prov["eou"]["calls"] == 1
+    assert "provider" not in prov["eou"]  # no label reported for this stage
+    assert prov["llm"]["provider"] == "agents.inference.llm.LLM"
+    assert prov["tts"]["avg_latency_ms"] == 800.0
+
+
+def test_voice_provenance_averages_more_than_one_reading(tmp_path):
+    events = [
+        msg(0, "assistant", "Hi."),
+        voice_ev(1, stage="tts", latency_ms=1000.0, label="tts.TTS"),
+        voice_ev(2, stage="tts", latency_ms=3000.0, label="tts.TTS"),
+        ev(3, kind="terminal", terminal=Terminal(termination_reason="ENV_DONE")),
+    ]
+    p = tmp_path / "events" / f"{JID}.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    write_events(p, events, header=HEADER)
+
+    result = fold_shard(p)
+    prov = voice_provenance(result)
+    assert prov["tts"] == {
+        "provider": "tts.TTS",
+        "calls": 2,
+        "avg_latency_ms": 2000.0,
+        "min_latency_ms": 1000.0,
+        "max_latency_ms": 3000.0,
+    }
+
+
+def test_voice_provenance_is_none_for_a_journey_with_no_voice_events(tmp_path, shard):
+    result = fold_shard(shard)
+    assert voice_provenance(result) is None
+
+
+def test_voice_provenance_enriches_from_the_linked_llm_journey(tmp_path):
+    """`attach(record_provider_calls=True)` opens `<journey_id>.llm`; its model
+    id and token usage land under `voice_provenance["llm"]` alongside the
+    voice-side stage timing, not in place of it."""
+    sp = _spool(tmp_path / "spool")
+    sp.record_all(voice_stream(), header=HEADER)
+    llm_header = dataclasses.replace(HEADER, journey_id=f"{JID}.llm")
+    llm_jid = f"{JID}.llm"
+    sp.record_all(
+        [
+            JourneyEvent(
+                journey_id=llm_jid,
+                seq=0,
+                event_id="l0",
+                kind="message",
+                message=Message(role="user", content="Book me for Tuesday."),
+                model_id="openai/gpt-4.1-mini",
+            ),
+            JourneyEvent(
+                journey_id=llm_jid,
+                seq=1,
+                event_id="l1",
+                kind="message",
+                message=Message(
+                    role="assistant",
+                    content="Booked.",
+                    provider="agent-gateway.livekit.cloud",
+                    usage={"prompt_tokens": 100, "completion_tokens": 20},
+                ),
+                model_id="openai/gpt-4.1-mini",
+            ),
+            JourneyEvent(
+                journey_id=llm_jid,
+                seq=2,
+                event_id="l2",
+                kind="terminal",
+                terminal=Terminal(termination_reason="ENV_DONE"),
+            ),
+        ],
+        header=llm_header,
+    )
+    sp.close()
+
+    result = odyssey.export_spool(
+        tmp_path / "spool",
+        tmp_path / "exports",
+        journey_id=JID,
+        include_voice_provenance=True,
+    )
+    assert result.count == 1  # the `.llm` sub-journey is enrichment, not its own artifact
+    doc = json.loads((tmp_path / "exports" / f"{JID}.json").read_text())
+    llm = doc[DIAGNOSTICS_KEY]["voice_provenance"]["llm"]
+
+    assert llm["model_ids"] == ["openai/gpt-4.1-mini"]
+    assert llm["gateway"] == "agent-gateway.livekit.cloud"
+    assert llm["token_usage_total"] == {"prompt_tokens": 100, "completion_tokens": 20}
+    # The voice-side stage timing survives enrichment rather than being replaced.
+    assert llm["provider"] == "agents.inference.llm.LLM"
+    assert llm["calls"] == 1
+
+
+def test_voice_provenance_without_a_linked_llm_journey_is_unenriched(tmp_path):
+    """No `.llm` sibling recorded — provider recording was off, say — leaves the
+    voice-side stage timing exactly as `voice_provenance` built it."""
+    sp = _spool(tmp_path / "spool")
+    sp.record_all(voice_stream(), header=HEADER)
+    sp.close()
+
+    result = odyssey.export_spool(
+        tmp_path / "spool",
+        tmp_path / "exports",
+        journey_id=JID,
+        include_voice_provenance=True,
+    )
+    doc = json.loads(result.written[0].read_text())
+    llm = doc[DIAGNOSTICS_KEY]["voice_provenance"]["llm"]
+    assert "model_ids" not in llm
+    assert "token_usage_total" not in llm
+
+
+def test_export_dir_enriches_from_a_sibling_llm_shard(tmp_path):
+    """`export_dir` looks for `<journey_id>.llm.jsonl` next to the main shard —
+    the directory-based mirror of the spool's linked sub-journey."""
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    write_events(events_dir / f"{JID}.jsonl", voice_stream(), header=HEADER)
+
+    llm_jid = f"{JID}.llm"
+    write_events(
+        events_dir / f"{llm_jid}.jsonl",
+        [
+            JourneyEvent(
+                journey_id=llm_jid,
+                seq=0,
+                event_id="l0",
+                kind="message",
+                message=Message(role="assistant", content="Booked.", usage={"total_tokens": 50}),
+                model_id="openai/gpt-4.1-mini",
+            ),
+            JourneyEvent(
+                journey_id=llm_jid,
+                seq=1,
+                event_id="l1",
+                kind="terminal",
+                terminal=Terminal(termination_reason="ENV_DONE"),
+            ),
+        ],
+        header=dataclasses.replace(HEADER, journey_id=llm_jid),
+    )
+
+    result = export_dir(
+        events_dir,
+        tmp_path / "exports",
+        journey_id=JID,
+        include_voice_provenance=True,
+    )
+    assert result.count == 1
+    doc = json.loads(result.written[0].read_text())
+    llm = doc[DIAGNOSTICS_KEY]["voice_provenance"]["llm"]
+    assert llm["model_ids"] == ["openai/gpt-4.1-mini"]
+    assert llm["token_usage_total"] == {"total_tokens": 50}
+
+
+def test_the_cli_can_opt_into_voice_provenance(tmp_path, capsys):
+    from odyssey.cli import main
+
+    sp = _spool(tmp_path / "spool")
+    sp.record_all(voice_stream(), header=HEADER)
+    sp.close()
+
+    rc = main(
+        [
+            "--spool",
+            str(tmp_path / "spool"),
+            "export",
+            "--out",
+            str(tmp_path / "exports"),
+            "--voice-provenance",
+        ]
+    )
+    assert rc == 0
+    doc = json.loads((tmp_path / "exports" / f"{JID}.json").read_text())
+    assert "voice_provenance" in doc[DIAGNOSTICS_KEY]
+
+
+def test_the_cli_omits_voice_provenance_without_the_flag(tmp_path):
+    from odyssey.cli import main
+
+    sp = _spool(tmp_path / "spool")
+    sp.record_all(voice_stream(), header=HEADER)
+    sp.close()
+
+    rc = main(
+        ["--spool", str(tmp_path / "spool"), "export", "--out", str(tmp_path / "exports")]
+    )
+    assert rc == 0
+    doc = json.loads((tmp_path / "exports" / f"{JID}.json").read_text())
+    assert "voice_provenance" not in doc[DIAGNOSTICS_KEY]

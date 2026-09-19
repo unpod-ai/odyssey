@@ -6,9 +6,12 @@ import { Badge } from "@/components/Badge";
 import { TableFilters } from "@/components/TableFilters";
 import { DateCounts } from "@/components/DateCounts";
 import { Pagination } from "@/components/Pagination";
+import { formatMs } from "@/lib/format";
 import type { JourneySummaryOut, ProductOut } from "@odyssey/sdk";
 
 const PAGE_SIZE = 25;
+
+const providersOf = (j: JourneySummaryOut) => j.provenance?.providers ?? [];
 
 export default async function JourneysPage({
   searchParams,
@@ -112,6 +115,24 @@ export default async function JourneysPage({
             header: "Complete",
             render: (j) => <Badge variant={j.complete ? "success" : "neutral"}>{j.complete ? "yes" : "no"}</Badge>,
             sortValue: (j) => (j.complete ? 1 : 0),
+          },
+          {
+            // Schema 2.1. A journey recorded before it, or by an integration
+            // that cannot name its provider, shows the same dash as any other
+            // unset value rather than an empty cell.
+            header: "Provider",
+            render: (j) => providersOf(j).join(", ") || "—",
+            sortValue: (j) => providersOf(j).join(", "),
+          },
+          {
+            header: "Avg latency",
+            render: (j) => formatMs(j.provenance?.avg_latency_ms),
+            sortValue: (j) => j.provenance?.avg_latency_ms ?? -1,
+          },
+          {
+            header: "Avg TTFT",
+            render: (j) => formatMs(j.provenance?.avg_ttft_ms),
+            sortValue: (j) => j.provenance?.avg_ttft_ms ?? -1,
           },
         ]}
       />
